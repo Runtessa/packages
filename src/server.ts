@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import 'reflect-metadata';
+import path from 'path';
 import express, { NextFunction, Request, Response } from 'express';
 import { AppError } from './common/AppError';
 import { initializeDataSource, AppDataSource } from './core/datasource';
@@ -14,6 +15,7 @@ import { AdminController } from './app/controllers/AdminController';
 import { TenantStage } from './entities/Tenant';
 import { TenantRequest } from './types/RequestContext';
 import { RegistryController } from './app/controllers/RegistryController';
+import { FileSystemController } from './app/controllers/FileSystemController';
 
 const app = express();
 app.use(express.json({ limit: '256kb' }));
@@ -52,16 +54,25 @@ const bootstrap = async () => {
   const adminController = new AdminController(AppDataSource);
   const dispatcher = new Dispatcher(AppDataSource, adapterFactory, sandboxRunner);
   const registryController = new RegistryController(AppDataSource);
+  const fileSystemController = new FileSystemController(AppDataSource);
 
   const contextMiddleware = ContextMiddleware(AppDataSource);
-  const authGuard = AuthGuard(AppDataSource, cryptoService, {
-    publicPaths: [/^\/$/, /^\/loader\.js$/, /^\/boot$/, /^\/favicon\.ico$/],
-  });
+  const authGuard = AuthGuard(AppDataSource, cryptoService);
 
   app.post('/admin/tenants', adminController.createTenant);
   app.post('/auth/register', contextMiddleware, authController.register);
   app.post('/auth/login', contextMiddleware, authController.login);
   app.get('/api/registry/:name/:version?', contextMiddleware, registryController.resolve);
+
+  app.get('/sys/api/vfs/stat', contextMiddleware, authGuard, fileSystemController.stat);
+  app.get('/sys/api/vfs/read', contextMiddleware, authGuard, fileSystemController.read);
+  app.post('/sys/api/vfs/write', contextMiddleware, authGuard, fileSystemController.write);
+  app.get('/sys/api/vfs/readdir', contextMiddleware, authGuard, fileSystemController.readdir);
+
+  app.use('/extension', express.static(path.join(__dirname, '../idp-web-ext')));
+  app.get('/ide', (_req, res) => {
+    res.sendFile(path.join(__dirname, '../public/ide.html'));
+  });
 
   app.all('*', contextMiddleware, authGuard, dispatcher.handle);
 

@@ -6,30 +6,30 @@ import {
   PrimaryGeneratedColumn,
   Unique,
   UpdateDateColumn,
-} from 'typeorm';
-import { Account } from './Account';
-import { Secret } from './Secret';
-import { ModuleEntity } from './Module';
+} from "typeorm";
+import { Account } from "./Account";
+import { Secret } from "./Secret";
+import { ModuleEntity } from "./Module";
 
 export enum TenantStage {
-  DEV = 'DEV',
-  STAGING = 'STAGING',
-  PROD = 'PROD',
+  DEV = "DEV",
+  STAGING = "STAGING",
+  PROD = "PROD",
 }
 
-@Entity({ name: 'tenants' })
-@Unique(['hostname'])
+@Entity({ name: "tenants" })
+@Unique(["hostname"])
 export class Tenant {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryGeneratedColumn("uuid")
   id!: string;
 
   @Column()
   hostname!: string;
 
-  @Column({ type: 'enum', enum: TenantStage, default: TenantStage.DEV })
+  @Column({ type: "enum", enum: TenantStage, default: TenantStage.DEV })
   stage!: TenantStage;
 
-  @Column({ type: 'jsonb', default: () => "'{\"memory\":512,\"timeout\":5000}'" })
+  @Column({ type: "jsonb", default: () => '\'{"memory":512,"timeout":5000}\'' })
   resourceConfig!: {
     memory: number;
     timeout: number;
@@ -52,4 +52,7 @@ export class Tenant {
 
   @UpdateDateColumn()
   updatedAt!: Date;
+
+  @Column({ type: "jsonb", default: () => "'[]'" })
+  restrictRoutes?: string[];
 }
