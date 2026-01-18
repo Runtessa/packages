@@ -1,32 +1,30 @@
-import 'dotenv/config';
-import 'reflect-metadata';
-import path from 'path';
-import express, { NextFunction, Request, Response } from 'express';
-import { AppError } from './common/AppError';
-import { initializeDataSource, AppDataSource } from './core/datasource';
-import { CryptoService } from './core/security/CryptoService';
-import { AdapterFactory } from './engine/AdapterFactory';
-import { SandboxRunner } from './engine/SandboxRunner';
-import { AuthController } from './app/controllers/AuthController';
-import { Dispatcher } from './app/controllers/Dispatcher';
-import { AuthGuard } from './app/middleware/AuthGuard';
-import { ContextMiddleware } from './app/middleware/ContextMiddleware';
-import { AdminController } from './app/controllers/AdminController';
-import { TenantStage } from './entities/Tenant';
-import { TenantRequest } from './types/RequestContext';
-import { RegistryController } from './app/controllers/RegistryController';
-import { FileSystemController } from './app/controllers/FileSystemController';
+import "dotenv/config";
+import "reflect-metadata";
+import express, { NextFunction, Request, Response } from "express";
+import { AppError } from "./common/AppError";
+import { initializeDataSource, AppDataSource } from "./core/datasource";
+import { CryptoService } from "./core/security/CryptoService";
+import { AdapterFactory } from "./engine/AdapterFactory";
+import { SandboxRunner } from "./engine/SandboxRunner";
+import { AuthController } from "./app/controllers/AuthController";
+import { Dispatcher } from "./app/controllers/Dispatcher";
+import { AuthGuard } from "./app/middleware/AuthGuard";
+import { ContextMiddleware } from "./app/middleware/ContextMiddleware";
+import { AdminController } from "./app/controllers/AdminController";
+import { TenantStage } from "./entities/Tenant";
+import { TenantRequest } from "./types/RequestContext";
+import { RegistryController } from "./app/controllers/RegistryController";
 
 const app = express();
-app.use(express.json({ limit: '256kb' }));
+app.use(express.json({ limit: "256kb" }));
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public'));
+app.use(express.static("public"));
 
-const port = parseInt(process.env.PORT ?? '3000', 10);
+const port = parseInt(process.env.PORT ?? "3000", 10);
 
 const buildCryptoService = (): CryptoService => {
-  const encryptionKey = getKeyFromEnv('ENCRYPTION_KEY', 32);
-  const tokenSecret = getKeyFromEnv('TOKEN_SECRET', 32);
+  const encryptionKey = getKeyFromEnv("ENCRYPTION_KEY", 32);
+  const tokenSecret = getKeyFromEnv("TOKEN_SECRET", 32);
   return new CryptoService(encryptionKey, tokenSecret);
 };
 
@@ -37,7 +35,7 @@ const getKeyFromEnv = (envName: string, expectedBytes: number): Buffer => {
   }
 
   const isHex = /^[a-fA-F0-9]+$/.test(raw) && raw.length === expectedBytes * 2;
-  const buffer = isHex ? Buffer.from(raw, 'hex') : Buffer.from(raw, 'base64');
+  const buffer = isHex ? Buffer.from(raw, "hex") : Buffer.from(raw, "base64");
   if (buffer.length !== expectedBytes) {
     throw new Error(`${envName} must decode to ${expectedBytes} bytes`);
   }
@@ -52,47 +50,47 @@ const bootstrap = async () => {
   const sandboxRunner = new SandboxRunner(30_000);
   const authController = new AuthController(AppDataSource, cryptoService);
   const adminController = new AdminController(AppDataSource);
-  const dispatcher = new Dispatcher(AppDataSource, adapterFactory, sandboxRunner);
+  const dispatcher = new Dispatcher(
+    AppDataSource,
+    adapterFactory,
+    sandboxRunner
+  );
   const registryController = new RegistryController(AppDataSource);
-  const fileSystemController = new FileSystemController(AppDataSource);
 
   const contextMiddleware = ContextMiddleware(AppDataSource);
   const authGuard = AuthGuard(AppDataSource, cryptoService);
 
-  app.post('/admin/tenants', adminController.createTenant);
-  app.post('/auth/register', contextMiddleware, authController.register);
-  app.post('/auth/login', contextMiddleware, authController.login);
-  app.get('/api/registry/:name/:version?', contextMiddleware, registryController.resolve);
+  app.post("/admin/tenants", adminController.createTenant);
+  app.post("/auth/register", contextMiddleware, authController.register);
+  app.post("/auth/login", contextMiddleware, authController.login);
+  app.get(
+    "/api/registry/:name/:version?",
+    contextMiddleware,
+    registryController.resolve
+  );
 
-  app.get('/sys/api/vfs/stat', contextMiddleware, authGuard, fileSystemController.stat);
-  app.get('/sys/api/vfs/read', contextMiddleware, authGuard, fileSystemController.read);
-  app.post('/sys/api/vfs/write', contextMiddleware, authGuard, fileSystemController.write);
-  app.get('/sys/api/vfs/readdir', contextMiddleware, authGuard, fileSystemController.readdir);
-
-  app.use('/extension', express.static(path.join(__dirname, '../idp-web-ext')));
-  app.get('/ide', (_req, res) => {
-    res.sendFile(path.join(__dirname, '../public/ide.html'));
-  });
-
-  app.all('*', contextMiddleware, authGuard, dispatcher.handle);
+  app.all("*", contextMiddleware, authGuard, dispatcher.handle);
 
   app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
-    const tenantStage = (req as TenantRequest).tenant?.stage ?? res.locals?.tenantStage;
+    const tenantStage =
+      (req as TenantRequest).tenant?.stage ?? res.locals?.tenantStage;
     const isAppError = err instanceof AppError;
     const status = isAppError ? err.status : 500;
     const payload: Record<string, unknown> = {
       error: err.message,
-      ...(isAppError && (err as AppError).code ? { code: (err as AppError).code } : {}),
+      ...(isAppError && (err as AppError).code
+        ? { code: (err as AppError).code }
+        : {}),
     };
 
     if (tenantStage === TenantStage.DEV) {
       payload.stack = err.stack;
     } else if (tenantStage === TenantStage.PROD && status >= 500) {
-      payload.error = 'Internal server error';
+      payload.error = "Internal server error";
     }
 
     if (!isAppError) {
-      console.error('Unhandled error:', err);
+      console.error("Unhandled error:", err);
     }
 
     return res.status(status).json(payload);
@@ -104,6 +102,6 @@ const bootstrap = async () => {
 };
 
 bootstrap().catch((error) => {
-  console.error('Failed to start server:', error);
+  console.error("Failed to start server:", error);
   process.exit(1);
 });

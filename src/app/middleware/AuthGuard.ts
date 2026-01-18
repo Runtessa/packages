@@ -16,7 +16,7 @@ export const AuthGuard =
       if (!req.tenant) {
         throw new AppError("Tenant context missing", 400);
       }
-
+console.log(req.path,req.tenant.restrictRoutes)
       if (!req.tenant.restrictRoutes?.includes(req.path)) {
         return next();
       }

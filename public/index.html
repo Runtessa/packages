@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Server-Driven Micro-Frontend</title>
-  <script src="bundle.js?d980cc0bde568495144f"></script></head>
+  <script src="bundle.js?f547e726fd80c795562c"></script></head>
   <body>
     <div id="root"></div>
     <script defer>
@@ -14,37 +14,6 @@
       } else {
         console.error("Kernel failed to load");
       }
-    </script>
-    <script src="bable.js"></script>
-    <script defer>
-      function compileCode(sourceCode) {
-        // Use Babel to transform the code
-        const transformed = window.Babel.transform(sourceCode, {
-          presets: [
-            "es2015",
-            "react",
-            [
-              "env",
-              {
-                useBuiltIns: "entry",
-                corejs: 3,
-              },
-            ],
-            // 'babili'
-          ],
-        });
-
-        return transformed.code;
-      }
-      var code = `
-import react from "react";
-export const App=() =>{
-  return <h1>Hello</h1>;
-};
-
-
-`;
-      console.log(compileCode(code));
     </script>
   </body>
 </html>

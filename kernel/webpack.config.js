@@ -13,7 +13,7 @@ module.exports = {
   output: {
     filename: "bundle.js", // The name of your final bundled JavaScript file.
     path: path.resolve(__dirname, "../public"), // The directory where the bundle will be saved.
-    clean: true, // Cleans the 'build' directory before each build.
+    clean: false, // Cleans the 'build' directory before each build.
   },
 
   // Loaders tell Webpack how to process different file types.
@@ -39,6 +39,7 @@ module.exports = {
       minify: false,
       hash: true,
       scriptLoading: "blocking",
+      
     }),
   ],
 
