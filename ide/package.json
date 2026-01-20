@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "cra-template": "latest",
     "monaco-react": "latest",
     "react": "latest",

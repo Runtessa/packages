@@ -14,6 +14,8 @@ import { AdminController } from "./app/controllers/AdminController";
 import { TenantStage } from "./entities/Tenant";
 import { TenantRequest } from "./types/RequestContext";
 import { RegistryController } from "./app/controllers/RegistryController";
+import { ModuleController } from "./app/controllers/ModuleController";
+import { UIEntityController } from "./app/controllers/UIEntityController";
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -56,6 +58,8 @@ const bootstrap = async () => {
     sandboxRunner
   );
   const registryController = new RegistryController(AppDataSource);
+  const moduleController = new ModuleController(AppDataSource);
+  const uiEntityController = new UIEntityController(AppDataSource);
 
   const contextMiddleware = ContextMiddleware(AppDataSource);
   const authGuard = AuthGuard(AppDataSource, cryptoService);
@@ -67,6 +71,57 @@ const bootstrap = async () => {
     "/api/registry/:name/:version?",
     contextMiddleware,
     registryController.resolve
+  );
+  app.get("/api/modules", contextMiddleware, authGuard, moduleController.list);
+  app.get(
+    "/api/modules/:id",
+    contextMiddleware,
+    authGuard,
+    moduleController.getById
+  );
+  app.post("/api/modules", contextMiddleware, authGuard, moduleController.create);
+  app.put(
+    "/api/modules/:id",
+    contextMiddleware,
+    authGuard,
+    moduleController.update
+  );
+  app.delete(
+    "/api/modules/:id",
+    contextMiddleware,
+    authGuard,
+    moduleController.remove
+  );
+
+  app.get(
+    "/api/ui-entities",
+    contextMiddleware,
+    authGuard,
+    uiEntityController.list
+  );
+  app.get(
+    "/api/ui-entities/:id",
+    contextMiddleware,
+    authGuard,
+    uiEntityController.getById
+  );
+  app.post(
+    "/api/ui-entities",
+    contextMiddleware,
+    authGuard,
+    uiEntityController.create
+  );
+  app.put(
+    "/api/ui-entities/:id",
+    contextMiddleware,
+    authGuard,
+    uiEntityController.update
+  );
+  app.delete(
+    "/api/ui-entities/:id",
+    contextMiddleware,
+    authGuard,
+    uiEntityController.remove
   );
 
   app.all("*", contextMiddleware, authGuard, dispatcher.handle);

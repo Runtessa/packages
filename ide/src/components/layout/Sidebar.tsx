@@ -90,8 +90,8 @@ export const Sidebar = ({ open, onClose }: SidebarProps) => {
             const Icon = item.icon;
             const activePath = item.match || item.href;
             const isActive =
-              location.pathname === activePath ||
-              location.pathname.startsWith(`${activePath}/`);
+              window.location.pathname === activePath ||
+              window.location.pathname.startsWith(`${activePath}/`);
 
             return (
               <Link
