@@ -21,12 +21,24 @@ type ActiveFile = {
   meta: NodeMeta | null;
 };
 
+declare global {
+  interface Window {
+    Babel?: {
+      transform: (
+        code: string,
+        opts: Record<string, unknown>
+      ) => { code: string };
+    };
+  }
+}
+
 type NodeMeta =
   | {
       kind: "module";
       backendId: string;
       method: string;
       routePath: string;
+      fileExtension?: string;
     }
   | {
       kind: "ui";
@@ -34,6 +46,7 @@ type NodeMeta =
       name: string;
       version: string;
       dependencies: string[];
+      fileExtension?: string;
     };
 
 type ModuleDto = {
@@ -48,6 +61,7 @@ type UIPackageDto = {
   id: string;
   name: string;
   version: string;
+  code?: string;
   codeBlob: string;
   dependencies: string[];
   fileExtension?: string;
@@ -88,6 +102,30 @@ const sanitizeForFilename = (value: string) =>
     .replace(/\s+/g, "-")
     .toLowerCase();
 
+const compileWithBabel = (code: string): string => {
+  const babel = typeof window !== "undefined" ? window.Babel : undefined;
+  if (!babel || !babel.transform) return code;
+  try {
+    const result = babel.transform(code, {
+      presets: [
+        "es2015",
+        "react",
+        [
+          "env",
+          {
+            useBuiltIns: "entry",
+            corejs: 3,
+          },
+        ],
+      ],
+    });
+    return result?.code ?? code;
+  } catch (er) {
+    console.log(er);
+    return code;
+  }
+};
+
 const formatModuleLabel = (mod: ModuleDto) => {
   const routeSlug = sanitizeForFilename(mod.routePath || "root") || "root";
   const ext = mod.fileExtension?.replace(/^\./, "").toLowerCase() || "ts";
@@ -103,16 +141,18 @@ const formatUiLabel = (pkg: UIPackageDto) => {
 
 export default function EditorPage() {
   const { token } = useSessionToken();
-  const [fileContents, setFileContents] = useState<Record<string, string>>(() => {
-    if (typeof window === "undefined") return {};
-    const stored = localStorage.getItem(CONTENT_STORAGE_KEY);
-    if (!stored) return {};
-    try {
-      return JSON.parse(stored) as Record<string, string>;
-    } catch {
-      return {};
+  const [fileContents, setFileContents] = useState<Record<string, string>>(
+    () => {
+      if (typeof window === "undefined") return {};
+      const stored = localStorage.getItem(CONTENT_STORAGE_KEY);
+      if (!stored) return {};
+      try {
+        return JSON.parse(stored) as Record<string, string>;
+      } catch {
+        return {};
+      }
     }
-  });
+  );
   const [activeFile, setActiveFile] = useState<ActiveFile | null>(null);
   const [openFiles, setOpenFiles] = useState<ActiveFile[]>([]);
   const [treeData, setTreeData] = useState<ExplorerNode | null>(null);
@@ -123,10 +163,7 @@ export default function EditorPage() {
   const [saveError, setSaveError] = useState<string>("");
 
   const apiFetch = useCallback(
-    async (
-      url: string,
-      options: { method?: string; body?: unknown } = {}
-    ) => {
+    async (url: string, options: { method?: string; body?: unknown } = {}) => {
       const res = await fetch(url, {
         method: options.method ?? "GET",
         headers: {
@@ -164,6 +201,7 @@ export default function EditorPage() {
               backendId: mod.id,
               method: mod.method,
               routePath: mod.routePath,
+              fileExtension: mod.fileExtension,
             },
             content: mod.code,
           })),
@@ -182,8 +220,9 @@ export default function EditorPage() {
               name: pkg.name,
               version: pkg.version,
               dependencies: pkg.dependencies ?? [],
+              fileExtension: pkg.fileExtension,
             },
-            content: pkg.codeBlob,
+            content: pkg.code ?? pkg.codeBlob,
           })),
         },
       ],
@@ -199,7 +238,9 @@ export default function EditorPage() {
         apiFetch("/api/modules"),
         apiFetch("/api/ui-entities"),
       ]);
-      setTreeData(buildTree(modules as ModuleDto[], uiPackages as UIPackageDto[]));
+      setTreeData(
+        buildTree(modules as ModuleDto[], uiPackages as UIPackageDto[])
+      );
     } catch (err) {
       setTreeError((err as Error).message || "Failed to load explorer");
     } finally {
@@ -273,16 +314,26 @@ export default function EditorPage() {
             routePath: activeFile.meta.routePath,
             method: activeFile.meta.method,
             code: content,
+            fileExtension: activeFile.meta.fileExtension,
           },
         });
       } else {
+        if (!window.Babel) {
+          throw new Error(
+            "Babel runtime not loaded in browser; cannot build code_blob"
+          );
+        }
+        // Compile source to code_blob using the in-browser Babel runtime (see ide/public/babel/bable.js)
+        const compiled = compileWithBabel(content);
         await apiFetch(`/api/ui-entities/${activeFile.meta.backendId}`, {
           method: "PUT",
           body: {
             name: activeFile.meta.name,
             version: activeFile.meta.version,
-            codeBlob: content,
+            code: content,
+            codeBlob: compiled,
             dependencies: activeFile.meta.dependencies ?? [],
+            fileExtension: activeFile.meta.fileExtension,
           },
         });
       }
@@ -354,7 +405,9 @@ export default function EditorPage() {
                 <span className="rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 py-1 text-[11px] uppercase tracking-wide">
                   {activeFile.meta.method}
                 </span>
-                <span className="text-gray-200">{activeFile.meta.routePath}</span>
+                <span className="text-gray-200">
+                  {activeFile.meta.routePath}
+                </span>
               </div>
             )}
             {activeFile?.meta?.kind === "ui" && (

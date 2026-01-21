@@ -41,21 +41,19 @@ const frontendProxy = createProxyMiddleware({
   ws: true,
 });
 
-app.use((req, res, next) => {
+app.use("/panel", (req, res, next) => {
   const p = req.path.toLowerCase();
   if (p.startsWith("/api") || p.startsWith("/auth") || p.startsWith("/admin")) {
     return next();
   }
   return frontendProxy(req, res, next);
 });
-
 // Fallback static (for production build)
 app.use(
-  express.static(path.resolve(__dirname, "..", "ide", "build"), {
+  express.static(path.resolve(__dirname, "..", "public"), {
     index: false,
   })
 );
-
 const port = parseInt(process.env.PORT ?? "3000", 10);
 
 const buildCryptoService = (): CryptoService => {
@@ -97,15 +95,7 @@ const bootstrap = async () => {
 
   const contextMiddleware = ContextMiddleware(AppDataSource);
   const authGuard = AuthGuard(AppDataSource, cryptoService);
-  // app.use(
-  //   "/",
-  //   createProxyMiddleware({
-  //     target: "http://localhost:3001",
-  //     changeOrigin: true,
-  //     ws: true, // IMPORTANT: proxy websockets for HMR
-  //     // logLevel: "silent",
-  //   })
-  // );
+
   app.post("/admin/tenants", adminController.createTenant);
   app.post("/auth/register", contextMiddleware, authController.register);
   app.post("/auth/login", contextMiddleware, authController.login);
@@ -170,24 +160,17 @@ const bootstrap = async () => {
     authGuard,
     uiEntityController.remove
   );
-
   // Serve frontend (IDE) for non-API routes
   app.get("*", (req, res, next) => {
     const p = req.path.toLowerCase();
     if (
       p.startsWith("/api") ||
       p.startsWith("/auth") ||
-      p.startsWith("/admin")
+      p.startsWith("/admin") 
     ) {
       return next();
     }
-    const indexPath = path.resolve(
-      __dirname,
-      "..",
-      "ide",
-      "build",
-      "index.html"
-    );
+    const indexPath = path.resolve(__dirname, "..", "public", "index.html");
     return res.sendFile(indexPath);
   });
 
@@ -221,18 +204,18 @@ const bootstrap = async () => {
   const server = app.listen(port, () => {
     console.log(`FaaS runtime listening on port ${port}`);
   });
-  server.on("upgrade", (req, socket, head) => {
-    const pathname = req.url ? req.url.split("?")[0].toLowerCase() : "";
-    if (
-      pathname.startsWith("/api") ||
-      pathname.startsWith("/auth") ||
-      pathname.startsWith("/admin")
-    ) {
-      socket.destroy();
-      return;
-    }
-    frontendProxy.upgrade(req as any, socket as any, head);
-  });
+  // server.on("upgrade", (req, socket, head) => {
+  //   const pathname = req.url ? req.url.split("?")[0].toLowerCase() : "";
+  //   if (
+  //     pathname.startsWith("/api") ||
+  //     pathname.startsWith("/auth") ||
+  //     pathname.startsWith("/admin")
+  //   ) {
+  //     socket.destroy();
+  //     return;
+  //   }
+  //   frontendProxy.upgrade(req as any, socket as any, head);
+  // });
 };
 
 bootstrap().catch((error) => {

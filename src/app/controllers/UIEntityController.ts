@@ -43,7 +43,8 @@ export class UIEntityController {
       const { name, version, codeBlob, dependencies } = req.body ?? {};
       const normalizedName = this.normalizeName(name);
       const normalizedVersion = this.normalizeVersion(version);
-      const normalizedCode = this.normalizeCode(codeBlob);
+      const normalizedCode = this.normalizeSourceCode(req.body?.code ?? codeBlob);
+      const compiledCode = this.normalizeCompiledCode(req.body?.codeBlob ?? codeBlob ?? normalizedCode);
       const normalizedDeps = this.normalizeDependencies(dependencies);
       const fileExtension = this.normalizeFileExtension(req.body?.fileExtension);
 
@@ -62,7 +63,8 @@ export class UIEntityController {
       const pkg = repo.create({
         name: normalizedName,
         version: normalizedVersion,
-        codeBlob: normalizedCode,
+        code: normalizedCode,
+        codeBlob: compiledCode,
         dependencies: normalizedDeps,
         fileExtension,
         tenant: req.tenant!,
@@ -87,7 +89,14 @@ export class UIEntityController {
 
       const nextName = req.body?.name ? this.normalizeName(req.body.name) : pkg.name;
       const nextVersion = req.body?.version ? this.normalizeVersion(req.body.version) : pkg.version;
-      const nextCode = req.body?.codeBlob !== undefined ? this.normalizeCode(req.body.codeBlob) : pkg.codeBlob;
+      const nextSource =
+        req.body?.code !== undefined
+          ? this.normalizeSourceCode(req.body.code)
+          : pkg.code;
+      const nextCompiled =
+        req.body?.codeBlob !== undefined
+          ? this.normalizeCompiledCode(req.body.codeBlob)
+          : pkg.codeBlob;
       const nextDeps =
         req.body?.dependencies !== undefined
           ? this.normalizeDependencies(req.body.dependencies)
@@ -112,7 +121,8 @@ export class UIEntityController {
 
       pkg.name = nextName;
       pkg.version = nextVersion;
-      pkg.codeBlob = nextCode;
+      pkg.code = nextSource;
+      pkg.codeBlob = nextCompiled;
       pkg.dependencies = nextDeps;
       pkg.fileExtension = nextExt;
       await repo.save(pkg);
@@ -160,9 +170,16 @@ export class UIEntityController {
     return raw.trim();
   }
 
-  private normalizeCode(raw: unknown): string {
+  private normalizeSourceCode(raw: unknown): string {
     if (typeof raw !== 'string' || !raw.trim()) {
-      throw new AppError('codeBlob is required', 400);
+      throw new AppError('code is required', 400);
+    }
+    return raw;
+  }
+
+  private normalizeCompiledCode(raw: unknown): string {
+    if (typeof raw !== "string" || !raw.trim()) {
+      throw new AppError("codeBlob (compiled output) is required", 400);
     }
     return raw;
   }
@@ -187,6 +204,7 @@ export class UIEntityController {
       id: pkg.id,
       name: pkg.name,
       version: pkg.version,
+      code: pkg.code,
       codeBlob: pkg.codeBlob,
       dependencies: pkg.dependencies ?? [],
       fileExtension: pkg.fileExtension,

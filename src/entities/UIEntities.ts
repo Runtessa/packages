@@ -26,6 +26,9 @@ export class UIPackage {
   @Column()
   version!: string;
 
+  @Column({ type: 'text', default: '' })
+  code!: string;
+
   @Column({ name: 'code_blob', type: 'text' })
   codeBlob!: string;
 
