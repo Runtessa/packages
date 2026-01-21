@@ -45,6 +45,7 @@ export class UIEntityController {
       const normalizedVersion = this.normalizeVersion(version);
       const normalizedCode = this.normalizeCode(codeBlob);
       const normalizedDeps = this.normalizeDependencies(dependencies);
+      const fileExtension = this.normalizeFileExtension(req.body?.fileExtension);
 
       const repo = this.dataSource.getRepository(UIPackage);
       const existing = await repo.findOne({
@@ -63,6 +64,7 @@ export class UIEntityController {
         version: normalizedVersion,
         codeBlob: normalizedCode,
         dependencies: normalizedDeps,
+        fileExtension,
         tenant: req.tenant!,
       });
       await repo.save(pkg);
@@ -90,6 +92,10 @@ export class UIEntityController {
         req.body?.dependencies !== undefined
           ? this.normalizeDependencies(req.body.dependencies)
           : pkg.dependencies ?? [];
+      const nextExt =
+        req.body?.fileExtension !== undefined
+          ? this.normalizeFileExtension(req.body.fileExtension)
+          : pkg.fileExtension;
 
       if (nextName !== pkg.name || nextVersion !== pkg.version) {
         const duplicate = await repo.findOne({
@@ -108,6 +114,7 @@ export class UIEntityController {
       pkg.version = nextVersion;
       pkg.codeBlob = nextCode;
       pkg.dependencies = nextDeps;
+      pkg.fileExtension = nextExt;
       await repo.save(pkg);
 
       return res.json(this.serialize(pkg));
@@ -168,6 +175,13 @@ export class UIEntityController {
     return raw.map((item) => String(item));
   }
 
+  private normalizeFileExtension(raw: unknown): string {
+    const allowed = new Set(["tsx", "jsx", "ts", "js", "json"]);
+    if (!raw || typeof raw !== "string") return "tsx";
+    const normalized = raw.replace(/^\./, "").toLowerCase();
+    return allowed.has(normalized) ? normalized : "tsx";
+  }
+
   private serialize(pkg: UIPackage) {
     return {
       id: pkg.id,
@@ -175,6 +189,7 @@ export class UIEntityController {
       version: pkg.version,
       codeBlob: pkg.codeBlob,
       dependencies: pkg.dependencies ?? [],
+      fileExtension: pkg.fileExtension,
       createdAt: pkg.createdAt,
       updatedAt: pkg.updatedAt,
     };

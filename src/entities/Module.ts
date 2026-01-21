@@ -32,6 +32,9 @@ export class ModuleEntity {
   @Column({ type: 'text' })
   code!: string;
 
+  @Column({ name: 'file_extension', default: 'js' })
+  fileExtension!: string;
+
   @ManyToOne(() => Tenant, (tenant) => tenant.modules, { onDelete: 'CASCADE' })
   tenant!: Tenant;
 

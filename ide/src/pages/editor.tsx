@@ -41,6 +41,7 @@ type ModuleDto = {
   routePath: string;
   method: string;
   code: string;
+  fileExtension?: string;
 };
 
 type UIPackageDto = {
@@ -49,6 +50,7 @@ type UIPackageDto = {
   version: string;
   codeBlob: string;
   dependencies: string[];
+  fileExtension?: string;
 };
 
 const LANGUAGE_OPTIONS: { value: EditorLanguage; label: string }[] = [
@@ -77,10 +79,27 @@ const detectLanguage = (fileName: string): EditorLanguage => {
   return "plaintext";
 };
 
-const formatModuleLabel = (mod: ModuleDto) =>
-  `[${mod.method}] ${mod.routePath}`;
+const sanitizeForFilename = (value: string) =>
+  value
+    .trim()
+    .replace(/^\/+/, "")
+    .replace(/[\/\\]+/g, "-")
+    .replace(/[:*?<>|"]/g, "")
+    .replace(/\s+/g, "-")
+    .toLowerCase();
 
-const formatUiLabel = (pkg: UIPackageDto) => `${pkg.name}@${pkg.version}`;
+const formatModuleLabel = (mod: ModuleDto) => {
+  const routeSlug = sanitizeForFilename(mod.routePath || "root") || "root";
+  const ext = mod.fileExtension?.replace(/^\./, "").toLowerCase() || "ts";
+  return `${mod.method.toLowerCase()}-${routeSlug}.module.${ext}`;
+};
+
+const formatUiLabel = (pkg: UIPackageDto) => {
+  const nameSlug = sanitizeForFilename(pkg.name || "ui");
+  const versionSlug = sanitizeForFilename(pkg.version || "latest");
+  const ext = pkg.fileExtension?.replace(/^\./, "").toLowerCase() || "tsx";
+  return `${nameSlug}-${versionSlug}.ui.${ext}`;
+};
 
 export default function EditorPage() {
   const { token } = useSessionToken();

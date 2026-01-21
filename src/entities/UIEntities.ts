@@ -32,6 +32,9 @@ export class UIPackage {
   @Column({ type: 'jsonb', default: () => "'[]'" })
   dependencies!: string[];
 
+  @Column({ name: 'file_extension', default: 'jsx' })
+  fileExtension!: string;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 

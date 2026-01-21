@@ -44,6 +44,7 @@ export class ModuleController {
       const normalizedRoute = this.normalizeRoute(routePath);
       const normalizedMethod = this.normalizeMethod(method);
       const codeBody = this.normalizeCode(code);
+      const fileExtension = this.normalizeFileExtension(req.body?.fileExtension);
 
       const repo = this.dataSource.getRepository(ModuleEntity);
       const existing = await repo.findOne({
@@ -61,6 +62,7 @@ export class ModuleController {
         routePath: normalizedRoute,
         method: normalizedMethod,
         code: codeBody,
+        fileExtension,
         tenant: req.tenant!,
       });
       await repo.save(mod);
@@ -84,6 +86,10 @@ export class ModuleController {
       const nextRoute = req.body?.routePath ? this.normalizeRoute(req.body.routePath) : mod.routePath;
       const nextMethod = req.body?.method ? this.normalizeMethod(req.body.method) : mod.method;
       const nextCode = req.body?.code !== undefined ? this.normalizeCode(req.body.code) : mod.code;
+      const nextExt =
+        req.body?.fileExtension !== undefined
+          ? this.normalizeFileExtension(req.body.fileExtension)
+          : mod.fileExtension;
 
       if (nextRoute !== mod.routePath || nextMethod !== mod.method) {
         const duplicate = await repo.findOne({
@@ -101,6 +107,7 @@ export class ModuleController {
       mod.routePath = nextRoute;
       mod.method = nextMethod;
       mod.code = nextCode;
+      mod.fileExtension = nextExt;
       await repo.save(mod);
 
       return res.json(this.serialize(mod));
@@ -158,12 +165,20 @@ export class ModuleController {
     return raw;
   }
 
+  private normalizeFileExtension(raw: unknown): string {
+    const allowed = new Set(["ts", "js", "jsx", "tsx"]);
+    if (!raw || typeof raw !== "string") return "ts";
+    const normalized = raw.replace(/^\./, "").toLowerCase();
+    return allowed.has(normalized) ? normalized : "ts";
+  }
+
   private serialize(mod: ModuleEntity) {
     return {
       id: mod.id,
       routePath: mod.routePath,
       method: mod.method,
       code: mod.code,
+      fileExtension: mod.fileExtension,
       createdAt: mod.createdAt,
       updatedAt: mod.updatedAt,
     };
