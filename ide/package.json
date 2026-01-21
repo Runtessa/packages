@@ -2,6 +2,7 @@
   "name": "ide",
   "version": "0.1.0",
   "private": true,
+  "proxy": "http://localhost:3000",
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "cra-template": "latest",

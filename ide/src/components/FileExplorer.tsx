@@ -11,10 +11,16 @@ export type ExplorerNode = {
   name: string;
   type: "folder" | "file";
   children?: ExplorerNode[];
+  // Optional metadata passed through to the consumer (e.g., backend identifiers)
+  meta?: Record<string, unknown>;
+  // Optional initial content for the node (used by the consumer)
+  content?: string;
 };
 
 export type FileExplorerProps = {
   onOpenFile?: (file: ExplorerNode) => void;
+  initialTree?: ExplorerNode;
+  readOnly?: boolean;
 };
 
 type DropPosition = "inside" | "before" | "after";
@@ -43,6 +49,7 @@ type NodeRowProps = {
   dropState: DropPosition | null;
   renameValue: string;
   renameError: string | null;
+  readOnly: boolean;
   onSelect: (node: ExplorerNode, isRenaming: boolean) => void;
   onToggleExpand: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, nodeId: string) => void;
@@ -386,6 +393,7 @@ const NodeRow = React.memo(function NodeRow({
   dropState,
   renameValue,
   renameError,
+  readOnly,
   onSelect,
   onToggleExpand,
   onContextMenu,
@@ -423,7 +431,7 @@ const NodeRow = React.memo(function NodeRow({
         isSelected ? "bg-[#094771] text-white" : "text-gray-200 hover:bg-[#2a2d2e]"
       }`}
       style={{ paddingLeft: 8 + depth * 12 }}
-      draggable={!isRenaming}
+      draggable={!isRenaming && !readOnly}
       onClick={(e) => {
         e.stopPropagation();
         onSelect(node, isRenaming);
@@ -438,16 +446,19 @@ const NodeRow = React.memo(function NodeRow({
       }}
       onContextMenu={(e) => onContextMenu(e, node.id)}
       onDragStart={(e) => {
+        if (readOnly) return;
         e.stopPropagation();
         onDragStart(node.id);
       }}
       onDragEnd={onDragLeaveNode}
       onDragOver={(e) => {
+        if (readOnly) return;
         e.preventDefault();
         onDragOverNode(node, e, rowRef.current);
       }}
       onDragLeave={onDragLeaveNode}
       onDrop={(e) => {
+        if (readOnly) return;
         e.preventDefault();
         if (dropState) onDropNode(node.id, dropState);
       }}
@@ -495,10 +506,15 @@ const NodeRow = React.memo(function NodeRow({
   );
 });
 
-export default function FileExplorer({ onOpenFile }: FileExplorerProps) {
+export default function FileExplorer({
+  onOpenFile,
+  initialTree,
+  readOnly = false,
+}: FileExplorerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [tree, setTree] = useState<ExplorerNode>(() => {
     if (typeof window === "undefined") return initialData;
+    if (initialTree) return initialTree;
     const stored = localStorage.getItem(STORAGE_TREE_KEY);
     if (stored) {
       try {
@@ -530,6 +546,17 @@ export default function FileExplorer({ onOpenFile }: FileExplorerProps) {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(null);
+
+  useEffect(() => {
+    if (initialTree) {
+      setTree(initialTree);
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        next.add(initialTree.id);
+        return next;
+      });
+    }
+  }, [initialTree]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -582,13 +609,14 @@ export default function FileExplorer({ onOpenFile }: FileExplorerProps) {
 
   const startRename = useCallback(
     (id: string) => {
+      if (readOnly) return;
       const node = findNodeById(tree, id);
       if (!node || node.id === "root") return;
       setRenamingId(id);
       setRenameValue(node.name);
       setRenameError(null);
     },
-    [tree]
+    [readOnly, tree]
   );
 
   const cancelRename = useCallback(() => {
@@ -598,6 +626,7 @@ export default function FileExplorer({ onOpenFile }: FileExplorerProps) {
   }, []);
 
   const confirmRename = useCallback(() => {
+    if (readOnly) return;
     if (!renamingId) return;
     // Inline rename validation: non-empty and unique among siblings
     const trimmed = renameValue.trim();
@@ -621,7 +650,7 @@ export default function FileExplorer({ onOpenFile }: FileExplorerProps) {
     setTree((prev) => renameNode(prev, renamingId, trimmed));
     setRenamingId(null);
     setRenameError(null);
-  }, [parentMap, renamingId, renameValue, tree]);
+  }, [parentMap, readOnly, renamingId, renameValue, tree]);
 
   const resolveParentForCreate = useCallback(() => {
     if (!selectedId) return "root";
@@ -634,6 +663,7 @@ export default function FileExplorer({ onOpenFile }: FileExplorerProps) {
 
   const createNode = useCallback(
     (type: "file" | "folder") => {
+      if (readOnly) return;
       const parentId = resolveParentForCreate();
       const parent = findNodeById(tree, parentId);
       if (!parent || parent.type !== "folder") return;
@@ -662,11 +692,12 @@ export default function FileExplorer({ onOpenFile }: FileExplorerProps) {
       setRenameValue(name);
       setRenameError(null);
     },
-    [resolveParentForCreate, tree]
+    [readOnly, resolveParentForCreate, tree]
   );
 
   const handleDelete = useCallback(
     (id: string | null) => {
+      if (readOnly) return;
       if (!id || id === "root") return;
       const node = findNodeById(tree, id);
       if (!node) return;
@@ -683,11 +714,12 @@ export default function FileExplorer({ onOpenFile }: FileExplorerProps) {
         if (renamingId === id) cancelRename();
       }
     },
-    [cancelRename, renamingId, selectedId, tree]
+    [cancelRename, readOnly, renamingId, selectedId, tree]
   );
 
   const performDrop = useCallback(
     (targetId: string, position: DropPosition) => {
+      if (readOnly) return;
       if (!draggingId) return;
       // Apply move and expand destination folders when dropping inside
       setTree((prev) => moveNode(prev, draggingId, targetId, position, buildParentMap(prev)));
@@ -699,7 +731,7 @@ export default function FileExplorer({ onOpenFile }: FileExplorerProps) {
       setDraggingId(null);
       setDropIndicator(null);
     },
-    [draggingId]
+    [draggingId, readOnly]
   );
 
   const handleKeyDown = useCallback(
@@ -766,10 +798,10 @@ export default function FileExplorer({ onOpenFile }: FileExplorerProps) {
           break;
         }
         case "F2":
-          if (selectedId) startRename(selectedId);
+          if (!readOnly && selectedId) startRename(selectedId);
           break;
         case "Delete":
-          handleDelete(selectedId);
+          if (!readOnly) handleDelete(selectedId);
           break;
         case "Escape":
           if (renamingId) {
@@ -791,6 +823,7 @@ export default function FileExplorer({ onOpenFile }: FileExplorerProps) {
       handleDelete,
       onOpenFile,
       parentMap,
+      readOnly,
       renamingId,
       selectedId,
       selectedNode,
@@ -877,25 +910,29 @@ export default function FileExplorer({ onOpenFile }: FileExplorerProps) {
         style={{ top: contextMenu.y, left: contextMenu.x }}
         onClick={(e) => e.stopPropagation()}
       >
-        <button
-          className="flex w-full items-center px-3 py-2 text-left hover:bg-[#2e2e2e]"
-          onClick={() => {
-            createNode("file");
-            setContextMenu(null);
-          }}
-        >
-          New File
-        </button>
-        <button
-          className="flex w-full items-center px-3 py-2 text-left hover:bg-[#2e2e2e]"
-          onClick={() => {
-            createNode("folder");
-            setContextMenu(null);
-          }}
-        >
-          New Folder
-        </button>
-        {node && !isRoot && (
+        {!readOnly && (
+          <>
+            <button
+              className="flex w-full items-center px-3 py-2 text-left hover:bg-[#2e2e2e]"
+              onClick={() => {
+                createNode("file");
+                setContextMenu(null);
+              }}
+            >
+              New File
+            </button>
+            <button
+              className="flex w-full items-center px-3 py-2 text-left hover:bg-[#2e2e2e]"
+              onClick={() => {
+                createNode("folder");
+                setContextMenu(null);
+              }}
+            >
+              New Folder
+            </button>
+          </>
+        )}
+        {node && !isRoot && !readOnly && (
           <>
             <button
               className="flex w-full items-center px-3 py-2 text-left hover:bg-[#2e2e2e]"
@@ -982,6 +1019,7 @@ export default function FileExplorer({ onOpenFile }: FileExplorerProps) {
                   ? dropIndicator.position
                   : null
               }
+              readOnly={readOnly}
               renameValue={renamingId === item.node.id ? renameValue : ""}
               renameError={renamingId === item.node.id ? renameError : null}
               onSelect={handleSelectNode}
@@ -1000,28 +1038,30 @@ export default function FileExplorer({ onOpenFile }: FileExplorerProps) {
         )}
       </div>
 
-      <div className="border-t border-[#2a2d2e] px-3 py-2 text-xs text-gray-300">
-        <div className="flex items-center gap-2">
-          <button
-            className="rounded px-2 py-1 hover:bg-[#2a2d2e]"
-            onClick={(e) => {
-              e.stopPropagation();
-              createNode("file");
-            }}
-          >
-            New File
-          </button>
-          <button
-            className="rounded px-2 py-1 hover:bg-[#2a2d2e]"
-            onClick={(e) => {
-              e.stopPropagation();
-              createNode("folder");
-            }}
-          >
-            New Folder
-          </button>
+      {!readOnly && (
+        <div className="border-t border-[#2a2d2e] px-3 py-2 text-xs text-gray-300">
+          <div className="flex items-center gap-2">
+            <button
+              className="rounded px-2 py-1 hover:bg-[#2a2d2e]"
+              onClick={(e) => {
+                e.stopPropagation();
+                createNode("file");
+              }}
+            >
+              New File
+            </button>
+            <button
+              className="rounded px-2 py-1 hover:bg-[#2a2d2e]"
+              onClick={(e) => {
+                e.stopPropagation();
+                createNode("folder");
+              }}
+            >
+              New Folder
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {renderContextMenu()}
     </div>

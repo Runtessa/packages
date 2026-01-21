@@ -1,6 +1,9 @@
 import "dotenv/config";
 import "reflect-metadata";
 import express, { NextFunction, Request, Response } from "express";
+import { createProxyMiddleware } from "http-proxy-middleware";
+import cors from "cors";
+import path from "path";
 import { AppError } from "./common/AppError";
 import { initializeDataSource, AppDataSource } from "./core/datasource";
 import { CryptoService } from "./core/security/CryptoService";
@@ -18,9 +21,40 @@ import { ModuleController } from "./app/controllers/ModuleController";
 import { UIEntityController } from "./app/controllers/UIEntityController";
 
 const app = express();
+
+// CORS for API routes; frontend is proxied so origin is same
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+  })
+);
+
 app.use(express.json({ limit: "256kb" }));
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static("public"));
+app.use("/public", express.static("public"));
+
+// Proxy all non-API routes to the CRA dev server (port 3001) with HMR/WebSocket support
+const frontendProxy = createProxyMiddleware({
+  target: "http://localhost:3001",
+  changeOrigin: true,
+  ws: true,
+});
+
+app.use((req, res, next) => {
+  const p = req.path.toLowerCase();
+  if (p.startsWith("/api") || p.startsWith("/auth") || p.startsWith("/admin")) {
+    return next();
+  }
+  return frontendProxy(req, res, next);
+});
+
+// Fallback static (for production build)
+app.use(
+  express.static(path.resolve(__dirname, "..", "ide", "build"), {
+    index: false,
+  })
+);
 
 const port = parseInt(process.env.PORT ?? "3000", 10);
 
@@ -63,7 +97,15 @@ const bootstrap = async () => {
 
   const contextMiddleware = ContextMiddleware(AppDataSource);
   const authGuard = AuthGuard(AppDataSource, cryptoService);
-
+  // app.use(
+  //   "/",
+  //   createProxyMiddleware({
+  //     target: "http://localhost:3001",
+  //     changeOrigin: true,
+  //     ws: true, // IMPORTANT: proxy websockets for HMR
+  //     // logLevel: "silent",
+  //   })
+  // );
   app.post("/admin/tenants", adminController.createTenant);
   app.post("/auth/register", contextMiddleware, authController.register);
   app.post("/auth/login", contextMiddleware, authController.login);
@@ -79,7 +121,12 @@ const bootstrap = async () => {
     authGuard,
     moduleController.getById
   );
-  app.post("/api/modules", contextMiddleware, authGuard, moduleController.create);
+  app.post(
+    "/api/modules",
+    contextMiddleware,
+    authGuard,
+    moduleController.create
+  );
   app.put(
     "/api/modules/:id",
     contextMiddleware,
@@ -124,6 +171,26 @@ const bootstrap = async () => {
     uiEntityController.remove
   );
 
+  // Serve frontend (IDE) for non-API routes
+  app.get("*", (req, res, next) => {
+    const p = req.path.toLowerCase();
+    if (
+      p.startsWith("/api") ||
+      p.startsWith("/auth") ||
+      p.startsWith("/admin")
+    ) {
+      return next();
+    }
+    const indexPath = path.resolve(
+      __dirname,
+      "..",
+      "ide",
+      "build",
+      "index.html"
+    );
+    return res.sendFile(indexPath);
+  });
+
   app.all("*", contextMiddleware, authGuard, dispatcher.handle);
 
   app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
@@ -151,8 +218,20 @@ const bootstrap = async () => {
     return res.status(status).json(payload);
   });
 
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
     console.log(`FaaS runtime listening on port ${port}`);
+  });
+  server.on("upgrade", (req, socket, head) => {
+    const pathname = req.url ? req.url.split("?")[0].toLowerCase() : "";
+    if (
+      pathname.startsWith("/api") ||
+      pathname.startsWith("/auth") ||
+      pathname.startsWith("/admin")
+    ) {
+      socket.destroy();
+      return;
+    }
+    frontendProxy.upgrade(req as any, socket as any, head);
   });
 };
 

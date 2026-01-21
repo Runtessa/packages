@@ -6,7 +6,9 @@
     "build": "tsc",
     "build:front": "cd kernel && npm run build && cd ..",
     "start": "node dist/server.js",
-    "dev": "npm run build:front && ts-node src/server.ts",
+    "dev": "concurrently -k -n server,client -c cyan,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "nodemon --watch src --ext ts --exec ts-node src/server.ts",
+    "dev:client": "cd ide && cross-env PORT=3001 BROWSER=none npm start",
     "seed": "ts-node src/seed.ts",
     "seed-packages": "ts-node src/seed-packages.ts",
     "dump": "node dump-project.js"
@@ -14,8 +16,10 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.516.0",
     "@aws-sdk/s3-request-presigner": "^3.516.0",
+    "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "http-proxy-middleware": "^3.0.5",
     "ioredis": "^5.4.1",
     "kafkajs": "^2.2.4",
     "monaco-react": "^1.1.0",
@@ -27,10 +31,15 @@
     "typeorm": "^0.3.20"
   },
   "devDependencies": {
+    "@types/http-proxy": "^1.17.15",
+    "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
     "@types/mssql": "^9.1.5",
     "@types/node": "^20.11.24",
     "@types/pg": "^8.16.0",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "nodemon": "^3.1.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   }

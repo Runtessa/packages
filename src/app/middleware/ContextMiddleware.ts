@@ -7,7 +7,14 @@ import { TenantRequest } from '../../types/RequestContext';
 export const ContextMiddleware =
   (dataSource: DataSource) => async (req: TenantRequest, res: Response, next: NextFunction) => {
     try {
-      const hostname = (req.hostname || '').toLowerCase();
+      const headerOverride = (req.headers['x-tenant-host'] as string | undefined)?.toLowerCase().trim();
+      const devFallback = process.env.DEV_TENANT_HOST?.toLowerCase().trim();
+
+      let hostname = (req.hostname || '').toLowerCase();
+      if (!hostname || hostname === 'localhost' || hostname === '127.0.0.1') {
+        hostname = headerOverride || devFallback || hostname;
+      }
+
       if (!hostname) {
         throw new AppError('Hostname required to resolve tenant', 400);
       }
