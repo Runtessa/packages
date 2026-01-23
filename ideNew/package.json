@@ -1,0 +1,45 @@
+{
+  "name": "amnet-dashboard",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "cross-env NEXT_CSS_TRANSFORMER=postcss NEXT_DISABLE_LIGHTNINGCSS=1 NEXT_IGNORE_LIGHTNINGCSS_BIN=1 next dev --webpack -p 3002",
+    "build": "cross-env NEXT_CSS_TRANSFORMER=postcss NEXT_DISABLE_LIGHTNINGCSS=1 NEXT_IGNORE_LIGHTNINGCSS_BIN=1 next build --webpack",
+    "start": "next start",
+    "type-check": "tsc --noEmit",
+    "dump": "node ./scripts/dump.js"
+  },
+  "dependencies": {
+    "bcryptjs": "latest",
+    "ioredis": "^5.8.2",
+    "mysql2": "^3.16.0",
+    "next": "latest",
+    "pg": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-icons": "^5.5.0",
+    "reflect-metadata": "^0.2.2",
+    "source-map-support": "^0.5.21",
+    "sqlite3": "^5.1.7",
+    "tedious": "^19.2.0",
+    "typeorm": "^0.3.28"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "latest",
+    "@types/bcryptjs": "latest",
+    "@types/ioredis": "^4.28.10",
+    "@types/node": "latest",
+    "@types/pg": "latest",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "latest",
+    "@types/react-icons": "latest",
+    "@types/source-map-support": "^0.5.10",
+    "autoprefixer": "latest",
+    "cross-env": "^10.1.0",
+    "lightningcss": "^1.30.2",
+    "postcss": "latest",
+    "tailwindcss": "3.4.14",
+    "typescript": "5.9.3"
+  }
+}

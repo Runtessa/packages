@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:latest
+    volumes:
+      - /var/app/redis-data:/data
+
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - /var/app/postgres-data:/var/lib/postgresql
+
+  app:
+    build: .
+    expose:
+      - "3000"
+    volumes:
+      - /var/app/.env:/app/.env
+    depends_on:
+      - redis
+      - postgres
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - /var/app/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+
+volumes:
+  redis-data:
+  postgres-data:
+  nginx-data:

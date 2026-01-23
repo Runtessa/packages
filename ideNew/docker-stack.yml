@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:latest
+    volumes:
+      - type: bind
+        source: /var/app/redis-data
+        target: /data
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - type: bind
+        source: /var/app/postgres-data
+        target: /var/lib/postgresql/data
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - type: bind
+        source: /var/app/.env
+        target: /app/.env
+    deploy:
+      replicas: 5
+      restart_policy:
+        condition: on-failure
+
+# Only bind mounts are used; no named volumes needed here.
