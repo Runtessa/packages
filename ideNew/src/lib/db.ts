@@ -6,11 +6,26 @@ import { SystemLog } from "./entities/SystemLog";
 import { hashPassword } from "./password";
 
 const dbType = (process.env.DB_TYPE || "postgres") as DataSourceOptions["type"];
+const dbName = process.env.DB_NAME;
+const normalizeDatabaseUrl = (rawUrl?: string, name?: string) => {
+  if (!rawUrl || !name) return rawUrl;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.pathname && parsed.pathname !== "/") {
+      return rawUrl;
+    }
+    parsed.pathname = `/${name}`;
+    return parsed.toString();
+  } catch {
+    return rawUrl;
+  }
+};
+const databaseUrl = normalizeDatabaseUrl(process.env.DATABASE_URL, dbName);
 
 const baseOptions = {
   type: dbType,
-  url: process.env.DATABASE_URL,
-  database: process.env.DB_NAME,
+  url: databaseUrl,
+  database: dbName,
   synchronize: true,
   logging: false,
   entities: [User, LoginSession, SystemLog],

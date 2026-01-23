@@ -9,11 +9,29 @@ import { UIPackage } from './entities/UIEntities';
 const dbType = (process.env.CORE_DB_TYPE ||
   process.env.DB_TYPE ||
   'postgres') as DataSourceOptions['type'];
+const dbName = process.env.CORE_DB_NAME || process.env.DB_NAME;
+const normalizeDatabaseUrl = (rawUrl?: string, name?: string) => {
+  if (!rawUrl || !name) return rawUrl;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.pathname && parsed.pathname !== '/') {
+      return rawUrl;
+    }
+    parsed.pathname = `/${name}`;
+    return parsed.toString();
+  } catch {
+    return rawUrl;
+  }
+};
+const databaseUrl = normalizeDatabaseUrl(
+  process.env.CORE_DATABASE_URL || process.env.DATABASE_URL,
+  dbName
+);
 
 const baseOptions = {
   type: dbType,
-  url: process.env.CORE_DATABASE_URL || process.env.DATABASE_URL,
-  database: process.env.CORE_DB_NAME || process.env.DB_NAME,
+  url: databaseUrl,
+  database: dbName,
   synchronize: false,
   logging: false,
   entities: [Tenant, Account, Secret, ModuleEntity, UIPackage],

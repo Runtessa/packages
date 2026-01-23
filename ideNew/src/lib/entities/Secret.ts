@@ -7,7 +7,7 @@ import {
   Unique,
   UpdateDateColumn,
 } from 'typeorm';
-import { Tenant } from './Tenant';
+import type { Tenant } from './Tenant';
 
 @Entity({ name: 'secrets' })
 @Unique(['keyName', 'tenant'])
@@ -27,7 +27,7 @@ export class Secret {
   @Column()
   authTag!: string;
 
-  @ManyToOne(() => Tenant, (tenant) => tenant.secrets, { onDelete: 'CASCADE' })
+  @ManyToOne('Tenant', 'secrets', { onDelete: 'CASCADE' })
   tenant!: Tenant;
 
   @CreateDateColumn()

@@ -7,7 +7,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { Tenant } from './Tenant';
+import type { Tenant } from './Tenant';
 
 export enum HttpMethod {
   GET = 'GET',
@@ -35,7 +35,7 @@ export class ModuleEntity {
   @Column({ name: 'file_extension', default: 'js' })
   fileExtension!: string;
 
-  @ManyToOne(() => Tenant, (tenant) => tenant.modules, { onDelete: 'CASCADE' })
+  @ManyToOne('Tenant', 'modules', { onDelete: 'CASCADE' })
   tenant!: Tenant;
 
   @CreateDateColumn()
