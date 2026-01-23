@@ -6,6 +6,7 @@ import {
   FiSettings,
   FiFileText,
   FiUsers,
+  FiCode,
 } from "react-icons/fi";
 import { Button } from "@/components/ui/Button";
 import { useSessionToken } from "@/lib/client/session";
@@ -28,6 +29,7 @@ type NavItem = {
 const navItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: FiGrid, match: "/dashboard" },
   { label: "Docs", href: "/docs", icon: FiFileText, match: "/docs" },
+  { label: "Editor", href: "/editor", icon: FiCode, match: "/editor" },
   {
     label: "Users",
     href: "/admin/users",

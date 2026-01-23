@@ -4,20 +4,29 @@ import AppShell from "@/layouts/AppShell";
 import { AuthGuard } from "@/components/AuthGuard";
 import { ToastProvider } from "@/components/ui/Toast";
 import { useRouter } from "next/router";
+import Head from "next/head";
 
 export default function App({ Component, pageProps }: AppProps) {
   const router = useRouter();
-  const hideShell = router.pathname === "/login";
+  const isLogin = router.pathname === "/login";
+  const hideShell = isLogin || router.pathname === "/editor";
 
   return (
     <ToastProvider>
-      {hideShell ? (
+      <Head>
+        <title>ADA Idp Control Panel</title>
+      </Head>
+      {isLogin ? (
         <Component {...pageProps} />
       ) : (
         <AuthGuard>
-          <AppShell>
+          {hideShell ? (
             <Component {...pageProps} />
-          </AppShell>
+          ) : (
+            <AppShell>
+              <Component {...pageProps} />
+            </AppShell>
+          )}
         </AuthGuard>
       )}
     </ToastProvider>

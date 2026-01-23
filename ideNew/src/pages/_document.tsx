@@ -3,9 +3,8 @@ import Document, { Html, Head, Main, NextScript } from "next/document";
 class MyDocument extends Document {
   render() {
     return (
-      <html dir="ltr" lang="en">
+      <Html dir="ltr" lang="en">
         <Head>
-          <title>ADA Idp Control Panel</title>
           <link rel="preconnect" href="https://fonts.googleapis.com" />
           <link
             rel="preconnect"
@@ -18,7 +17,7 @@ class MyDocument extends Document {
           <Main />
           <NextScript />
         </body>
-      </html>
+      </Html>
     );
   }
 }

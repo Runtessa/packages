@@ -11,8 +11,10 @@
     "dump": "node ./scripts/dump.js"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "bcryptjs": "latest",
     "ioredis": "^5.8.2",
+    "monaco-editor": "latest",
     "mysql2": "^3.16.0",
     "next": "latest",
     "pg": "latest",
