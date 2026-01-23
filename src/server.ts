@@ -19,6 +19,7 @@ import { TenantRequest } from "./types/RequestContext";
 import { RegistryController } from "./app/controllers/RegistryController";
 import { ModuleController } from "./app/controllers/ModuleController";
 import { UIEntityController } from "./app/controllers/UIEntityController";
+import { ApiRouter } from "./app/routers/api";
 
 const app = express();
 
@@ -99,66 +100,15 @@ const bootstrap = async () => {
   app.post("/admin/tenants", adminController.createTenant);
   app.post("/auth/register", contextMiddleware, authController.register);
   app.post("/auth/login", contextMiddleware, authController.login);
-  app.get(
-    "/api/registry/:name/:version?",
-    contextMiddleware,
-    registryController.resolve
-  );
-  app.get("/api/modules", contextMiddleware, authGuard, moduleController.list);
-  app.get(
-    "/api/modules/:id",
-    contextMiddleware,
-    authGuard,
-    moduleController.getById
-  );
-  app.post(
-    "/api/modules",
-    contextMiddleware,
-    authGuard,
-    moduleController.create
-  );
-  app.put(
-    "/api/modules/:id",
-    contextMiddleware,
-    authGuard,
-    moduleController.update
-  );
-  app.delete(
-    "/api/modules/:id",
-    contextMiddleware,
-    authGuard,
-    moduleController.remove
-  );
-
-  app.get(
-    "/api/ui-entities",
-    contextMiddleware,
-    authGuard,
-    uiEntityController.list
-  );
-  app.get(
-    "/api/ui-entities/:id",
-    contextMiddleware,
-    authGuard,
-    uiEntityController.getById
-  );
-  app.post(
-    "/api/ui-entities",
-    contextMiddleware,
-    authGuard,
-    uiEntityController.create
-  );
-  app.put(
-    "/api/ui-entities/:id",
-    contextMiddleware,
-    authGuard,
-    uiEntityController.update
-  );
-  app.delete(
-    "/api/ui-entities/:id",
-    contextMiddleware,
-    authGuard,
-    uiEntityController.remove
+  app.use(
+    "/api",
+    ApiRouter(
+      contextMiddleware,
+      authGuard,
+      registryController,
+      moduleController,
+      uiEntityController
+    )
   );
   // Serve frontend (IDE) for non-API routes
   app.get("*", (req, res, next) => {
@@ -166,7 +116,7 @@ const bootstrap = async () => {
     if (
       p.startsWith("/api") ||
       p.startsWith("/auth") ||
-      p.startsWith("/admin") 
+      p.startsWith("/admin")
     ) {
       return next();
     }
@@ -201,21 +151,9 @@ const bootstrap = async () => {
     return res.status(status).json(payload);
   });
 
-  const server = app.listen(port, () => {
+  app.listen(port, () => {
     console.log(`FaaS runtime listening on port ${port}`);
   });
-  // server.on("upgrade", (req, socket, head) => {
-  //   const pathname = req.url ? req.url.split("?")[0].toLowerCase() : "";
-  //   if (
-  //     pathname.startsWith("/api") ||
-  //     pathname.startsWith("/auth") ||
-  //     pathname.startsWith("/admin")
-  //   ) {
-  //     socket.destroy();
-  //     return;
-  //   }
-  //   frontendProxy.upgrade(req as any, socket as any, head);
-  // });
 };
 
 bootstrap().catch((error) => {
