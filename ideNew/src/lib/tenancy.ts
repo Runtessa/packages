@@ -13,17 +13,10 @@ export const resolveTenant = async (req: NextApiRequest): Promise<Tenant> => {
   const headerOverride = normalizeHost(req.headers['x-tenant-host'] as string | undefined);
   const devFallback = normalizeHost(process.env.DEV_TENANT_HOST);
 
-  let hostname = normalizeHost(req.headers.host);
-  if (hostname.includes(':')) {
-    hostname = hostname.split(':')[0];
-  }
-
-  if (!hostname || hostname === 'localhost' || hostname === '127.0.0.1') {
-    hostname = headerOverride || devFallback || hostname;
-  }
+  let hostname = headerOverride || devFallback;
 
   if (!hostname) {
-    const err = new Error('Hostname required to resolve tenant');
+    const err = new Error('Tenant header required to resolve tenant');
     (err as any).statusCode = 400;
     throw err;
   }

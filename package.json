@@ -8,7 +8,6 @@
     "start": "node dist/server.js",
     "dev": "concurrently -k -n server,client -c cyan,magenta \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "nodemon --watch src --ext ts --exec ts-node src/server.ts",
-    "dev:client": "cd ide && cross-env PORT=3001 BROWSER=none npm start",
     "seed": "ts-node src/seed.ts",
     "seed-packages": "ts-node src/seed-packages.ts",
     "dump": "node dump-project.js"

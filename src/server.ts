@@ -1,7 +1,6 @@
 import "dotenv/config";
 import "reflect-metadata";
 import express, { NextFunction, Request, Response } from "express";
-import { createProxyMiddleware } from "http-proxy-middleware";
 import cors from "cors";
 import path from "path";
 import { AppError } from "./common/AppError";
@@ -19,7 +18,7 @@ import { TenantRequest } from "./types/RequestContext";
 import { RegistryController } from "./app/controllers/RegistryController";
 import { ModuleController } from "./app/controllers/ModuleController";
 import { UIEntityController } from "./app/controllers/UIEntityController";
-import { ApiRouter } from "./app/routers/api";
+// import { ApiRouter } from "./app/routers/api";
 
 const app = express();
 
@@ -35,20 +34,6 @@ app.use(express.json({ limit: "256kb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use("/public", express.static("public"));
 
-// Proxy all non-API routes to the CRA dev server (port 3001) with HMR/WebSocket support
-const frontendProxy = createProxyMiddleware({
-  target: "http://localhost:3001",
-  changeOrigin: true,
-  ws: true,
-});
-
-app.use("/panel", (req, res, next) => {
-  const p = req.path.toLowerCase();
-  if (p.startsWith("/api") || p.startsWith("/auth") || p.startsWith("/admin")) {
-    return next();
-  }
-  return frontendProxy(req, res, next);
-});
 // Fallback static (for production build)
 app.use(
   express.static(path.resolve(__dirname, "..", "public"), {
@@ -100,16 +85,16 @@ const bootstrap = async () => {
   app.post("/admin/tenants", adminController.createTenant);
   app.post("/auth/register", contextMiddleware, authController.register);
   app.post("/auth/login", contextMiddleware, authController.login);
-  app.use(
-    "/api",
-    ApiRouter(
-      contextMiddleware,
-      authGuard,
-      registryController,
-      moduleController,
-      uiEntityController
-    )
-  );
+  // app.use(
+  //   "/api",
+  //   ApiRouter(
+  //     contextMiddleware,
+  //     authGuard,
+  //     registryController,
+  //     moduleController,
+  //     uiEntityController
+  //   )
+  // );
   // Serve frontend (IDE) for non-API routes
   app.get("*", (req, res, next) => {
     const p = req.path.toLowerCase();

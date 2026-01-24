@@ -16,6 +16,7 @@ class MyDocument extends Document {
         <body className="bg-bgApp text-textPrimary">
           <Main />
           <NextScript />
+          <script src="babel/bable.js"></script>
         </body>
       </Html>
     );

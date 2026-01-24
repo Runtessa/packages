@@ -21,6 +21,28 @@ export type FileExplorerProps = {
   onOpenFile?: (file: ExplorerNode) => void;
   initialTree?: ExplorerNode;
   readOnly?: boolean;
+  onCreateNode?: (context: {
+    type: "file" | "folder";
+    parentId: string;
+    parentPath: ExplorerNode[];
+  }) => boolean | void;
+  onRenameNode?: (context: {
+    node: ExplorerNode;
+    parentId: string | null;
+    parentPath: ExplorerNode[];
+  }) => boolean | void;
+  onDeleteNode?: (context: {
+    node: ExplorerNode;
+    parentId: string | null;
+    parentPath: ExplorerNode[];
+  }) => boolean | void;
+  onMoveNode?: (context: {
+    node: ExplorerNode;
+    targetId: string;
+    position: DropPosition;
+    parentId: string | null;
+    parentPath: ExplorerNode[];
+  }) => boolean | void;
 };
 
 type DropPosition = "inside" | "before" | "after";
@@ -341,8 +363,9 @@ const dropPositionFromPointer = (
   if (!element) return "inside";
   const rect = element.getBoundingClientRect();
   const offsetY = event.clientY - rect.top;
-  const threshold = 6;
   if (node.type === "folder") {
+    if (!node.children || node.children.length === 0) return "inside";
+    const threshold = Math.max(4, rect.height * 0.2);
     if (offsetY < threshold) return "before";
     if (offsetY > rect.height - threshold) return "after";
     return "inside";
@@ -427,7 +450,7 @@ const NodeRow = React.memo(function NodeRow({
   return (
     <div
       ref={rowRef}
-      className={`relative flex cursor-default items-center gap-2 px-2 py-0.5 text-sm ${
+      className={`group relative flex cursor-default items-center gap-2 px-2 py-0.5 text-sm ${
         isSelected ? "bg-[#094771] text-white" : "text-gray-200 hover:bg-[#2a2d2e]"
       }`}
       style={{ paddingLeft: 8 + depth * 12 }}
@@ -500,7 +523,22 @@ const NodeRow = React.memo(function NodeRow({
           )}
         </div>
       ) : (
-        <span className="flex-1 truncate">{node.name}</span>
+        <>
+          <span className="flex-1 truncate">{node.name}</span>
+          {!readOnly && (
+            <button
+              type="button"
+              className="ml-auto rounded px-1 text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200"
+              onClick={(e) => {
+                e.stopPropagation();
+                onContextMenu(e, node.id);
+              }}
+              aria-label="Open item menu"
+            >
+              ...
+            </button>
+          )}
+        </>
       )}
     </div>
   );
@@ -510,6 +548,10 @@ export default function FileExplorer({
   onOpenFile,
   initialTree,
   readOnly = false,
+  onCreateNode,
+  onRenameNode,
+  onDeleteNode,
+  onMoveNode,
 }: FileExplorerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [tree, setTree] = useState<ExplorerNode>(() => {
@@ -587,6 +629,25 @@ export default function FileExplorer({
     [tree, expandedIds]
   );
 
+  const getParentPath = useCallback(
+    (nodeId: string | null) => {
+      if (!nodeId) return [];
+      const path: ExplorerNode[] = [];
+      let currentId = nodeId;
+      while (currentId) {
+        const current = findNodeById(tree, currentId);
+        if (current) {
+          path.unshift(current);
+        }
+        const nextId = parentMap.get(currentId) ?? null;
+        if (!nextId) break;
+        currentId = nextId;
+      }
+      return path;
+    },
+    [parentMap, tree]
+  );
+
   const selectedNode = useMemo(
     () => (selectedId ? findNodeById(tree, selectedId) : null),
     [selectedId, tree]
@@ -612,11 +673,15 @@ export default function FileExplorer({
       if (readOnly) return;
       const node = findNodeById(tree, id);
       if (!node || node.id === "root") return;
+      const parentId = parentMap.get(node.id) ?? null;
+      const parentPath = getParentPath(parentId);
+      const handled = onRenameNode?.({ node, parentId, parentPath });
+      if (handled) return;
       setRenamingId(id);
       setRenameValue(node.name);
       setRenameError(null);
     },
-    [readOnly, tree]
+    [getParentPath, onRenameNode, parentMap, readOnly, tree]
   );
 
   const cancelRename = useCallback(() => {
@@ -667,6 +732,9 @@ export default function FileExplorer({
       const parentId = resolveParentForCreate();
       const parent = findNodeById(tree, parentId);
       if (!parent || parent.type !== "folder") return;
+      const parentPath = getParentPath(parentId);
+      const handled = onCreateNode?.({ type, parentId, parentPath });
+      if (handled) return;
 
       // Pick a unique, contextual default name for the new entry
       const baseName = type === "file" ? "New File" : "New Folder";
@@ -692,7 +760,7 @@ export default function FileExplorer({
       setRenameValue(name);
       setRenameError(null);
     },
-    [readOnly, resolveParentForCreate, tree]
+    [getParentPath, onCreateNode, readOnly, resolveParentForCreate, tree]
   );
 
   const handleDelete = useCallback(
@@ -701,6 +769,10 @@ export default function FileExplorer({
       if (!id || id === "root") return;
       const node = findNodeById(tree, id);
       if (!node) return;
+      const parentId = parentMap.get(node.id) ?? null;
+      const parentPath = getParentPath(parentId);
+      const handled = onDeleteNode?.({ node, parentId, parentPath });
+      if (handled) return;
       const ok = window.confirm(
         `Delete "${node.name}"${
           node.type === "folder" ? " and its contents" : ""
@@ -714,13 +786,39 @@ export default function FileExplorer({
         if (renamingId === id) cancelRename();
       }
     },
-    [cancelRename, readOnly, renamingId, selectedId, tree]
+    [
+      cancelRename,
+      getParentPath,
+      onDeleteNode,
+      parentMap,
+      readOnly,
+      renamingId,
+      selectedId,
+      tree,
+    ]
   );
 
   const performDrop = useCallback(
     (targetId: string, position: DropPosition) => {
       if (readOnly) return;
       if (!draggingId) return;
+      const movingNode = findNodeById(tree, draggingId);
+      if (movingNode) {
+        const parentId = parentMap.get(movingNode.id) ?? null;
+        const parentPath = getParentPath(parentId);
+        const handled = onMoveNode?.({
+          node: movingNode,
+          targetId,
+          position,
+          parentId,
+          parentPath,
+        });
+        if (handled) {
+          setDraggingId(null);
+          setDropIndicator(null);
+          return;
+        }
+      }
       // Apply move and expand destination folders when dropping inside
       setTree((prev) =>
         moveNode(prev, draggingId, targetId, position, buildParentMap(prev))
@@ -733,7 +831,7 @@ export default function FileExplorer({
       setDraggingId(null);
       setDropIndicator(null);
     },
-    [draggingId, readOnly]
+    [draggingId, getParentPath, onMoveNode, parentMap, readOnly, tree]
   );
 
   const handleKeyDown = useCallback(
@@ -984,7 +1082,7 @@ export default function FileExplorer({
   return (
     <div
       ref={containerRef}
-      className="relative flex h-full w-80 flex-col select-none bg-[#1e1e1e] text-gray-100"
+      className="relative flex h-full w-80 flex-col select-none bg-[#252526] text-gray-100 outline-none"
       tabIndex={0}
       onKeyDown={handleKeyDown}
       onClick={() => {

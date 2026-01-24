@@ -7,6 +7,7 @@ import {
   FiFileText,
   FiUsers,
   FiCode,
+  FiLayers,
 } from "react-icons/fi";
 import { Button } from "@/components/ui/Button";
 import { useSessionToken } from "@/lib/client/session";
@@ -30,6 +31,13 @@ const navItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: FiGrid, match: "/dashboard" },
   { label: "Docs", href: "/docs", icon: FiFileText, match: "/docs" },
   { label: "Editor", href: "/editor", icon: FiCode, match: "/editor" },
+  {
+    label: "Tenants",
+    href: "/admin/tenants",
+    icon: FiLayers,
+    match: "/admin/tenants",
+    roles: ["admin"],
+  },
   {
     label: "Users",
     href: "/admin/users",
