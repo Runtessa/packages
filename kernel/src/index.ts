@@ -2,16 +2,18 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 
 interface Options {
-  registryUrl: string;
+  registryUrl?: string;
 }
 
 export class Kernel {
   registryUrl: string;
   cache: Map<string, any>;
+  private appliedStyles: Map<string, HTMLStyleElement>;
 
-  constructor(options: Options) {
+  constructor(options: Options = {}) {
     this.registryUrl = (options && options.registryUrl) || "/api/registry";
     this.cache = new Map(); // key: name@version -> exports or Promise<exports>
+    this.appliedStyles = new Map();
   }
 
   async load(name: string, version: string = "latest") {
@@ -40,12 +42,28 @@ export class Kernel {
         `Failed to fetch package ${name}@${version || "latest"} (${res.status})`
       );
     }
-    const payload = (await res.json()) as any;
+    const payload = (await res.json()) as {
+      source: string;
+      dependencies?: string[];
+      fileExtension?: string;
+    };
     const dependencies = payload.dependencies || [];
+    const fileExtension = (payload.fileExtension || "js").toLowerCase();
+    const cacheKey = `${name}@${version || "latest"}`;
 
     // Pre-load dependencies
     for (const dep of dependencies) {
       await this.load(dep);
+    }
+
+    if (fileExtension === "css") {
+      const cssText = payload.source || "";
+      const styleElement = this.injectCss(cacheKey, cssText);
+      return {
+        fileExtension,
+        cssText,
+        styleElement,
+      };
     }
 
     const module = { exports: {} };
@@ -62,6 +80,23 @@ export class Kernel {
       module.exports = result;
     }
     return module.exports;
+  }
+
+  private injectCss(cacheKey: string, cssText: string) {
+    if (typeof document === "undefined") return null;
+    const existing = this.appliedStyles.get(cacheKey);
+    if (existing) {
+      if (existing.textContent !== cssText) {
+        existing.textContent = cssText;
+      }
+      return existing;
+    }
+    const style = document.createElement("style");
+    style.setAttribute("data-ui-style", cacheKey);
+    style.textContent = cssText;
+    document.head.appendChild(style);
+    this.appliedStyles.set(cacheKey, style);
+    return style;
   }
 
   requireLocal(name: string) {

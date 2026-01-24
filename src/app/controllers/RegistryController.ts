@@ -43,6 +43,7 @@ export class RegistryController {
         version: pkg.version,
         source: pkg.codeBlob,
         dependencies: pkg.dependencies ?? [],
+        fileExtension: pkg.fileExtension,
       });
     } catch (error) {
       next(error);

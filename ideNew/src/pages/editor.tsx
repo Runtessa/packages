@@ -1,7 +1,10 @@
 import '@/lib/monaco';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
+import Image from 'next/image';
+import Link from 'next/link';
 import Script from 'next/script';
+import { useRouter } from 'next/router';
 import FileExplorer, { ExplorerNode } from '@/components/FileExplorer';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
@@ -12,6 +15,7 @@ import { FormLayout } from '@/components/ui/FormLayout';
 import { useToast } from '@/components/ui/Toast';
 import { useSessionToken } from '@/lib/client/session';
 import { getSelectedTenantHost } from '@/lib/client/tenant';
+import branding from '@/branding.json';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
@@ -110,6 +114,13 @@ const LANGUAGE_OPTIONS: { value: EditorLanguage; label: string }[] = [
   { value: 'plaintext', label: 'Plain Text' },
 ];
 
+const EDITOR_NAV_ITEMS = [
+  { label: 'Editor', href: '/editor', match: '/editor' },
+  { label: 'Dashboard', href: '/dashboard', match: '/dashboard' },
+  { label: 'Docs', href: '/docs', match: '/docs' },
+  { label: 'Tenants', href: '/admin/tenants', match: '/admin/tenants' },
+];
+
 const CONTENT_STORAGE_KEY = 'editor-file-contents';
 
 const detectLanguage = (fileName: string): EditorLanguage => {
@@ -152,17 +163,20 @@ const splitUiName = (name: string) =>
 const buildUiName = (segments: string[]) => segments.join('/');
 
 const MODULE_EXTENSION = 'js';
-const UI_EXTENSION = 'jsx';
+const DEFAULT_UI_EXTENSION = 'jsx';
+const UI_EXTENSION_OPTIONS = [DEFAULT_UI_EXTENSION, 'js', 'css'];
 
 const coerceModuleExtension = (value?: string) =>
   value && value.replace(/^\./, '').toLowerCase() === MODULE_EXTENSION
     ? MODULE_EXTENSION
     : MODULE_EXTENSION;
 
-const coerceUiExtension = (value?: string) =>
-  value && value.replace(/^\./, '').toLowerCase() === UI_EXTENSION
-    ? UI_EXTENSION
-    : UI_EXTENSION;
+const coerceUiExtension = (value?: string) => {
+  const normalized = value?.replace(/^\./, '').toLowerCase();
+  return normalized && UI_EXTENSION_OPTIONS.includes(normalized)
+    ? normalized
+    : DEFAULT_UI_EXTENSION;
+};
 
 const formatModuleFileName = (mod: ModuleDto) => {
   return `${mod.method.toLowerCase()}.module.${coerceModuleExtension(mod.fileExtension)}`;
@@ -212,7 +226,6 @@ const findPathById = (root: ExplorerNode, nodeId: string): ExplorerNode[] => {
 
 const MODULE_METHOD_OPTIONS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 const FILE_EXTENSION_OPTIONS = [MODULE_EXTENSION];
-const UI_EXTENSION_OPTIONS = [UI_EXTENSION];
 const FOLDER_STORAGE_KEY = 'editor-folder-overrides';
 
 const DEFAULT_MODULE_CODE = `module.exports = async function handler(req, adapters) {
@@ -227,6 +240,7 @@ const DEFAULT_UI_CODE = `export default function NewComponent() {
   return <div>New component</div>;
 }
 `;
+const DEFAULT_CSS_CODE = `/* Add styles for UI entities here */`;
 
 const makeFolderId = (scope: ExplorerScope, segments: string[]) =>
   `${scope}-folder-${segments.join('/')}`;
@@ -370,6 +384,7 @@ const compileWithBabel = (code: string): string => {
 };
 
 export default function EditorPage() {
+  const router = useRouter();
   const { token, clear, ready } = useSessionToken();
   const { success, error: showError } = useToast();
   const [fileContents, setFileContents] = useState<Record<string, string>>(
@@ -411,7 +426,7 @@ export default function EditorPage() {
   const [uiForm, setUiForm] = useState<UiFormState>({
     name: 'NewComponent',
     version: '1.0.0',
-    fileExtension: UI_EXTENSION,
+    fileExtension: DEFAULT_UI_EXTENSION,
     dependencies: '',
     code: DEFAULT_UI_CODE,
   });
@@ -427,7 +442,7 @@ export default function EditorPage() {
   const [editUiForm, setEditUiForm] = useState<UiFormState>({
     name: '',
     version: '',
-    fileExtension: UI_EXTENSION,
+    fileExtension: DEFAULT_UI_EXTENSION,
     dependencies: '',
     code: '',
   });
@@ -640,11 +655,12 @@ export default function EditorPage() {
           },
         });
       } else {
-        if (!window.Babel) {
+        const uiExtension = coerceUiExtension(activeFile.meta.fileExtension);
+        if (uiExtension !== 'css' && !window.Babel) {
           throw new Error('Babel runtime not loaded in browser; cannot build code_blob');
         }
         // Compile source to code_blob using the in-browser Babel runtime (see ideNew/public/babel/bable.js)
-        const compiled = compileWithBabel(content);
+        const compiled = uiExtension === 'css' ? content : compileWithBabel(content);
         await apiFetch(`/api/ui-entities/${activeFile.meta.backendId}`, {
           method: 'PUT',
           body: {
@@ -653,7 +669,7 @@ export default function EditorPage() {
             code: content,
             codeBlob: compiled,
             dependencies: activeFile.meta.dependencies ?? [],
-            fileExtension: coerceUiExtension(activeFile.meta.fileExtension),
+            fileExtension: uiExtension,
           },
         });
       }
@@ -695,7 +711,7 @@ export default function EditorPage() {
         setUiForm({
           name: `${prefix}NewComponent`,
           version: '1.0.0',
-          fileExtension: UI_EXTENSION,
+          fileExtension: DEFAULT_UI_EXTENSION,
           dependencies: '',
           code: DEFAULT_UI_CODE,
         });
@@ -772,21 +788,24 @@ export default function EditorPage() {
       setActionError('Name and version are required.');
       return;
     }
-    if (!window.Babel) {
+    const uiExtension = coerceUiExtension(uiForm.fileExtension);
+    if (uiExtension !== 'css' && !window.Babel) {
       setActionError('Babel runtime not loaded in browser; cannot build code_blob.');
       return;
     }
     try {
-      const compiled = compileWithBabel(uiForm.code || DEFAULT_UI_CODE);
+      const fallbackSource = uiExtension === 'css' ? DEFAULT_CSS_CODE : DEFAULT_UI_CODE;
+      const sourceCode = uiForm.code || fallbackSource;
+      const compiled = uiExtension === 'css' ? sourceCode : compileWithBabel(sourceCode);
       await apiFetch('/api/ui-entities', {
         method: 'POST',
         body: {
           name: uiForm.name,
           version: uiForm.version,
-          code: uiForm.code || DEFAULT_UI_CODE,
+          code: sourceCode,
           codeBlob: compiled,
           dependencies: parseDependencies(uiForm.dependencies),
-          fileExtension: UI_EXTENSION,
+          fileExtension: uiExtension,
         },
       });
       success('UI entity created');
@@ -863,13 +882,14 @@ export default function EditorPage() {
       return;
     }
     try {
+      const uiExtension = coerceUiExtension(editUiForm.fileExtension);
       await apiFetch(`/api/ui-entities/${editMeta.backendId}`, {
         method: 'PUT',
         body: {
           name: editUiForm.name,
           version: editUiForm.version,
           dependencies: parseDependencies(editUiForm.dependencies),
-          fileExtension: UI_EXTENSION,
+          fileExtension: uiExtension,
         },
       });
       success('UI entity updated');
@@ -940,7 +960,7 @@ export default function EditorPage() {
                 name: nextName,
                 version: pkg.version,
                 dependencies: pkg.dependencies ?? [],
-                fileExtension: UI_EXTENSION,
+                fileExtension: coerceUiExtension(pkg.fileExtension),
               },
             });
           })
@@ -1170,7 +1190,7 @@ export default function EditorPage() {
             name: nextName,
             version: meta.version,
             dependencies: meta.dependencies ?? [],
-            fileExtension: UI_EXTENSION,
+            fileExtension: coerceUiExtension(meta.fileExtension),
           },
         })
           .then(() => loadTree())
@@ -1220,7 +1240,7 @@ export default function EditorPage() {
                     name: nextName,
                     version: pkg.version,
                     dependencies: pkg.dependencies ?? [],
-                    fileExtension: UI_EXTENSION,
+                    fileExtension: coerceUiExtension(pkg.fileExtension),
                   },
                 });
               })
@@ -1256,8 +1276,74 @@ export default function EditorPage() {
   return (
     <>
       <Script src="/babel/bable.js" strategy="afterInteractive" />
-      <div className="flex h-screen bg-[#1e1e1e] text-gray-100">
-        <div className="relative w-80 border-r border-[#2a2d2e]">
+      <div className="flex h-screen flex-col bg-[#1e1e1e] text-gray-100">
+        <header className="flex h-14 items-center border-b border-[#2a2d2e] bg-[#252526] px-4">
+          <div className="flex items-center gap-4">
+            <Link href="/dashboard" className="flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#2a2d2e] bg-[#1e1e1e]">
+                <Image
+                  src={branding.logo_lw}
+                  alt={branding.brand_name}
+                  width={26}
+                  height={26}
+                />
+              </span>
+              <div className="leading-tight">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-gray-400">
+                  {branding.brand_name} Idp
+                </div>
+                <div className="text-sm font-semibold text-gray-100">Editor Studio</div>
+              </div>
+            </Link>
+
+            <nav className="hidden lg:flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-gray-400">
+              {EDITOR_NAV_ITEMS.map((item) => {
+                const isActive =
+                  router.pathname === item.match ||
+                  router.pathname.startsWith(`${item.match}/`);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`rounded-full border px-3 py-1 transition ${
+                      isActive
+                        ? 'border-[#0f72be] bg-[#0b5b96] text-white'
+                        : 'border-transparent text-gray-400 hover:border-[#2a2d2e] hover:bg-[#1f1f1f] hover:text-gray-200'
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
+
+          <div className="ml-auto flex items-center gap-3 text-xs">
+            <div
+              className={`flex max-w-[220px] items-center gap-2 rounded-full border px-3 py-1 ${
+                tenantHost
+                  ? 'border-[#2a2d2e] bg-[#1f1f1f] text-gray-200'
+                  : 'border-red-500/40 bg-[#2a1b1b] text-red-200'
+              }`}
+            >
+              <span className="uppercase tracking-[0.2em] text-[10px] text-gray-400">
+                Tenant
+              </span>
+              <span className="truncate font-semibold">
+                {tenantHost ? tenantHost : 'Not selected'}
+              </span>
+            </div>
+            <Link
+              href="/admin/tenants"
+              className="hidden sm:inline-flex rounded-full border border-[#2a2d2e] px-3 py-1 text-gray-200 hover:bg-[#1f1f1f]"
+            >
+              Manage tenants
+            </Link>
+          </div>
+        </header>
+
+        <div className="flex flex-1 min-h-0">
+          <div className="relative w-80 border-r border-[#2a2d2e]">
           {treeError ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-sm text-red-300">
               <p>{treeError}</p>
@@ -1291,9 +1377,9 @@ export default function EditorPage() {
               }
             />
           )}
-        </div>
+          </div>
 
-        <main className="flex flex-1 flex-col min-w-0">
+          <main className="flex flex-1 flex-col min-w-0">
           <div className="flex items-center gap-2 border-b border-[#2a2d2e] bg-[#252526] px-3 py-2">
             <div className="flex flex-wrap items-center gap-2">
               {openFiles.map((file) => (
@@ -1403,7 +1489,8 @@ export default function EditorPage() {
               </div>
             )}
           </div>
-        </main>
+          </main>
+        </div>
       </div>
 
       <Modal
@@ -1508,7 +1595,18 @@ export default function EditorPage() {
               <Select
                 label="File extension"
                 value={uiForm.fileExtension}
-                onChange={(e) => setUiForm({ ...uiForm, fileExtension: e.target.value })}
+                onChange={(e) => {
+                  const nextExtension = e.target.value;
+                  setUiForm((prev) => {
+                    const next = { ...prev, fileExtension: nextExtension };
+                    if (nextExtension === 'css' && prev.code === DEFAULT_UI_CODE) {
+                      next.code = DEFAULT_CSS_CODE;
+                    } else if (nextExtension !== 'css' && prev.code === DEFAULT_CSS_CODE) {
+                      next.code = DEFAULT_UI_CODE;
+                    }
+                    return next;
+                  });
+                }}
                 options={UI_EXTENSION_OPTIONS.map((ext) => ({
                   label: ext,
                   value: ext,

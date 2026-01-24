@@ -408,6 +408,32 @@ const FileIcon = () => (
   </svg>
 );
 
+const NewFileIcon = () => (
+  <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden>
+    <path
+      fill="currentColor"
+      d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 2v5h5l-5-5z"
+    />
+    <path
+      fill="currentColor"
+      d="M11 12h2v3h3v2h-3v3h-2v-3H8v-2h3v-3z"
+    />
+  </svg>
+);
+
+const NewFolderIcon = () => (
+  <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden>
+    <path
+      fill="currentColor"
+      d="M3 6h6l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3z"
+    />
+    <path
+      fill="currentColor"
+      d="M11 12h2v3h3v2h-3v3h-2v-3H8v-2h3v-3z"
+    />
+  </svg>
+);
+
 const NodeRow = React.memo(function NodeRow({
   item,
   isSelected,
@@ -1091,12 +1117,36 @@ export default function FileExplorer({
       }}
       onContextMenu={(e) => onContextMenu(e, null)}
     >
-      <div className="flex items-center justify-between border-b border-[#2a2d2e] px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-        <span>Explorer</span>
-        <span className="text-gray-500">...</span>
-      </div>
-      <div className="border-b border-[#2a2d2e] px-3 py-2 text-[11px] uppercase text-gray-400">
-        Project
+      <div className="flex items-center justify-between border-b border-[#2a2d2e] px-3 py-2 text-[11px] uppercase text-gray-400">
+        <span>Project</span>
+        {!readOnly && (
+          <div className="flex items-center gap-1 text-gray-400">
+            <button
+              type="button"
+              className="rounded p-1 hover:bg-[#2a2d2e] hover:text-gray-200"
+              onClick={(e) => {
+                e.stopPropagation();
+                createNode("file");
+              }}
+              aria-label="New file"
+              title="New file"
+            >
+              <NewFileIcon />
+            </button>
+            <button
+              type="button"
+              className="rounded p-1 hover:bg-[#2a2d2e] hover:text-gray-200"
+              onClick={(e) => {
+                e.stopPropagation();
+                createNode("folder");
+              }}
+              aria-label="New folder"
+              title="New folder"
+            >
+              <NewFolderIcon />
+            </button>
+          </div>
+        )}
       </div>
 
       <div
@@ -1137,31 +1187,6 @@ export default function FileExplorer({
           )
         )}
       </div>
-
-      {!readOnly && (
-        <div className="border-t border-[#2a2d2e] px-3 py-2 text-xs text-gray-300">
-          <div className="flex items-center gap-2">
-            <button
-              className="rounded px-2 py-1 hover:bg-[#2a2d2e]"
-              onClick={(e) => {
-                e.stopPropagation();
-                createNode("file");
-              }}
-            >
-              New File
-            </button>
-            <button
-              className="rounded px-2 py-1 hover:bg-[#2a2d2e]"
-              onClick={(e) => {
-                e.stopPropagation();
-                createNode("folder");
-              }}
-            >
-              New Folder
-            </button>
-          </div>
-        </div>
-      )}
 
       {renderContextMenu()}
     </div>

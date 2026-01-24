@@ -52,7 +52,7 @@ const normalizeDependencies = (raw: unknown): string[] => {
 };
 
 const normalizeFileExtension = (raw: unknown): string => {
-  const allowed = new Set(['tsx', 'jsx', 'ts', 'js', 'json']);
+  const allowed = new Set(['tsx', 'jsx', 'ts', 'js', 'json', 'css']);
   if (!raw || typeof raw !== 'string') return 'tsx';
   const normalized = raw.replace(/^\./, '').toLowerCase();
   return allowed.has(normalized) ? normalized : 'tsx';
