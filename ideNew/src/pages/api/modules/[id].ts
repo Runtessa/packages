@@ -3,6 +3,7 @@ import { withApiHandler } from '@/lib/api-helpers';
 import { requireUser } from '@/lib/auth';
 import { CoreDataSource } from '@/lib/core-db';
 import { HttpMethod, ModuleEntity } from '@/lib/entities/Module';
+import { ModuleRevision } from '@/lib/entities/ModuleRevision';
 import { resolveTenant } from '@/lib/tenancy';
 
 const normalizeMethod = (raw: unknown): HttpMethod => {
@@ -56,8 +57,34 @@ const serialize = (mod: ModuleEntity) => ({
   updatedAt: mod.updatedAt,
 });
 
+const createRevision = async (
+  mod: ModuleEntity,
+  tenant: { id: string },
+  userId: number,
+  action: string
+) => {
+  const revRepo = CoreDataSource.getRepository(ModuleRevision);
+  const last = await revRepo.findOne({
+    where: { module: { id: mod.id } },
+    order: { revision: 'DESC' },
+  });
+  const revision = revRepo.create({
+    module: mod,
+    tenant: tenant as any,
+    revision: (last?.revision ?? 0) + 1,
+    routePath: mod.routePath,
+    method: mod.method,
+    code: mod.code,
+    fileExtension: mod.fileExtension,
+    action,
+    createdBy: null,
+  });
+  await revRepo.save(revision);
+  return revision;
+};
+
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
-  await requireUser(req);
+  const user = await requireUser(req);
   const tenant = await resolveTenant(req);
   const repo = CoreDataSource.getRepository(ModuleEntity);
 
@@ -100,6 +127,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       }
     }
 
+    await createRevision(mod, tenant, user.id, 'update');
+
     mod.routePath = nextRoute;
     mod.method = nextMethod;
     mod.code = nextCode;
@@ -118,6 +147,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       res.status(404).json({ error: 'Module not found' });
       return;
     }
+    await createRevision(mod, tenant, user.id, 'delete');
     await repo.remove(mod);
     res.status(204).end();
     return;

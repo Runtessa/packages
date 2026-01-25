@@ -18,7 +18,7 @@ import { TenantRequest } from "./types/RequestContext";
 import { RegistryController } from "./app/controllers/RegistryController";
 import { ModuleController } from "./app/controllers/ModuleController";
 import { UIEntityController } from "./app/controllers/UIEntityController";
-// import { ApiRouter } from "./app/routers/api";
+import { ApiRouter } from "./app/routers/api";
 
 const app = express();
 
@@ -85,16 +85,16 @@ const bootstrap = async () => {
   app.post("/admin/tenants", adminController.createTenant);
   app.post("/auth/register", contextMiddleware, authController.register);
   app.post("/auth/login", contextMiddleware, authController.login);
-  // app.use(
-  //   "/api",
-  //   ApiRouter(
-  //     contextMiddleware,
-  //     authGuard,
-  //     registryController,
-  //     moduleController,
-  //     uiEntityController
-  //   )
-  // );
+  app.use(
+    "/api",
+    ApiRouter(
+      contextMiddleware,
+      authGuard,
+      registryController,
+      moduleController,
+      uiEntityController
+    )
+  );
   // Serve frontend (IDE) for non-API routes
   app.get("*", (req, res, next) => {
     const p = req.path.toLowerCase();

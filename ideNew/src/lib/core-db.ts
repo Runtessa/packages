@@ -5,6 +5,8 @@ import { ModuleEntity } from './entities/Module';
 import { Secret } from './entities/Secret';
 import { Tenant } from './entities/Tenant';
 import { UIPackage } from './entities/UIEntities';
+import { ModuleRevision } from './entities/ModuleRevision';
+import { UIPackageRevision } from './entities/UIPackageRevision';
 
 const dbType = (process.env.CORE_DB_TYPE ||
   process.env.DB_TYPE ||
@@ -34,7 +36,7 @@ const baseOptions = {
   database: dbName,
   synchronize: false,
   logging: false,
-  entities: [Tenant, Account, Secret, ModuleEntity, UIPackage],
+  entities: [Tenant, Account, Secret, ModuleEntity, UIPackage, ModuleRevision, UIPackageRevision],
 } as DataSourceOptions;
 
 export const CoreDataSource = new DataSource(baseOptions);

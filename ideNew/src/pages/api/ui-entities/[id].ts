@@ -3,6 +3,7 @@ import { withApiHandler } from '@/lib/api-helpers';
 import { requireUser } from '@/lib/auth';
 import { CoreDataSource } from '@/lib/core-db';
 import { UIPackage } from '@/lib/entities/UIEntities';
+import { UIPackageRevision } from '@/lib/entities/UIPackageRevision';
 import { resolveTenant } from '@/lib/tenancy';
 
 const normalizeName = (raw: unknown): string => {
@@ -70,8 +71,36 @@ const serialize = (pkg: UIPackage) => ({
   updatedAt: pkg.updatedAt,
 });
 
+const createRevision = async (
+  pkg: UIPackage,
+  tenant: { id: string },
+  userId: number,
+  action: string
+) => {
+  const revRepo = CoreDataSource.getRepository(UIPackageRevision);
+  const last = await revRepo.findOne({
+    where: { uiPackage: { id: pkg.id } },
+    order: { revision: 'DESC' },
+  });
+  const revision = revRepo.create({
+    uiPackage: pkg,
+    tenant: tenant as any,
+    revision: (last?.revision ?? 0) + 1,
+    name: pkg.name,
+    version: pkg.version,
+    code: pkg.code,
+    codeBlob: pkg.codeBlob,
+    dependencies: pkg.dependencies ?? [],
+    fileExtension: pkg.fileExtension,
+    action,
+    createdBy: null,
+  });
+  await revRepo.save(revision);
+  return revision;
+};
+
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
-  await requireUser(req);
+  const user = await requireUser(req);
   const tenant = await resolveTenant(req);
   const repo = CoreDataSource.getRepository(UIPackage);
 
@@ -121,6 +150,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       }
     }
 
+    await createRevision(pkg, tenant, user.id, 'update');
+
     pkg.name = nextName;
     pkg.version = nextVersion;
     pkg.code = nextSource;
@@ -141,6 +172,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       res.status(404).json({ error: 'UI entity not found' });
       return;
     }
+    await createRevision(pkg, tenant, user.id, 'delete');
     await repo.remove(pkg);
     res.status(204).end();
     return;

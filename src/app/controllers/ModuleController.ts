@@ -2,6 +2,7 @@ import { NextFunction, Response } from 'express';
 import { DataSource } from 'typeorm';
 import { AppError } from '../../common/AppError';
 import { HttpMethod, ModuleEntity } from '../../entities/Module';
+import { ModuleRevision } from '../../entities/ModuleRevision';
 import { TenantRequest } from '../../types/RequestContext';
 
 export class ModuleController {
@@ -104,6 +105,8 @@ export class ModuleController {
         }
       }
 
+      await this.createRevision(req, mod, 'update');
+
       mod.routePath = nextRoute;
       mod.method = nextMethod;
       mod.code = nextCode;
@@ -126,8 +129,77 @@ export class ModuleController {
       if (!mod) {
         return res.status(404).json({ error: 'Module not found' });
       }
+      await this.createRevision(req, mod, 'delete');
       await repo.remove(mod);
       return res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  listVersions = async (req: TenantRequest, res: Response, next: NextFunction) => {
+    try {
+      this.ensureTenant(req);
+      const repo = this.dataSource.getRepository(ModuleEntity);
+      const mod = await repo.findOne({
+        where: { id: req.params.id, tenant: { id: req.tenant!.id } },
+      });
+      if (!mod) {
+        return res.status(404).json({ error: 'Module not found' });
+      }
+
+      const revRepo = this.dataSource.getRepository(ModuleRevision);
+      const revisions = await revRepo.find({
+        where: { module: { id: mod.id } },
+        order: { revision: 'DESC', createdAt: 'DESC' },
+      });
+      return res.json(revisions.map(this.serializeRevision));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  rollback = async (req: TenantRequest, res: Response, next: NextFunction) => {
+    try {
+      this.ensureTenant(req);
+      const repo = this.dataSource.getRepository(ModuleEntity);
+      const mod = await repo.findOne({
+        where: { id: req.params.id, tenant: { id: req.tenant!.id } },
+      });
+      if (!mod) {
+        return res.status(404).json({ error: 'Module not found' });
+      }
+
+      const revRepo = this.dataSource.getRepository(ModuleRevision);
+      const revision = await revRepo.findOne({
+        where: { id: req.params.revisionId, module: { id: mod.id } },
+      });
+      if (!revision) {
+        return res.status(404).json({ error: 'Revision not found' });
+      }
+
+      if (revision.routePath !== mod.routePath || revision.method !== mod.method) {
+        const duplicate = await repo.findOne({
+          where: {
+            tenant: { id: req.tenant!.id },
+            routePath: revision.routePath,
+            method: revision.method,
+          },
+        });
+        if (duplicate && duplicate.id !== mod.id) {
+          return res.status(409).json({ error: 'Another module already uses this route/method' });
+        }
+      }
+
+      await this.createRevision(req, mod, 'rollback');
+
+      mod.routePath = revision.routePath;
+      mod.method = revision.method;
+      mod.code = revision.code;
+      mod.fileExtension = revision.fileExtension;
+      await repo.save(mod);
+
+      return res.json(this.serialize(mod));
     } catch (error) {
       next(error);
     }
@@ -172,6 +244,26 @@ export class ModuleController {
     return allowed.has(normalized) ? normalized : "ts";
   }
 
+  private async createRevision(req: TenantRequest, mod: ModuleEntity, action: string) {
+    const revRepo = this.dataSource.getRepository(ModuleRevision);
+    const last = await revRepo.findOne({
+      where: { module: { id: mod.id } },
+      order: { revision: 'DESC' },
+    });
+    const revision = revRepo.create({
+      module: mod,
+      tenant: req.tenant!,
+      revision: (last?.revision ?? 0) + 1,
+      routePath: mod.routePath,
+      method: mod.method,
+      code: mod.code,
+      fileExtension: mod.fileExtension,
+      action,
+      createdBy: req.account?.id ?? null,
+    });
+    await revRepo.save(revision);
+  }
+
   private serialize(mod: ModuleEntity) {
     return {
       id: mod.id,
@@ -181,6 +273,20 @@ export class ModuleController {
       fileExtension: mod.fileExtension,
       createdAt: mod.createdAt,
       updatedAt: mod.updatedAt,
+    };
+  }
+
+  private serializeRevision(rev: ModuleRevision) {
+    return {
+      id: rev.id,
+      revision: rev.revision,
+      routePath: rev.routePath,
+      method: rev.method,
+      code: rev.code,
+      fileExtension: rev.fileExtension,
+      action: rev.action,
+      createdBy: rev.createdBy ?? undefined,
+      createdAt: rev.createdAt,
     };
   }
 }

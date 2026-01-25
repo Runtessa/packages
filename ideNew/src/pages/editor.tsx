@@ -18,6 +18,10 @@ import { getSelectedTenantHost } from '@/lib/client/tenant';
 import branding from '@/branding.json';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
+const MonacoDiffEditor = dynamic(
+  () => import('@monaco-editor/react').then((mod) => mod.DiffEditor),
+  { ssr: false }
+);
 
 type EditorLanguage =
   | 'javascript'
@@ -77,6 +81,36 @@ type UIPackageDto = {
   dependencies: string[];
   fileExtension?: string;
 };
+
+type ModuleRevisionDto = {
+  id: string;
+  revision: number;
+  routePath: string;
+  method: string;
+  code: string;
+  fileExtension?: string;
+  action?: string;
+  createdAt: string;
+  createdBy?: string;
+};
+
+type UiRevisionDto = {
+  id: string;
+  revision: number;
+  name: string;
+  version: string;
+  code: string;
+  codeBlob: string;
+  dependencies: string[];
+  fileExtension?: string;
+  action?: string;
+  createdAt: string;
+  createdBy?: string;
+};
+
+type HistoryItem =
+  | (ModuleRevisionDto & { kind: 'module' })
+  | (UiRevisionDto & { kind: 'ui' });
 
 type ExplorerScope = 'modules' | 'ui';
 
@@ -354,6 +388,20 @@ const parseDependencies = (value: string) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+const formatHistoryTimestamp = (value: string) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+};
+
+const getRevisionContent = (item: HistoryItem) => {
+  if (item.kind === 'ui') {
+    return item.code || item.codeBlob || '';
+  }
+  return item.code || '';
+};
+
 const pathStartsWith = (path: string[], prefix: string[]) => {
   if (prefix.length > path.length) return false;
   return prefix.every((segment, idx) => path[idx] === segment);
@@ -456,6 +504,10 @@ export default function EditorPage() {
     | { type: 'folder'; scope: ExplorerScope; path: string[]; label: string }
     | null
   >(null);
+  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [historySelectedId, setHistorySelectedId] = useState<string | null>(null);
 
   const apiFetch = useCallback(
     async (url: string, options: { method?: string; body?: unknown } = {}) => {
@@ -594,6 +646,47 @@ export default function EditorPage() {
     });
   }, [treeData]);
 
+  useEffect(() => {
+    setHistorySelectedId(null);
+  }, [activeFile?.id]);
+
+  const loadHistory = useCallback(async () => {
+    if (!activeFile?.meta) {
+      setHistoryItems([]);
+      setHistoryError('');
+      return;
+    }
+    setHistoryLoading(true);
+    setHistoryError('');
+    try {
+      if (activeFile.meta.kind === 'module') {
+        const revisions = (await apiFetch(
+          `/api/modules/${activeFile.meta.backendId}/versions`
+        )) as ModuleRevisionDto[];
+        setHistoryItems(revisions.map((rev) => ({ ...rev, kind: 'module' })));
+      } else {
+        const revisions = (await apiFetch(
+          `/api/ui-entities/${activeFile.meta.backendId}/versions`
+        )) as UiRevisionDto[];
+        setHistoryItems(revisions.map((rev) => ({ ...rev, kind: 'ui' })));
+      }
+    } catch (err) {
+      setHistoryError((err as Error).message || 'Failed to load history');
+      setHistoryItems([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [activeFile?.meta, apiFetch]);
+
+  useEffect(() => {
+    if (!activeFile?.meta) {
+      setHistoryItems([]);
+      setHistoryError('');
+      return;
+    }
+    loadHistory();
+  }, [activeFile?.meta, loadHistory]);
+
   const handleOpenFile = (file: ExplorerNode) => {
     if (file.type !== 'file') return;
     const language = detectLanguage(file.name);
@@ -675,6 +768,7 @@ export default function EditorPage() {
       }
       setSaveStatus('Saved');
       loadTree();
+      loadHistory();
     } catch (err) {
       setSaveError((err as Error).message || 'Save failed');
     } finally {
@@ -1267,11 +1361,62 @@ export default function EditorPage() {
   );
 
   const activeContent = activeFile ? fileContents[activeFile.id] ?? '' : '';
+  const selectedRevision = useMemo(
+    () => historyItems.find((item) => item.id === historySelectedId) ?? null,
+    [historyItems, historySelectedId]
+  );
+  const editorModelPath = useMemo(() => {
+    if (!activeFile) return undefined;
+    return `inmemory://model/${activeFile.id}`;
+  }, [activeFile]);
+  const diffModelPaths = useMemo(() => {
+    if (!activeFile || !selectedRevision) return { original: undefined, modified: undefined };
+    return {
+      original: `inmemory://model/${activeFile.id}/revision/${selectedRevision.id}`,
+      modified: `inmemory://model/${activeFile.id}/current`,
+    };
+  }, [activeFile, selectedRevision]);
 
   const monacoLanguage = useMemo(() => {
     if (!activeFile) return 'plaintext';
     return activeFile.language === 'jsx' ? 'javascript' : activeFile.language;
   }, [activeFile]);
+
+  const handleRollback = async (revisionId: string) => {
+    if (!activeFile?.meta) return;
+    setActionError('');
+    setActionStatus('');
+    try {
+      if (activeFile.meta.kind === 'module') {
+        const updated = (await apiFetch(
+          `/api/modules/${activeFile.meta.backendId}/rollback/${revisionId}`,
+          { method: 'POST' }
+        )) as ModuleDto;
+        setFileContents((prev) => ({
+          ...prev,
+          [activeFile.id]: updated.code ?? '',
+        }));
+      } else {
+        const updated = (await apiFetch(
+          `/api/ui-entities/${activeFile.meta.backendId}/rollback/${revisionId}`,
+          { method: 'POST' }
+        )) as UIPackageDto;
+        setFileContents((prev) => ({
+          ...prev,
+          [activeFile.id]: updated.code ?? updated.codeBlob ?? '',
+        }));
+      }
+      setActionStatus('Rolled back');
+      loadTree();
+      loadHistory();
+    } catch (err) {
+      const message = (err as Error).message || 'Rollback failed';
+      setActionError(message);
+      showError(message);
+    } finally {
+      setTimeout(() => setActionStatus(''), 2000);
+    }
+  };
 
   return (
     <>
@@ -1349,7 +1494,7 @@ export default function EditorPage() {
               <p>{treeError}</p>
               <button
                 className="rounded bg-[#094771] px-3 py-1 text-white hover:bg-[#0b5b96]"
-                onClick={loadTree}
+                onClick={() => loadTree()}
               >
                 Retry
               </button>
@@ -1442,9 +1587,17 @@ export default function EditorPage() {
                   >
                     {saving ? 'Saving...' : 'Save'}
                   </button>
+                  {selectedRevision && (
+                    <button
+                      className="rounded border border-[#3c3c3c] px-3 py-1 text-gray-200 hover:bg-[#2a2d2e]"
+                      onClick={() => setHistorySelectedId(null)}
+                    >
+                      Exit compare
+                    </button>
+                  )}
                   <button
                     className="rounded border border-[#3c3c3c] px-3 py-1 text-gray-200 hover:bg-[#2a2d2e]"
-                    onClick={loadTree}
+                    onClick={() => loadTree()}
                     disabled={loadingTree}
                   >
                     Refresh
@@ -1470,19 +1623,42 @@ export default function EditorPage() {
 
           <div className="flex flex-1 min-h-0 bg-[#1e1e1e]">
             {activeFile ? (
-              <MonacoEditor
-                height="100%"
-                language={monacoLanguage}
-                theme="vs-dark"
-                value={activeContent}
-                onChange={handleEditorChange}
-                options={{
-                  fontSize: 14,
-                  minimap: { enabled: false },
-                  scrollBeyondLastLine: false,
-                  automaticLayout: true,
-                }}
-              />
+              selectedRevision ? (
+                <MonacoDiffEditor
+                  height="100%"
+                  language={monacoLanguage}
+                  theme="vs-dark"
+                  original={getRevisionContent(selectedRevision)}
+                  modified={activeContent}
+                  originalModelPath={diffModelPaths.original}
+                  modifiedModelPath={diffModelPaths.modified}
+                  keepCurrentOriginalModel
+                  keepCurrentModifiedModel
+                  options={{
+                    fontSize: 14,
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    automaticLayout: true,
+                    readOnly: true,
+                    renderSideBySide: true,
+                  }}
+                />
+              ) : (
+                <MonacoEditor
+                  height="100%"
+                  language={monacoLanguage}
+                  theme="vs-dark"
+                  value={activeContent}
+                  path={editorModelPath}
+                  onChange={handleEditorChange}
+                  options={{
+                    fontSize: 14,
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    automaticLayout: true,
+                  }}
+                />
+              )
             ) : (
               <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
                 Select a module or UI entity from the explorer to start editing.
@@ -1490,6 +1666,87 @@ export default function EditorPage() {
             )}
           </div>
           </main>
+
+          <aside className="flex w-80 flex-col border-l border-[#2a2d2e] bg-[#1f1f1f]">
+            <div className="flex items-center justify-between border-b border-[#2a2d2e] px-4 py-3">
+              <div className="text-sm font-semibold text-gray-100">History</div>
+              <button
+                className="rounded border border-[#3c3c3c] px-2 py-1 text-xs text-gray-200 hover:bg-[#2a2d2e]"
+                onClick={loadHistory}
+                disabled={historyLoading || !activeFile?.meta}
+              >
+                Refresh
+              </button>
+            </div>
+
+            {!activeFile?.meta ? (
+              <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
+                Select a file to view history.
+              </div>
+            ) : historyLoading ? (
+              <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
+                Loading history...
+              </div>
+            ) : historyError ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-sm text-red-300">
+                <p>{historyError}</p>
+                <button
+                  className="rounded bg-[#094771] px-3 py-1 text-white hover:bg-[#0b5b96]"
+                  onClick={loadHistory}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : historyItems.length === 0 ? (
+              <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
+                No revisions yet.
+              </div>
+            ) : (
+              <div className="flex-1 overflow-auto">
+                {historyItems.map((item) => {
+                  const selected = item.id === historySelectedId;
+                  return (
+                    <div
+                      key={item.id}
+                      className={`border-b border-[#2a2d2e] px-4 py-3 text-xs ${
+                        selected ? 'bg-[#1a1a1a]' : 'bg-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="font-semibold text-gray-100">
+                          r{item.revision}
+                        </div>
+                        <div className="text-[10px] text-gray-400">
+                          {formatHistoryTimestamp(item.createdAt)}
+                        </div>
+                      </div>
+                      <div className="mt-1 text-[11px] text-gray-300">
+                        {(item.action ?? 'update').toUpperCase()}
+                      </div>
+                      <div className="mt-3 flex items-center gap-2">
+                        <button
+                          className="rounded border border-[#3c3c3c] px-2 py-1 text-[11px] text-gray-200 hover:bg-[#2a2d2e]"
+                          onClick={() =>
+                            setHistorySelectedId((prev) =>
+                              prev === item.id ? null : item.id
+                            )
+                          }
+                        >
+                          {selected ? 'Close' : 'Compare'}
+                        </button>
+                        <button
+                          className="rounded border border-[#3c3c3c] px-2 py-1 text-[11px] text-gray-200 hover:bg-[#2a2d2e]"
+                          onClick={() => handleRollback(item.id)}
+                        >
+                          Rollback
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </aside>
         </div>
       </div>
 
