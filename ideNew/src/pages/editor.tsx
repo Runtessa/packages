@@ -604,6 +604,14 @@ export default function EditorPage() {
     () => openFiles.filter((file) => rightPaneSet.has(file.id)),
     [openFiles, rightPaneSet]
   );
+  useEffect(() => {
+    if (leftTabs.length > 0 || rightTabs.length === 0) return;
+    setRightPaneIds([]);
+    setSideFileId(null);
+    if (!activeFile || rightTabs[0].id !== activeFile.id) {
+      setActiveFile(rightTabs[0]);
+    }
+  }, [activeFile, leftTabs, rightTabs]);
   const sideFile = useMemo(
     () => rightTabs.find((file) => file.id === sideFileId) ?? rightTabs[0] ?? null,
     [rightTabs, sideFileId]
@@ -793,6 +801,7 @@ export default function EditorPage() {
   useEffect(() => {
     if (!activeFile) return;
     if (!rightPaneSet.has(activeFile.id)) return;
+    if (leftTabs.length === 0) return;
     const nextLeft = leftTabs[0] ?? null;
     setActiveFile(nextLeft);
   }, [activeFile, leftTabs, rightPaneSet]);
@@ -1063,6 +1072,7 @@ export default function EditorPage() {
     if (value === undefined) return;
     const fileId = resolveEditorFileId(sideEditorRef.current, sideFile?.id);
     if (!fileId) return;
+    if (!rightPaneSet.has(fileId)) return;
     if (event?.isFlush && value === '' && savedContents[fileId]) {
       return;
     }
