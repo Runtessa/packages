@@ -415,6 +415,9 @@ const LEFT_PANEL_STORAGE_KEY = 'editor-left-panel-width';
 const MIN_LEFT_PANEL_WIDTH = 150;
 const MAX_LEFT_PANEL_WIDTH = 520;
 const DEFAULT_LEFT_PANEL_WIDTH = 320;
+const SPLIT_RATIO_STORAGE_KEY = 'editor-split-ratio';
+const DEFAULT_SPLIT_RATIO = 0.5;
+const MIN_SPLIT_PX = 240;
 const HISTORY_PAGE_SIZE = 20;
 
 const extractFileExtension = (fileName: string) => {
@@ -542,12 +545,21 @@ export default function EditorPage() {
     const parsed = stored ? Number.parseInt(stored, 10) : NaN;
     return Number.isFinite(parsed) ? parsed : DEFAULT_LEFT_PANEL_WIDTH;
   });
+  const [splitRatio, setSplitRatio] = useState(() => {
+    if (typeof window === 'undefined') return DEFAULT_SPLIT_RATIO;
+    const stored = localStorage.getItem(SPLIT_RATIO_STORAGE_KEY);
+    const parsed = stored ? Number.parseFloat(stored) : NaN;
+    if (!Number.isFinite(parsed)) return DEFAULT_SPLIT_RATIO;
+    return Math.min(0.8, Math.max(0.2, parsed));
+  });
   const leftPanelWidthRef = useRef(leftPanelWidth);
   const resizeRef = useRef<{ active: boolean; startX: number; startWidth: number }>({
     active: false,
     startX: 0,
     startWidth: DEFAULT_LEFT_PANEL_WIDTH,
   });
+  const splitRatioRef = useRef(splitRatio);
+  const splitResizeRef = useRef<{ active: boolean }>({ active: false });
   const dragTabIdRef = useRef<string | null>(null);
   const [leftPanel, setLeftPanel] = useState<'explorer' | 'history'>('explorer');
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
@@ -559,6 +571,22 @@ export default function EditorPage() {
   const [historyPageSize, setHistoryPageSize] = useState(HISTORY_PAGE_SIZE);
   const historyListRef = useRef<HTMLDivElement | null>(null);
   const historyRowRef = useRef<HTMLDivElement | null>(null);
+  const [sideFileId, setSideFileId] = useState<string | null>(null);
+  const [rightPaneIds, setRightPaneIds] = useState<string[]>([]);
+  const editorAreaRef = useRef<HTMLDivElement | null>(null);
+  const rightPaneSet = useMemo(() => new Set(rightPaneIds), [rightPaneIds]);
+  const leftTabs = useMemo(
+    () => openFiles.filter((file) => !rightPaneSet.has(file.id)),
+    [openFiles, rightPaneSet]
+  );
+  const rightTabs = useMemo(
+    () => openFiles.filter((file) => rightPaneSet.has(file.id)),
+    [openFiles, rightPaneSet]
+  );
+  const sideFile = useMemo(
+    () => rightTabs.find((file) => file.id === sideFileId) ?? rightTabs[0] ?? null,
+    [rightTabs, sideFileId]
+  );
   const [tabMenu, setTabMenu] = useState<TabContextMenuState | null>(null);
 
   const apiFetch = useCallback(
@@ -638,6 +666,34 @@ export default function EditorPage() {
   }, []);
 
   useEffect(() => {
+    const handleMove = (event: MouseEvent) => {
+      if (!splitResizeRef.current.active) return;
+      if (!editorAreaRef.current) return;
+      const rect = editorAreaRef.current.getBoundingClientRect();
+      if (!rect.width) return;
+      const offset = event.clientX - rect.left;
+      const minRatio = Math.min(0.45, MIN_SPLIT_PX / rect.width);
+      const maxRatio = 1 - minRatio;
+      const nextRatio = Math.max(minRatio, Math.min(maxRatio, offset / rect.width));
+      setSplitRatio(nextRatio);
+    };
+
+    const handleUp = () => {
+      if (!splitResizeRef.current.active) return;
+      splitResizeRef.current.active = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, []);
+
+  useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!tenantHost) {
       setFolderOverrides([]);
@@ -700,6 +756,41 @@ export default function EditorPage() {
     if (typeof window === 'undefined') return;
     localStorage.setItem(CONTENT_STORAGE_KEY, JSON.stringify(fileContents));
   }, [fileContents]);
+
+  useEffect(() => {
+    splitRatioRef.current = splitRatio;
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(SPLIT_RATIO_STORAGE_KEY, String(splitRatio));
+  }, [splitRatio]);
+
+  useEffect(() => {
+    if (rightTabs.length === 0) {
+      if (sideFileId) setSideFileId(null);
+      return;
+    }
+    if (!sideFileId || !rightPaneSet.has(sideFileId)) {
+      setSideFileId(rightTabs[0].id);
+    }
+  }, [rightTabs, rightPaneSet, sideFileId]);
+
+  useEffect(() => {
+    if (!activeFile) return;
+    if (!rightPaneSet.has(activeFile.id)) return;
+    const nextLeft = leftTabs[0] ?? null;
+    setActiveFile(nextLeft);
+  }, [activeFile, leftTabs, rightPaneSet]);
+
+  useEffect(() => {
+    if (openFiles.length === 0) {
+      if (rightPaneIds.length > 0) setRightPaneIds([]);
+      return;
+    }
+    setRightPaneIds((prev) => {
+      const openIds = new Set(openFiles.map((file) => file.id));
+      const next = prev.filter((id) => openIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [openFiles, rightPaneIds.length]);
 
   useEffect(() => {
     const handleWindowClick = () => setTabMenu(null);
@@ -873,12 +964,16 @@ export default function EditorPage() {
     setActiveFile({ id: file.id, name: file.name, language, meta });
   };
 
-  const handleEditorChange = (value?: string) => {
-    if (!activeFile) return;
+  const updateFileContent = useCallback((fileId: string, value?: string) => {
     setFileContents((prev) => ({
       ...prev,
-      [activeFile.id]: value ?? '',
+      [fileId]: value ?? '',
     }));
+  }, []);
+
+  const handleEditorChange = (value?: string) => {
+    if (!activeFile) return;
+    updateFileContent(activeFile.id, value);
   };
 
   const handleLanguageChange = (language: EditorLanguage) => {
@@ -889,7 +984,26 @@ export default function EditorPage() {
     );
   };
 
+  const moveTabToPane = useCallback(
+    (id: string, pane: 'left' | 'right') => {
+      setRightPaneIds((prev) => {
+        const exists = prev.includes(id);
+        if (pane === 'right' && !exists) return [...prev, id];
+        if (pane === 'left' && exists) return prev.filter((item) => item !== id);
+        return prev;
+      });
+      if (pane === 'right') {
+        setSideFileId(id);
+      } else if (sideFileId === id) {
+        setSideFileId(null);
+      }
+    },
+    [sideFileId]
+  );
+
   const handleCloseFile = (id: string) => {
+    setSideFileId((prev) => (prev === id ? null : prev));
+    setRightPaneIds((prev) => prev.filter((item) => item !== id));
     setOpenFiles((prev) => {
       const index = prev.findIndex((file) => file.id === id);
       if (index === -1) return prev;
@@ -909,7 +1023,8 @@ export default function EditorPage() {
     id: string
   ) => {
     dragTabIdRef.current = id;
-    event.dataTransfer.setData('text/plain', id);
+    event.dataTransfer.setData('application/x-editor-tab', id);
+    event.dataTransfer.setData('text/plain', '');
     event.dataTransfer.effectAllowed = 'move';
   };
 
@@ -918,9 +1033,19 @@ export default function EditorPage() {
     event.dataTransfer.dropEffect = 'move';
   };
 
-  const handleTabDrop = (event: React.DragEvent<HTMLDivElement>, id: string) => {
+  const getDraggedTabId = (event: React.DragEvent<HTMLDivElement>) =>
+    dragTabIdRef.current ||
+    event.dataTransfer.getData('application/x-editor-tab') ||
+    event.dataTransfer.getData('text/plain');
+
+  const handleTabDrop = (
+    event: React.DragEvent<HTMLDivElement>,
+    id: string,
+    pane: 'left' | 'right'
+  ) => {
     event.preventDefault();
-    const sourceId = dragTabIdRef.current ?? event.dataTransfer.getData('text/plain');
+    event.stopPropagation();
+    const sourceId = getDraggedTabId(event);
     dragTabIdRef.current = null;
     if (!sourceId || sourceId === id) return;
     setOpenFiles((prev) => {
@@ -932,10 +1057,34 @@ export default function EditorPage() {
       next.splice(toIndex, 0, moved);
       return next;
     });
+    moveTabToPane(sourceId, pane);
   };
 
   const handleTabDragEnd = () => {
     dragTabIdRef.current = null;
+  };
+
+  const handleTabBarDrop = (
+    event: React.DragEvent<HTMLDivElement>,
+    pane: 'left' | 'right'
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const sourceId = getDraggedTabId(event);
+    dragTabIdRef.current = null;
+    if (!sourceId) return;
+    moveTabToPane(sourceId, pane);
+  };
+
+  const handleEditorDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const sourceId = getDraggedTabId(event);
+    dragTabIdRef.current = null;
+    if (!sourceId || !editorAreaRef.current) return;
+    const rect = editorAreaRef.current.getBoundingClientRect();
+    const isRightSide = event.clientX > rect.left + rect.width * 0.55;
+    moveTabToPane(sourceId, isRightSide ? 'right' : 'left');
   };
 
   const isFileDirty = useCallback(
@@ -1070,6 +1219,14 @@ export default function EditorPage() {
       startX: event.clientX,
       startWidth: leftPanelWidthRef.current,
     };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const handleSplitResizeStart = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    splitResizeRef.current.active = true;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
   };
@@ -1695,7 +1852,12 @@ export default function EditorPage() {
     return `inmemory://model/${activeFile.id}`;
   }, [activeFile]);
   const diffModelPaths = useMemo(() => {
-    if (!activeFile || !selectedRevision) return { original: undefined, modified: undefined };
+    if (!activeFile || !selectedRevision) {
+      return {
+        original: 'inmemory://model/diff/original',
+        modified: 'inmemory://model/diff/modified',
+      };
+    }
     return {
       original: `inmemory://model/${activeFile.id}/revision/${selectedRevision.id}`,
       modified: `inmemory://model/${activeFile.id}/current`,
@@ -1706,6 +1868,27 @@ export default function EditorPage() {
     if (!activeFile) return 'plaintext';
     return activeFile.language === 'jsx' ? 'javascript' : activeFile.language;
   }, [activeFile]);
+
+  const sideLanguage = useMemo(() => {
+    if (!sideFile) return 'plaintext';
+    return sideFile.language === 'jsx' ? 'javascript' : sideFile.language;
+  }, [sideFile]);
+
+  const sideEditorModelPath = useMemo(() => {
+    if (!sideFile) return undefined;
+    return `inmemory://model/${sideFile.id}/side`;
+  }, [sideFile]);
+
+  const sideContent = sideFile ? fileContents[sideFile.id] ?? '' : '';
+  const showSplitEditor = rightTabs.length > 0;
+  const showDiff = Boolean(selectedRevision);
+  const diffOriginal = selectedRevision ? getRevisionContent(selectedRevision) : '';
+  const mainEditorPath = activeFile ? editorModelPath : 'inmemory://model/empty-main';
+  const mainEditorValue = activeFile ? activeContent : '';
+  const mainEditorLanguage = activeFile ? monacoLanguage : 'plaintext';
+  const sideEditorPath = sideFile ? sideEditorModelPath : 'inmemory://model/side-empty';
+  const sideEditorValue = sideFile ? sideContent : '';
+  const sideEditorLanguage = sideFile ? sideLanguage : 'plaintext';
 
   const activeFileType = useMemo(() => {
     if (!activeFile) return '';
@@ -1849,11 +2032,16 @@ export default function EditorPage() {
         <button
           className={itemClass}
           onClick={() => {
-            showError('Side-by-side editor is not available yet.');
+            setHistorySelectedId(null);
+            if (rightPaneSet.has(file.id)) {
+              moveTabToPane(file.id, 'left');
+            } else {
+              moveTabToPane(file.id, 'right');
+            }
             setTabMenu(null);
           }}
         >
-          Open in Side
+          {rightPaneSet.has(file.id) ? 'Close Side' : 'Open in Side'}
         </button>
       </div>
     );
@@ -2158,78 +2346,166 @@ export default function EditorPage() {
 
           <main className="flex flex-1 flex-col min-w-0 min-h-0">
             <div className="flex h-[34px] items-stretch border-b border-[#2a2d2e] bg-[#252526]">
-              <div className="flex min-w-0 flex-1 items-end overflow-x-auto overflow-y-hidden">
-                <div className="flex min-w-max items-end gap-1 px-2">
-                  {openFiles.map((file) => {
-                    const isActive = activeFile?.id === file.id;
-                    return (
-                      <div
-                        key={file.id}
-                        role="tab"
-                        aria-selected={isActive}
-                        tabIndex={0}
-                        draggable
-                        onDragStart={(event) => handleTabDragStart(event, file.id)}
-                        onDragOver={handleTabDragOver}
-                        onDrop={(event) => handleTabDrop(event, file.id)}
-                        onDragEnd={handleTabDragEnd}
-                        onClick={() => setActiveFile(file)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
-                            setActiveFile(file);
-                          }
-                        }}
-                        onContextMenu={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setActiveFile(file);
-                          setTabMenu({
-                            x: event.clientX,
-                            y: event.clientY,
-                            fileId: file.id,
-                          });
-                        }}
-                        className={`group relative flex h-[30px] cursor-grab select-none items-center gap-1.5 rounded-t-md border pl-2 pr-[0.225rem] py-0.5 text-[11px] active:cursor-grabbing ${
-                          isActive
-                            ? 'border-[#2a2d2e] border-b-[#1e1e1e] bg-[#1e1e1e] text-white shadow-[inset_0_1px_0_#2f2f2f]'
-                            : 'border-transparent text-gray-300 hover:bg-[#2a2d2e] hover:text-white'
-                        }`}
-                        title={file.name}
-                      >
-                        <span className="flex min-w-0 items-center gap-2">
-                          {isFileDirty(file) && (
-                            <span className="h-1.5 w-1.5 rounded-full bg-[#d7ba7d]" />
-                          )}
-                          <span className="max-w-[180px] truncate">{file.name}</span>
-                        </span>
-                        <button
-                          type="button"
-                          aria-label={`Close ${file.name}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            handleCloseFile(file.id);
+              <div className="flex min-w-0 flex-1 items-stretch">
+                <div
+                  className="flex min-w-0 flex-1 items-end overflow-x-auto overflow-y-hidden"
+                  onDragOver={handleTabDragOver}
+                  onDrop={(event) => handleTabBarDrop(event, 'left')}
+                >
+                  <div className="flex min-w-max items-end gap-1 px-2">
+                    {leftTabs.map((file) => {
+                      const isActive = activeFile?.id === file.id;
+                      return (
+                        <div
+                          key={file.id}
+                          role="tab"
+                          aria-selected={isActive}
+                          tabIndex={0}
+                          draggable
+                          onDragStart={(event) => handleTabDragStart(event, file.id)}
+                          onDragOver={handleTabDragOver}
+                          onDrop={(event) => handleTabDrop(event, file.id, 'left')}
+                          onDragEnd={handleTabDragEnd}
+                          onClick={() => setActiveFile(file)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              setActiveFile(file);
+                            }
                           }}
-                          onMouseDown={(event) => event.stopPropagation()}
-                          onDragStart={(event) => event.stopPropagation()}
-                          className={`flex h-5 w-5 items-center justify-center rounded text-[12px] transition ${
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setActiveFile(file);
+                            setTabMenu({
+                              x: event.clientX,
+                              y: event.clientY,
+                              fileId: file.id,
+                            });
+                          }}
+                          className={`group relative flex h-[30px] cursor-grab select-none items-center gap-1.5 rounded-t-md border pl-2 pr-[0.225rem] py-0.5 text-[11px] active:cursor-grabbing ${
                             isActive
-                              ? 'text-gray-300 hover:bg-[#3a3d41] hover:text-white'
-                              : 'text-gray-400 hover:bg-[#3a3d41] hover:text-white'
-                          } ${
-                            isFileDirty(file)
-                              ? 'opacity-0 group-hover:opacity-100'
-                              : isActive
-                                ? 'opacity-100'
-                                : 'opacity-0 group-hover:opacity-100'
+                              ? 'border-[#2a2d2e] border-b-[#1e1e1e] bg-[#1e1e1e] text-white shadow-[inset_0_1px_0_#2f2f2f]'
+                              : 'border-transparent text-gray-300 hover:bg-[#2a2d2e] hover:text-white'
                           }`}
+                          title={file.name}
                         >
-                          ×
-                        </button>
-                      </div>
-                    );
-                  })}
+                          <span className="flex min-w-0 items-center gap-2">
+                            {isFileDirty(file) && (
+                              <span className="h-1.5 w-1.5 rounded-full bg-[#d7ba7d]" />
+                            )}
+                            <span className="max-w-[180px] truncate">{file.name}</span>
+                          </span>
+                          <button
+                            type="button"
+                            aria-label={`Close ${file.name}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleCloseFile(file.id);
+                            }}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onDragStart={(event) => event.stopPropagation()}
+                            className={`flex h-5 w-5 items-center justify-center rounded text-[12px] transition ${
+                              isActive
+                                ? 'text-gray-300 hover:bg-[#3a3d41] hover:text-white'
+                                : 'text-gray-400 hover:bg-[#3a3d41] hover:text-white'
+                            } ${
+                              isFileDirty(file)
+                                ? 'opacity-0 group-hover:opacity-100'
+                                : isActive
+                                  ? 'opacity-100'
+                                  : 'opacity-0 group-hover:opacity-100'
+                            }`}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
+                {rightTabs.length > 0 && (
+                  <>
+                    <div className="w-px bg-[#2a2d2e]" />
+                    <div
+                      className="flex min-w-0 flex-1 items-end overflow-x-auto overflow-y-hidden"
+                      onDragOver={handleTabDragOver}
+                      onDrop={(event) => handleTabBarDrop(event, 'right')}
+                    >
+                      <div className="flex min-w-max items-end gap-1 px-2">
+                        {rightTabs.map((file) => {
+                          const isActive = sideFile?.id === file.id;
+                          return (
+                            <div
+                              key={file.id}
+                              role="tab"
+                              aria-selected={isActive}
+                              tabIndex={0}
+                              draggable
+                              onDragStart={(event) => handleTabDragStart(event, file.id)}
+                              onDragOver={handleTabDragOver}
+                              onDrop={(event) => handleTabDrop(event, file.id, 'right')}
+                              onDragEnd={handleTabDragEnd}
+                              onClick={() => setSideFileId(file.id)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault();
+                                  setSideFileId(file.id);
+                                }
+                              }}
+                              onContextMenu={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                setSideFileId(file.id);
+                                setTabMenu({
+                                  x: event.clientX,
+                                  y: event.clientY,
+                                  fileId: file.id,
+                                });
+                              }}
+                              className={`group relative flex h-[30px] cursor-grab select-none items-center gap-1.5 rounded-t-md border pl-2 pr-[0.225rem] py-0.5 text-[11px] active:cursor-grabbing ${
+                                isActive
+                                  ? 'border-[#2a2d2e] border-b-[#1e1e1e] bg-[#1e1e1e] text-white shadow-[inset_0_1px_0_#2f2f2f]'
+                                  : 'border-transparent text-gray-300 hover:bg-[#2a2d2e] hover:text-white'
+                              }`}
+                              title={file.name}
+                            >
+                              <span className="flex min-w-0 items-center gap-2">
+                                {isFileDirty(file) && (
+                                  <span className="h-1.5 w-1.5 rounded-full bg-[#d7ba7d]" />
+                                )}
+                                <span className="max-w-[180px] truncate">{file.name}</span>
+                              </span>
+                              <button
+                                type="button"
+                                aria-label={`Close ${file.name}`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleCloseFile(file.id);
+                                }}
+                                onMouseDown={(event) => event.stopPropagation()}
+                                onDragStart={(event) => event.stopPropagation()}
+                                className={`flex h-5 w-5 items-center justify-center rounded text-[12px] transition ${
+                                  isActive
+                                    ? 'text-gray-300 hover:bg-[#3a3d41] hover:text-white'
+                                    : 'text-gray-400 hover:bg-[#3a3d41] hover:text-white'
+                                } ${
+                                  isFileDirty(file)
+                                    ? 'opacity-0 group-hover:opacity-100'
+                                    : isActive
+                                      ? 'opacity-100'
+                                      : 'opacity-0 group-hover:opacity-100'
+                                }`}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="flex items-center gap-2 px-2 text-[11px] text-gray-300">
@@ -2244,15 +2520,101 @@ export default function EditorPage() {
               </div>
             </div>
 
-          <div className="flex flex-1 min-h-0 bg-[#1e1e1e]">
-            {activeFile ? (
-              selectedRevision ? (
+          <div
+            ref={editorAreaRef}
+            className="relative flex flex-1 min-h-0 min-w-0 overflow-hidden bg-[#1e1e1e]"
+            onDragOverCapture={handleTabDragOver}
+            onDropCapture={handleEditorDrop}
+            onDragOver={handleTabDragOver}
+            onDrop={handleEditorDrop}
+          >
+            <div className="flex flex-1 min-h-0 min-w-0">
+              <div className={`flex min-h-0 min-w-0 flex-1 ${showDiff ? 'hidden' : ''}`}>
+                <div
+                  className="flex min-w-0 flex-col"
+                  style={
+                    showSplitEditor
+                      ? {
+                          flexBasis: `${splitRatio * 100}%`,
+                          flexGrow: 0,
+                          flexShrink: 0,
+                        }
+                      : { flexGrow: 1, flexShrink: 1 }
+                  }
+                >
+                  <div className="flex-1 min-h-0">
+                    <MonacoEditor
+                      height="100%"
+                      language={mainEditorLanguage}
+                      theme="vs-dark"
+                      value={mainEditorValue}
+                      path={mainEditorPath}
+                      keepCurrentModel
+                      onChange={handleEditorChange}
+                      options={{
+                        fontSize: 14,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        automaticLayout: true,
+                        readOnly: !activeFile,
+                      }}
+                    />
+                  </div>
+                </div>
+                {showSplitEditor && (
+                  <div
+                    className="flex w-1 cursor-col-resize items-stretch bg-transparent hover:bg-[#2a2d2e]"
+                    onMouseDown={handleSplitResizeStart}
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label="Resize editor split"
+                  />
+                )}
+                <div
+                  className={`flex min-w-0 flex-col overflow-hidden ${
+                    showSplitEditor ? '' : 'hidden'
+                  }`}
+                  style={
+                    showSplitEditor
+                      ? {
+                          flexBasis: `${(1 - splitRatio) * 100}%`,
+                          flexGrow: 0,
+                          flexShrink: 0,
+                          borderLeft: '1px solid #2a2d2e',
+                        }
+                      : undefined
+                  }
+                >
+                  <div className="flex-1 min-h-0">
+                    <MonacoEditor
+                      height="100%"
+                      language={sideEditorLanguage}
+                      theme="vs-dark"
+                      value={sideEditorValue}
+                      path={sideEditorPath}
+                      keepCurrentModel
+                      onChange={(value) => {
+                        if (!sideFile) return;
+                        updateFileContent(sideFile.id, value);
+                      }}
+                      options={{
+                        fontSize: 14,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        automaticLayout: true,
+                        readOnly: !sideFile,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className={`flex min-h-0 flex-1 ${showDiff ? '' : 'hidden'}`}>
                 <MonacoDiffEditor
                   height="100%"
-                  language={monacoLanguage}
+                  language={mainEditorLanguage}
                   theme="vs-dark"
-                  original={getRevisionContent(selectedRevision)}
-                  modified={activeContent}
+                  original={diffOriginal}
+                  modified={mainEditorValue}
                   originalModelPath={diffModelPaths.original}
                   modifiedModelPath={diffModelPaths.modified}
                   keepCurrentOriginalModel
@@ -2266,24 +2628,10 @@ export default function EditorPage() {
                     renderSideBySide: true,
                   }}
                 />
-              ) : (
-                <MonacoEditor
-                  height="100%"
-                  language={monacoLanguage}
-                  theme="vs-dark"
-                  value={activeContent}
-                  path={editorModelPath}
-                  onChange={handleEditorChange}
-                  options={{
-                    fontSize: 14,
-                    minimap: { enabled: false },
-                    scrollBeyondLastLine: false,
-                    automaticLayout: true,
-                  }}
-                />
-              )
-            ) : (
-              <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
+              </div>
+            </div>
+            {!activeFile && (
+              <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">
                 Select a module or UI entity from the explorer to start editing.
               </div>
             )}
