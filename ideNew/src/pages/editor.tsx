@@ -5,6 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import Script from 'next/script';
 import { useRouter } from 'next/router';
+import type * as monaco from 'monaco-editor';
 import {
   FiChevronLeft,
   FiChevronRight,
@@ -178,7 +179,6 @@ const EDITOR_NAV_ITEMS = [
   { label: 'Tenants', href: '/admin/tenants', match: '/admin/tenants' },
 ];
 
-const CONTENT_STORAGE_KEY = 'editor-file-contents';
 
 const detectLanguage = (fileName: string): EditorLanguage => {
   const lower = fileName.toLowerCase();
@@ -405,6 +405,20 @@ const buildExplorerTree = (
   };
 };
 
+const buildPersistedContentMap = (
+  modules: ModuleDto[],
+  uiPackages: UIPackageDto[]
+): Record<string, string> => {
+  const next: Record<string, string> = {};
+  modules.forEach((mod) => {
+    next[`module-${mod.id}`] = mod.code ?? '';
+  });
+  uiPackages.forEach((pkg) => {
+    next[`ui-${pkg.id}`] = pkg.code ?? pkg.codeBlob ?? '';
+  });
+  return next;
+};
+
 const parseDependencies = (value: string) =>
   value
     .split(/[\n,]+/g)
@@ -469,22 +483,21 @@ const compileWithBabel = (code: string): string => {
   }
 };
 
+const getFileIdFromUriPath = (path: string): string | null => {
+  const parts = path.split('/').filter(Boolean);
+  if (parts.length === 0) return null;
+  const last = parts[parts.length - 1];
+  if (last === 'side') {
+    return parts.length >= 2 ? parts[parts.length - 2] : null;
+  }
+  return last;
+};
+
 export default function EditorPage() {
   const router = useRouter();
   const { token, clear, ready } = useSessionToken();
   const { success, error: showError } = useToast();
-  const [fileContents, setFileContents] = useState<Record<string, string>>(
-    () => {
-      if (typeof window === 'undefined') return {};
-      const stored = localStorage.getItem(CONTENT_STORAGE_KEY);
-      if (!stored) return {};
-      try {
-        return JSON.parse(stored) as Record<string, string>;
-      } catch {
-        return {};
-      }
-    }
-  );
+  const [fileContents, setFileContents] = useState<Record<string, string>>({});
   const [savedContents, setSavedContents] = useState<Record<string, string>>({});
   const [activeFile, setActiveFile] = useState<ActiveFile | null>(null);
   const [openFiles, setOpenFiles] = useState<ActiveFile[]>([]);
@@ -572,8 +585,16 @@ export default function EditorPage() {
   const historyListRef = useRef<HTMLDivElement | null>(null);
   const historyRowRef = useRef<HTMLDivElement | null>(null);
   const [sideFileId, setSideFileId] = useState<string | null>(null);
+  const [closePromptOpen, setClosePromptOpen] = useState(false);
+  const [pendingCloseIds, setPendingCloseIds] = useState<string[]>([]);
+  const [pendingCloseBusy, setPendingCloseBusy] = useState(false);
+  const [pendingCloseAction, setPendingCloseAction] = useState<
+    'close' | 'reload' | null
+  >(null);
   const [rightPaneIds, setRightPaneIds] = useState<string[]>([]);
   const editorAreaRef = useRef<HTMLDivElement | null>(null);
+  const mainEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const sideEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const rightPaneSet = useMemo(() => new Set(rightPaneIds), [rightPaneIds]);
   const leftTabs = useMemo(
     () => openFiles.filter((file) => !rightPaneSet.has(file.id)),
@@ -740,6 +761,7 @@ export default function EditorPage() {
       setModulesData(moduleItems);
       setUiData(uiItems);
       setTreeData(buildExplorerTree(moduleItems, uiItems, overrides));
+      setSavedContents(buildPersistedContentMap(moduleItems, uiItems));
     } catch (err) {
       setTreeError((err as Error).message || 'Failed to load explorer');
     } finally {
@@ -751,11 +773,6 @@ export default function EditorPage() {
     if (!ready || !token) return;
     loadTree();
   }, [loadTree, ready, token]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    localStorage.setItem(CONTENT_STORAGE_KEY, JSON.stringify(fileContents));
-  }, [fileContents]);
 
   useEffect(() => {
     splitRatioRef.current = splitRatio;
@@ -830,6 +847,35 @@ export default function EditorPage() {
       return { ...prev, name: node.name, language, meta };
     });
   }, [treeData]);
+
+  useEffect(() => {
+    if (!treeData) return;
+    const nodeMap = new Map<string, ExplorerNode>();
+    const walk = (node: ExplorerNode) => {
+      nodeMap.set(node.id, node);
+      if (node.type === 'folder') {
+        node.children?.forEach(walk);
+      }
+    };
+    walk(treeData);
+    const candidateIds = new Set<string>();
+    openFiles.forEach((file) => candidateIds.add(file.id));
+    if (activeFile?.id) candidateIds.add(activeFile.id);
+
+    setFileContents((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      candidateIds.forEach((id) => {
+        if (next[id] !== undefined) return;
+        const node = nodeMap.get(id);
+        if (node?.type !== 'file') return;
+        next[id] = savedContents[id] ?? node.content ?? '';
+        changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [activeFile?.id, openFiles, savedContents, treeData]);
+
 
   useEffect(() => {
     setHistorySelectedId(null);
@@ -938,8 +984,10 @@ export default function EditorPage() {
     const language = detectLanguage(file.name);
     const meta = (file.meta as NodeMeta | undefined) ?? null;
     const serverContent = file.content ?? '';
+    const persistedContent =
+      savedContents[file.id] !== undefined ? savedContents[file.id] : serverContent;
     const initialContent =
-      fileContents[file.id] !== undefined ? fileContents[file.id] : serverContent;
+      fileContents[file.id] !== undefined ? fileContents[file.id] : persistedContent;
 
     setFileContents((prev) => {
       if (prev[file.id] !== undefined) return prev;
@@ -948,7 +996,7 @@ export default function EditorPage() {
 
     setSavedContents((prev) => {
       if (prev[file.id] !== undefined) return prev;
-      return { ...prev, [file.id]: serverContent };
+      return { ...prev, [file.id]: persistedContent };
     });
 
     setOpenFiles((prev) => {
@@ -965,15 +1013,39 @@ export default function EditorPage() {
   };
 
   const updateFileContent = useCallback((fileId: string, value?: string) => {
-    setFileContents((prev) => ({
-      ...prev,
-      [fileId]: value ?? '',
-    }));
+    if (value === undefined) return;
+    setFileContents((prev) => {
+      if (prev[fileId] === value) return prev;
+      return { ...prev, [fileId]: value };
+    });
   }, []);
 
-  const handleEditorChange = (value?: string) => {
-    if (!activeFile) return;
-    updateFileContent(activeFile.id, value);
+  const resolveEditorFileId = useCallback(
+    (
+      editor: monaco.editor.IStandaloneCodeEditor | null,
+      fallbackId?: string | null
+    ) => {
+      const path = editor?.getModel()?.uri.path;
+      const fromPath = path ? getFileIdFromUriPath(path) : null;
+      const candidate = fromPath ?? fallbackId ?? null;
+      if (!candidate) return null;
+      if (!candidate.startsWith('module-') && !candidate.startsWith('ui-')) return null;
+      return candidate;
+    },
+    []
+  );
+
+  const handleEditorChange = (
+    value?: string,
+    event?: monaco.editor.IModelContentChangedEvent
+  ) => {
+    if (value === undefined) return;
+    const fileId = resolveEditorFileId(mainEditorRef.current, activeFile?.id);
+    if (!fileId) return;
+    if (event?.isFlush && value === '' && savedContents[fileId]) {
+      return;
+    }
+    updateFileContent(fileId, value);
   };
 
   const handleLanguageChange = (language: EditorLanguage) => {
@@ -982,6 +1054,19 @@ export default function EditorPage() {
     setOpenFiles((prev) =>
       prev.map((f) => (f.id === activeFile.id ? { ...f, language } : f))
     );
+  };
+
+  const handleSideEditorChange = (
+    value?: string,
+    event?: monaco.editor.IModelContentChangedEvent
+  ) => {
+    if (value === undefined) return;
+    const fileId = resolveEditorFileId(sideEditorRef.current, sideFile?.id);
+    if (!fileId) return;
+    if (event?.isFlush && value === '' && savedContents[fileId]) {
+      return;
+    }
+    updateFileContent(fileId, value);
   };
 
   const moveTabToPane = useCallback(
@@ -1001,22 +1086,91 @@ export default function EditorPage() {
     [sideFileId]
   );
 
-  const handleCloseFile = (id: string) => {
-    setSideFileId((prev) => (prev === id ? null : prev));
-    setRightPaneIds((prev) => prev.filter((item) => item !== id));
-    setOpenFiles((prev) => {
-      const index = prev.findIndex((file) => file.id === id);
-      if (index === -1) return prev;
-      const next = prev.filter((file) => file.id !== id);
-      setActiveFile((current) => {
-        if (!current || current.id !== id) return current;
-        if (next.length === 0) return null;
-        const nextIndex = Math.min(index, next.length - 1);
-        return next[nextIndex];
+  const removeFileEntries = useCallback((ids: Set<string>) => {
+    if (ids.size === 0) return;
+    setFileContents((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      ids.forEach((id) => {
+        if (next[id] !== undefined) {
+          delete next[id];
+          changed = true;
+        }
       });
-      return next;
+      return changed ? next : prev;
     });
-  };
+  }, []);
+
+  const closeTabsByIds = useCallback(
+    (ids: Set<string>) => {
+      if (ids.size === 0) return;
+      removeFileEntries(ids);
+      setSideFileId((prev) => (prev && ids.has(prev) ? null : prev));
+      setRightPaneIds((prev) => prev.filter((item) => !ids.has(item)));
+      setOpenFiles((prev) => {
+        const next = prev.filter((file) => !ids.has(file.id));
+        if (activeFile && ids.has(activeFile.id)) {
+          if (next.length === 0) {
+            setActiveFile(null);
+            return next;
+          }
+          const prevIndex = prev.findIndex((file) => file.id === activeFile.id);
+          const fallbackIndex = Math.min(
+            Math.max(prevIndex, 0),
+            Math.max(next.length - 1, 0)
+          );
+          setActiveFile(next[fallbackIndex] ?? next[next.length - 1] ?? null);
+        }
+        return next;
+      });
+    },
+    [activeFile, removeFileEntries]
+  );
+
+  const isFileDirty = useCallback(
+    (file: ActiveFile) => {
+      const current =
+        fileContents[file.id] ?? savedContents[file.id] ?? '';
+      const saved = savedContents[file.id];
+      if (saved === undefined) return false;
+      return current !== saved;
+    },
+    [fileContents, savedContents]
+  );
+
+  const requestCloseTabs = useCallback(
+    (ids: Set<string>) => {
+      if (ids.size === 0) return;
+      const dirtyFiles = openFiles.filter(
+        (file) => ids.has(file.id) && isFileDirty(file)
+      );
+      if (dirtyFiles.length === 0) {
+        closeTabsByIds(ids);
+        return;
+      }
+      setPendingCloseIds(Array.from(ids));
+      setPendingCloseAction('close');
+      setClosePromptOpen(true);
+    },
+    [closeTabsByIds, isFileDirty, openFiles]
+  );
+
+  const requestReload = useCallback(() => {
+    const dirtyFiles = openFiles.filter(isFileDirty);
+    if (dirtyFiles.length === 0) {
+      window.location.reload();
+      return;
+    }
+    setPendingCloseIds(openFiles.map((file) => file.id));
+    setPendingCloseAction('reload');
+    setClosePromptOpen(true);
+  }, [isFileDirty, openFiles]);
+
+  const pendingDirtyFiles = useMemo(() => {
+    if (pendingCloseIds.length === 0) return [];
+    const idSet = new Set(pendingCloseIds);
+    return openFiles.filter((file) => idSet.has(file.id) && isFileDirty(file));
+  }, [isFileDirty, openFiles, pendingCloseIds]);
 
   const handleTabDragStart = (
     event: React.DragEvent<HTMLDivElement>,
@@ -1087,43 +1241,10 @@ export default function EditorPage() {
     moveTabToPane(sourceId, isRightSide ? 'right' : 'left');
   };
 
-  const isFileDirty = useCallback(
-    (file: ActiveFile) => {
-      const current = fileContents[file.id] ?? '';
-      const saved = savedContents[file.id];
-      if (saved === undefined) return false;
-      return current !== saved;
-    },
-    [fileContents, savedContents]
-  );
-
-  const closeTabsByIds = useCallback(
-    (ids: Set<string>) => {
-      if (ids.size === 0) return;
-      setOpenFiles((prev) => {
-        const next = prev.filter((file) => !ids.has(file.id));
-        if (activeFile && ids.has(activeFile.id)) {
-          if (next.length === 0) {
-            setActiveFile(null);
-            return next;
-          }
-          const prevIndex = prev.findIndex((file) => file.id === activeFile.id);
-          const fallbackIndex = Math.min(
-            Math.max(prevIndex, 0),
-            Math.max(next.length - 1, 0)
-          );
-          setActiveFile(next[fallbackIndex] ?? next[next.length - 1] ?? null);
-        }
-        return next;
-      });
-    },
-    [activeFile]
-  );
-
   const saveFile = useCallback(
     async (file: ActiveFile) => {
       if (!file.meta) return;
-      const content = fileContents[file.id] ?? '';
+      const content = fileContents[file.id] ?? savedContents[file.id] ?? '';
       if (file.meta.kind === 'module') {
         await apiFetch(`/api/modules/${file.meta.backendId}`, {
           method: 'PUT',
@@ -1154,7 +1275,7 @@ export default function EditorPage() {
       }
       setSavedContents((prev) => ({ ...prev, [file.id]: content }));
     },
-    [apiFetch, fileContents]
+    [apiFetch, fileContents, savedContents]
   );
 
   const handleSaveFile = useCallback(
@@ -1213,6 +1334,10 @@ export default function EditorPage() {
     success,
   ]);
 
+  const handleCloseFile = (id: string) => {
+    requestCloseTabs(new Set([id]));
+  };
+
   const handleResizeStart = (event: React.MouseEvent) => {
     resizeRef.current = {
       active: true,
@@ -1251,10 +1376,16 @@ export default function EditorPage() {
         // Allow modifier shortcuts even while typing, but ignore plain keys.
       }
 
+      const key = event.key.toLowerCase();
+      if (key === 'f5') {
+        event.preventDefault();
+        requestReload();
+        return;
+      }
+
       const isModifier = event.metaKey || event.ctrlKey;
       if (!isModifier) return;
 
-      const key = event.key.toLowerCase();
       if (key === 's') {
         event.preventDefault();
         if (activeFile) {
@@ -1267,12 +1398,19 @@ export default function EditorPage() {
         event.preventDefault();
         loadTree();
         loadHistory();
+        return;
+      }
+
+      if (key === 'r') {
+        event.preventDefault();
+        requestReload();
       }
     };
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [activeFile, handleSave, loadHistory, loadTree]);
+  }, [activeFile, handleSave, loadHistory, loadTree, requestReload]);
+
 
   const resetActionFeedback = () => {};
 
@@ -1842,7 +1980,34 @@ export default function EditorPage() {
     [apiFetch, folderOverrides, loadTree, modulesData, showError, treeData, uiData]
   );
 
-  const activeContent = activeFile ? fileContents[activeFile.id] ?? '' : '';
+  const nodeContentMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!treeData) return map;
+    const walk = (node: ExplorerNode) => {
+      if (node.type === 'file') {
+        map.set(node.id, node.content ?? '');
+      } else {
+        node.children?.forEach(walk);
+      }
+    };
+    walk(treeData);
+    return map;
+  }, [treeData]);
+
+  const getNodeContent = useCallback(
+    (id: string) => nodeContentMap.get(id) ?? '',
+    [nodeContentMap]
+  );
+
+  const getPersistedContent = useCallback(
+    (id: string) =>
+      savedContents[id] !== undefined ? savedContents[id] : getNodeContent(id),
+    [getNodeContent, savedContents]
+  );
+
+  const activeContent = activeFile
+    ? fileContents[activeFile.id] ?? getPersistedContent(activeFile.id)
+    : '';
   const selectedRevision = useMemo(
     () => historyItems.find((item) => item.id === historySelectedId) ?? null,
     [historyItems, historySelectedId]
@@ -1879,7 +2044,9 @@ export default function EditorPage() {
     return `inmemory://model/${sideFile.id}/side`;
   }, [sideFile]);
 
-  const sideContent = sideFile ? fileContents[sideFile.id] ?? '' : '';
+  const sideContent = sideFile
+    ? fileContents[sideFile.id] ?? getPersistedContent(sideFile.id)
+    : '';
   const showSplitEditor = rightTabs.length > 0;
   const showDiff = Boolean(selectedRevision);
   const diffOriginal = selectedRevision ? getRevisionContent(selectedRevision) : '';
@@ -1889,6 +2056,25 @@ export default function EditorPage() {
   const sideEditorPath = sideFile ? sideEditorModelPath : 'inmemory://model/side-empty';
   const sideEditorValue = sideFile ? sideContent : '';
   const sideEditorLanguage = sideFile ? sideLanguage : 'plaintext';
+
+  useEffect(() => {
+    const seedIfMissing = (fileId: string | null) => {
+      if (!fileId) return;
+      const persistedContent = getPersistedContent(fileId);
+      setFileContents((prev) => {
+        const current = prev[fileId];
+        if (current === undefined) {
+          return { ...prev, [fileId]: persistedContent };
+        }
+        if (current === '' && savedContents[fileId] === undefined && persistedContent) {
+          return { ...prev, [fileId]: persistedContent };
+        }
+        return prev;
+      });
+    };
+    seedIfMissing(activeFile?.id ?? null);
+    seedIfMissing(sideFile?.id ?? null);
+  }, [activeFile?.id, getPersistedContent, savedContents, sideFile?.id]);
 
   const activeFileType = useMemo(() => {
     if (!activeFile) return '';
@@ -1963,7 +2149,7 @@ export default function EditorPage() {
         <button
           className={itemClass}
           onClick={() => {
-            handleCloseFile(file.id);
+            requestCloseTabs(new Set([file.id]));
             setTabMenu(null);
           }}
         >
@@ -1972,7 +2158,7 @@ export default function EditorPage() {
         <button
           className={`${itemClass} ${allIds.size === 0 ? disabledClass : ''}`}
           onClick={() => {
-            closeTabsByIds(allIds);
+            requestCloseTabs(allIds);
             setTabMenu(null);
           }}
           disabled={allIds.size === 0}
@@ -1982,7 +2168,7 @@ export default function EditorPage() {
         <button
           className={`${itemClass} ${rightIds.size === 0 ? disabledClass : ''}`}
           onClick={() => {
-            closeTabsByIds(rightIds);
+            requestCloseTabs(rightIds);
             setTabMenu(null);
           }}
           disabled={rightIds.size === 0}
@@ -1992,7 +2178,7 @@ export default function EditorPage() {
         <button
           className={`${itemClass} ${leftIds.size === 0 ? disabledClass : ''}`}
           onClick={() => {
-            closeTabsByIds(leftIds);
+            requestCloseTabs(leftIds);
             setTabMenu(null);
           }}
           disabled={leftIds.size === 0}
@@ -2002,7 +2188,7 @@ export default function EditorPage() {
         <button
           className={`${itemClass} ${savedIds.size === 0 ? disabledClass : ''}`}
           onClick={() => {
-            closeTabsByIds(savedIds);
+            requestCloseTabs(savedIds);
             setTabMenu(null);
           }}
           disabled={savedIds.size === 0}
@@ -2348,7 +2534,16 @@ export default function EditorPage() {
             <div className="flex h-[34px] items-stretch border-b border-[#2a2d2e] bg-[#252526]">
               <div className="flex min-w-0 flex-1 items-stretch">
                 <div
-                  className="flex min-w-0 flex-1 items-end overflow-x-auto overflow-y-hidden"
+                  className="flex min-w-0 items-end overflow-x-auto overflow-y-hidden"
+                  style={
+                    showSplitEditor
+                      ? {
+                          flexBasis: `${splitRatio * 100}%`,
+                          flexGrow: 0,
+                          flexShrink: 0,
+                        }
+                      : { flexGrow: 1 }
+                  }
                   onDragOver={handleTabDragOver}
                   onDrop={(event) => handleTabBarDrop(event, 'left')}
                 >
@@ -2426,9 +2621,20 @@ export default function EditorPage() {
                 </div>
                 {rightTabs.length > 0 && (
                   <>
-                    <div className="w-px bg-[#2a2d2e]" />
                     <div
-                      className="flex min-w-0 flex-1 items-end overflow-x-auto overflow-y-hidden"
+                      className="w-1.5 cursor-col-resize bg-[#2a2d2e] opacity-60 hover:opacity-100"
+                      onMouseDown={handleSplitResizeStart}
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label="Resize editor split"
+                    />
+                    <div
+                      className="flex min-w-0 items-end overflow-x-auto overflow-y-hidden"
+                      style={{
+                        flexBasis: `${(1 - splitRatio) * 100}%`,
+                        flexGrow: 0,
+                        flexShrink: 0,
+                      }}
                       onDragOver={handleTabDragOver}
                       onDrop={(event) => handleTabBarDrop(event, 'right')}
                     >
@@ -2550,6 +2756,9 @@ export default function EditorPage() {
                       value={mainEditorValue}
                       path={mainEditorPath}
                       keepCurrentModel
+                      onMount={(editor) => {
+                        mainEditorRef.current = editor;
+                      }}
                       onChange={handleEditorChange}
                       options={{
                         fontSize: 14,
@@ -2563,7 +2772,7 @@ export default function EditorPage() {
                 </div>
                 {showSplitEditor && (
                   <div
-                    className="flex w-1 cursor-col-resize items-stretch bg-transparent hover:bg-[#2a2d2e]"
+                    className="flex w-1.5 cursor-col-resize items-stretch bg-[#2a2d2e] opacity-60 hover:opacity-100"
                     onMouseDown={handleSplitResizeStart}
                     role="separator"
                     aria-orientation="vertical"
@@ -2586,17 +2795,17 @@ export default function EditorPage() {
                   }
                 >
                   <div className="flex-1 min-h-0">
-                    <MonacoEditor
-                      height="100%"
-                      language={sideEditorLanguage}
-                      theme="vs-dark"
-                      value={sideEditorValue}
-                      path={sideEditorPath}
-                      keepCurrentModel
-                      onChange={(value) => {
-                        if (!sideFile) return;
-                        updateFileContent(sideFile.id, value);
-                      }}
+                      <MonacoEditor
+                        height="100%"
+                        language={sideEditorLanguage}
+                        theme="vs-dark"
+                        value={sideEditorValue}
+                        path={sideEditorPath}
+                        keepCurrentModel
+                        onMount={(editor) => {
+                          sideEditorRef.current = editor;
+                        }}
+                        onChange={handleSideEditorChange}
                       options={{
                         fontSize: 14,
                         minimap: { enabled: false },
@@ -2831,6 +3040,99 @@ export default function EditorPage() {
             </FormLayout>
           </form>
         )}
+      </Modal>
+
+      <Modal
+        open={closePromptOpen}
+        onClose={() => {
+          if (pendingCloseBusy) return;
+          setClosePromptOpen(false);
+          setPendingCloseIds([]);
+          setPendingCloseAction(null);
+        }}
+        title="Unsaved changes"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (pendingCloseBusy) return;
+                setClosePromptOpen(false);
+                setPendingCloseIds([]);
+                setPendingCloseAction(null);
+              }}
+              disabled={pendingCloseBusy}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (pendingCloseBusy) return;
+                if (pendingCloseAction === 'reload') {
+                  setPendingCloseIds([]);
+                  setPendingCloseAction(null);
+                  setClosePromptOpen(false);
+                  window.location.reload();
+                  return;
+                }
+                closeTabsByIds(new Set(pendingCloseIds));
+                setPendingCloseIds([]);
+                setPendingCloseAction(null);
+                setClosePromptOpen(false);
+              }}
+              disabled={pendingCloseBusy}
+            >
+              Discard
+            </Button>
+            <Button
+              variant="primary"
+              onClick={async () => {
+                if (pendingCloseBusy) return;
+                setPendingCloseBusy(true);
+                for (const file of pendingDirtyFiles) {
+                  await handleSaveFile(file);
+                }
+                if (pendingCloseAction === 'reload') {
+                  setPendingCloseIds([]);
+                  setPendingCloseAction(null);
+                  setClosePromptOpen(false);
+                  setPendingCloseBusy(false);
+                  window.location.reload();
+                  return;
+                }
+                closeTabsByIds(new Set(pendingCloseIds));
+                setPendingCloseIds([]);
+                setPendingCloseAction(null);
+                setClosePromptOpen(false);
+                setPendingCloseBusy(false);
+              }}
+              disabled={pendingCloseBusy}
+            >
+              Save
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-2 text-sm text-gray-300">
+          <p>
+            You have {pendingDirtyFiles.length} unsaved file
+            {pendingDirtyFiles.length === 1 ? '' : 's'}.
+          </p>
+          {pendingDirtyFiles.length > 0 && (
+            <div className="max-h-32 overflow-auto rounded border border-[#2a2d2e] bg-[#1f1f1f] px-3 py-2 text-[11px] text-gray-200">
+              {pendingDirtyFiles.map((file) => (
+                <div key={file.id} className="truncate">
+                  {file.name}
+                </div>
+              ))}
+            </div>
+          )}
+          <p>
+            Do you want to save your changes before{' '}
+            {pendingCloseAction === 'reload' ? 'reloading' : 'closing'}?
+          </p>
+        </div>
       </Modal>
 
       <Modal
