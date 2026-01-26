@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useToast } from "@/components/ui/Toast";
 
 export type ExplorerNode = {
   id: string;
@@ -476,10 +477,10 @@ const NodeRow = React.memo(function NodeRow({
   return (
     <div
       ref={rowRef}
-      className={`group relative flex cursor-default items-center gap-2 px-2 py-0.5 text-sm ${
+      className={`group relative flex cursor-default items-center gap-2 px-0.5 py-0.5 text-sm ${
         isSelected ? "bg-[#094771] text-white" : "text-gray-200 hover:bg-[#2a2d2e]"
       }`}
-      style={{ paddingLeft: 8 + depth * 12 }}
+      style={{ paddingLeft: 4 + depth * 8 }}
       draggable={!isRenaming && !readOnly}
       onClick={(e) => {
         e.stopPropagation();
@@ -493,7 +494,11 @@ const NodeRow = React.memo(function NodeRow({
           onOpenFile?.(node);
         }
       }}
-      onContextMenu={(e) => onContextMenu(e, node.id)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onContextMenu(e, node.id);
+      }}
       onDragStart={(e) => {
         if (readOnly) return;
         e.stopPropagation();
@@ -549,22 +554,7 @@ const NodeRow = React.memo(function NodeRow({
           )}
         </div>
       ) : (
-        <>
-          <span className="flex-1 truncate">{node.name}</span>
-          {!readOnly && (
-            <button
-              type="button"
-              className="ml-auto rounded px-1 text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200"
-              onClick={(e) => {
-                e.stopPropagation();
-                onContextMenu(e, node.id);
-              }}
-              aria-label="Open item menu"
-            >
-              ...
-            </button>
-          )}
-        </>
+        <span className="flex-1 truncate">{node.name}</span>
       )}
     </div>
   );
@@ -580,6 +570,7 @@ export default function FileExplorer({
   onMoveNode,
 }: FileExplorerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const { success } = useToast();
   const [tree, setTree] = useState<ExplorerNode>(() => {
     if (typeof window === "undefined") return initialData;
     if (initialTree) return initialTree;
@@ -799,17 +790,16 @@ export default function FileExplorer({
       const parentPath = getParentPath(parentId);
       const handled = onDeleteNode?.({ node, parentId, parentPath });
       if (handled) return;
-      const ok = window.confirm(
-        `Delete "${node.name}"${
-          node.type === "folder" ? " and its contents" : ""
-        }?`
-      );
-      if (!ok) return;
       const result = removeNode(tree, id);
       if (result.removed) {
         setTree(result.tree);
         if (selectedId === id) setSelectedId(null);
         if (renamingId === id) cancelRename();
+        success(
+          `Deleted "${node.name}"${
+            node.type === "folder" ? " and its contents" : ""
+          }`
+        );
       }
     },
     [
@@ -1108,7 +1098,7 @@ export default function FileExplorer({
   return (
     <div
       ref={containerRef}
-      className="relative flex h-full w-80 flex-col select-none bg-[#252526] text-gray-100 outline-none"
+      className="relative flex h-full w-full flex-col select-none bg-[#252526] text-gray-100 outline-none"
       tabIndex={0}
       onKeyDown={handleKeyDown}
       onClick={() => {
@@ -1117,7 +1107,7 @@ export default function FileExplorer({
       }}
       onContextMenu={(e) => onContextMenu(e, null)}
     >
-      <div className="flex items-center justify-between border-b border-[#2a2d2e] px-3 py-2 text-[11px] uppercase text-gray-400">
+      <div className="flex h-[34px] items-center justify-between border-b border-[#2a2d2e] px-3 text-[11px] uppercase text-gray-400">
         <span>Project</span>
         {!readOnly && (
           <div className="flex items-center gap-1 text-gray-400">

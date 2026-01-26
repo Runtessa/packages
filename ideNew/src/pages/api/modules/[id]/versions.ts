@@ -37,9 +37,22 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   }
 
   const revRepo = CoreDataSource.getRepository(ModuleRevision);
-  const revisions = await revRepo.find({
+  const pageRaw = Array.isArray(req.query.page) ? req.query.page[0] : req.query.page;
+  const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+  const page = Math.max(1, Number.parseInt(pageRaw ?? '1', 10) || 1);
+  const limit = Math.min(100, Math.max(1, Number.parseInt(limitRaw ?? '20', 10) || 20));
+  const skip = (page - 1) * limit;
+
+  const [revisions, total] = await revRepo.findAndCount({
     where: { module: { id: mod.id } },
     order: { revision: 'DESC', createdAt: 'DESC' },
+    skip,
+    take: limit,
   });
-  res.status(200).json(revisions.map(serializeRevision));
+  res.status(200).json({
+    items: revisions.map(serializeRevision),
+    total,
+    page,
+    pageSize: limit,
+  });
 });

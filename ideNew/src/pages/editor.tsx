@@ -1,10 +1,20 @@
 import '@/lib/monaco';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import Link from 'next/link';
 import Script from 'next/script';
 import { useRouter } from 'next/router';
+import {
+  FiChevronLeft,
+  FiChevronRight,
+  FiClock,
+  FiEye,
+  FiEyeOff,
+  FiFolder,
+  FiRefreshCw,
+  FiRotateCcw,
+} from 'react-icons/fi';
 import FileExplorer, { ExplorerNode } from '@/components/FileExplorer';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
@@ -37,6 +47,12 @@ type ActiveFile = {
   name: string;
   language: EditorLanguage;
   meta: NodeMeta | null;
+};
+
+type TabContextMenuState = {
+  x: number;
+  y: number;
+  fileId: string;
 };
 
 declare global {
@@ -111,6 +127,13 @@ type UiRevisionDto = {
 type HistoryItem =
   | (ModuleRevisionDto & { kind: 'module' })
   | (UiRevisionDto & { kind: 'ui' });
+
+type HistoryResponse<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
 
 type ExplorerScope = 'modules' | 'ui';
 
@@ -388,6 +411,18 @@ const parseDependencies = (value: string) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+const LEFT_PANEL_STORAGE_KEY = 'editor-left-panel-width';
+const MIN_LEFT_PANEL_WIDTH = 150;
+const MAX_LEFT_PANEL_WIDTH = 520;
+const DEFAULT_LEFT_PANEL_WIDTH = 320;
+const HISTORY_PAGE_SIZE = 20;
+
+const extractFileExtension = (fileName: string) => {
+  const idx = fileName.lastIndexOf('.');
+  if (idx === -1 || idx === fileName.length - 1) return '';
+  return fileName.slice(idx + 1);
+};
+
 const formatHistoryTimestamp = (value: string) => {
   if (!value) return '';
   const date = new Date(value);
@@ -447,16 +482,12 @@ export default function EditorPage() {
       }
     }
   );
+  const [savedContents, setSavedContents] = useState<Record<string, string>>({});
   const [activeFile, setActiveFile] = useState<ActiveFile | null>(null);
   const [openFiles, setOpenFiles] = useState<ActiveFile[]>([]);
   const [treeData, setTreeData] = useState<ExplorerNode | null>(null);
   const [loadingTree, setLoadingTree] = useState(false);
   const [treeError, setTreeError] = useState<string>('');
-  const [saving, setSaving] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<string>('');
-  const [saveError, setSaveError] = useState<string>('');
-  const [actionStatus, setActionStatus] = useState<string>('');
-  const [actionError, setActionError] = useState<string>('');
   const [modulesData, setModulesData] = useState<ModuleDto[]>([]);
   const [uiData, setUiData] = useState<UIPackageDto[]>([]);
   const [folderOverrides, setFolderOverrides] = useState<FolderOverride[]>([]);
@@ -504,10 +535,31 @@ export default function EditorPage() {
     | { type: 'folder'; scope: ExplorerScope; path: string[]; label: string }
     | null
   >(null);
+  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
+  const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
+    if (typeof window === 'undefined') return DEFAULT_LEFT_PANEL_WIDTH;
+    const stored = localStorage.getItem(LEFT_PANEL_STORAGE_KEY);
+    const parsed = stored ? Number.parseInt(stored, 10) : NaN;
+    return Number.isFinite(parsed) ? parsed : DEFAULT_LEFT_PANEL_WIDTH;
+  });
+  const leftPanelWidthRef = useRef(leftPanelWidth);
+  const resizeRef = useRef<{ active: boolean; startX: number; startWidth: number }>({
+    active: false,
+    startX: 0,
+    startWidth: DEFAULT_LEFT_PANEL_WIDTH,
+  });
+  const dragTabIdRef = useRef<string | null>(null);
+  const [leftPanel, setLeftPanel] = useState<'explorer' | 'history'>('explorer');
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [historySelectedId, setHistorySelectedId] = useState<string | null>(null);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyPageSize, setHistoryPageSize] = useState(HISTORY_PAGE_SIZE);
+  const historyListRef = useRef<HTMLDivElement | null>(null);
+  const historyRowRef = useRef<HTMLDivElement | null>(null);
+  const [tabMenu, setTabMenu] = useState<TabContextMenuState | null>(null);
 
   const apiFetch = useCallback(
     async (url: string, options: { method?: string; body?: unknown } = {}) => {
@@ -548,6 +600,42 @@ export default function EditorPage() {
     if (typeof window === 'undefined') return;
     setTenantHost(getSelectedTenantHost());
   }, [ready]);
+
+  useEffect(() => {
+    leftPanelWidthRef.current = leftPanelWidth;
+  }, [leftPanelWidth]);
+
+  useEffect(() => {
+    const handleMove = (event: MouseEvent) => {
+      if (!resizeRef.current.active) return;
+      const delta = event.clientX - resizeRef.current.startX;
+      const nextWidth = Math.min(
+        MAX_LEFT_PANEL_WIDTH,
+        Math.max(MIN_LEFT_PANEL_WIDTH, resizeRef.current.startWidth + delta)
+      );
+      setLeftPanelWidth(nextWidth);
+    };
+
+    const handleUp = () => {
+      if (!resizeRef.current.active) return;
+      resizeRef.current.active = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(
+          LEFT_PANEL_STORAGE_KEY,
+          String(leftPanelWidthRef.current)
+        );
+      }
+    };
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -614,6 +702,12 @@ export default function EditorPage() {
   }, [fileContents]);
 
   useEffect(() => {
+    const handleWindowClick = () => setTabMenu(null);
+    window.addEventListener('click', handleWindowClick);
+    return () => window.removeEventListener('click', handleWindowClick);
+  }, []);
+
+  useEffect(() => {
     if (!treeData) return;
     const nodeMap = new Map<string, ExplorerNode>();
     const walk = (node: ExplorerNode) => {
@@ -648,57 +742,122 @@ export default function EditorPage() {
 
   useEffect(() => {
     setHistorySelectedId(null);
+    setHistoryPage(1);
   }, [activeFile?.id]);
 
-  const loadHistory = useCallback(async () => {
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const container = historyListRef.current;
+    if (!container) return;
+    let raf = 0;
+    const measure = () => {
+      const height = container.getBoundingClientRect().height;
+      if (height < 1) return;
+      const rowHeight =
+        historyRowRef.current?.getBoundingClientRect().height ?? 36;
+      if (rowHeight < 1) return;
+      const nextSize = Math.max(1, Math.floor(height / rowHeight));
+      setHistoryPageSize((prev) => (prev === nextSize ? prev : nextSize));
+    };
+    measure();
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    });
+    observer.observe(container);
+    return () => {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
+  }, [leftPanel, leftPanelOpen, historyItems.length]);
+
+  const loadHistory = useCallback(
+    async (page = historyPage) => {
     if (!activeFile?.meta) {
       setHistoryItems([]);
       setHistoryError('');
+      setHistoryTotal(0);
       return;
     }
     setHistoryLoading(true);
     setHistoryError('');
     try {
       if (activeFile.meta.kind === 'module') {
-        const revisions = (await apiFetch(
-          `/api/modules/${activeFile.meta.backendId}/versions`
-        )) as ModuleRevisionDto[];
-        setHistoryItems(revisions.map((rev) => ({ ...rev, kind: 'module' })));
+        const response = (await apiFetch(
+          `/api/modules/${activeFile.meta.backendId}/versions?page=${page}&limit=${historyPageSize}`
+        )) as HistoryResponse<ModuleRevisionDto> | ModuleRevisionDto[];
+        if (Array.isArray(response)) {
+          const total = response.length;
+          const start = (page - 1) * historyPageSize;
+          const items = response.slice(start, start + historyPageSize);
+          setHistoryItems(items.map((rev) => ({ ...rev, kind: 'module' })));
+          setHistoryTotal(total);
+        } else {
+          const items = response.items.slice(0, historyPageSize);
+          setHistoryItems(items.map((rev) => ({ ...rev, kind: 'module' })));
+          setHistoryTotal(response.total);
+        }
       } else {
-        const revisions = (await apiFetch(
-          `/api/ui-entities/${activeFile.meta.backendId}/versions`
-        )) as UiRevisionDto[];
-        setHistoryItems(revisions.map((rev) => ({ ...rev, kind: 'ui' })));
+        const response = (await apiFetch(
+          `/api/ui-entities/${activeFile.meta.backendId}/versions?page=${page}&limit=${historyPageSize}`
+        )) as HistoryResponse<UiRevisionDto> | UiRevisionDto[];
+        if (Array.isArray(response)) {
+          const total = response.length;
+          const start = (page - 1) * historyPageSize;
+          const items = response.slice(start, start + historyPageSize);
+          setHistoryItems(items.map((rev) => ({ ...rev, kind: 'ui' })));
+          setHistoryTotal(total);
+        } else {
+          const items = response.items.slice(0, historyPageSize);
+          setHistoryItems(items.map((rev) => ({ ...rev, kind: 'ui' })));
+          setHistoryTotal(response.total);
+        }
       }
     } catch (err) {
       setHistoryError((err as Error).message || 'Failed to load history');
       setHistoryItems([]);
+      setHistoryTotal(0);
     } finally {
       setHistoryLoading(false);
     }
-  }, [activeFile?.meta, apiFetch]);
+  },
+    [activeFile?.meta, apiFetch, historyPage, historyPageSize]
+  );
 
   useEffect(() => {
     if (!activeFile?.meta) {
       setHistoryItems([]);
       setHistoryError('');
+      setHistoryTotal(0);
       return;
     }
-    loadHistory();
-  }, [activeFile?.meta, loadHistory]);
+    loadHistory(historyPage);
+  }, [activeFile?.meta, historyPage, loadHistory]);
+
+  const historyTotalPages = Math.max(1, Math.ceil(historyTotal / historyPageSize));
+
+  useEffect(() => {
+    if (historyPage > historyTotalPages) {
+      setHistoryPage(historyTotalPages);
+    }
+  }, [historyPage, historyTotalPages]);
 
   const handleOpenFile = (file: ExplorerNode) => {
     if (file.type !== 'file') return;
     const language = detectLanguage(file.name);
     const meta = (file.meta as NodeMeta | undefined) ?? null;
+    const serverContent = file.content ?? '';
     const initialContent =
-      fileContents[file.id] !== undefined
-        ? fileContents[file.id]
-        : file.content ?? '';
+      fileContents[file.id] !== undefined ? fileContents[file.id] : serverContent;
 
     setFileContents((prev) => {
       if (prev[file.id] !== undefined) return prev;
       return { ...prev, [file.id]: initialContent };
+    });
+
+    setSavedContents((prev) => {
+      if (prev[file.id] !== undefined) return prev;
+      return { ...prev, [file.id]: serverContent };
     });
 
     setOpenFiles((prev) => {
@@ -730,57 +889,235 @@ export default function EditorPage() {
     );
   };
 
-  const handleSave = async () => {
-    if (!activeFile || !activeFile.meta) return;
-    const content = fileContents[activeFile.id] ?? '';
-    setSaving(true);
-    setSaveStatus('');
-    setSaveError('');
-    try {
-      if (activeFile.meta.kind === 'module') {
-        await apiFetch(`/api/modules/${activeFile.meta.backendId}`, {
+  const handleCloseFile = (id: string) => {
+    setOpenFiles((prev) => {
+      const index = prev.findIndex((file) => file.id === id);
+      if (index === -1) return prev;
+      const next = prev.filter((file) => file.id !== id);
+      setActiveFile((current) => {
+        if (!current || current.id !== id) return current;
+        if (next.length === 0) return null;
+        const nextIndex = Math.min(index, next.length - 1);
+        return next[nextIndex];
+      });
+      return next;
+    });
+  };
+
+  const handleTabDragStart = (
+    event: React.DragEvent<HTMLDivElement>,
+    id: string
+  ) => {
+    dragTabIdRef.current = id;
+    event.dataTransfer.setData('text/plain', id);
+    event.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleTabDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleTabDrop = (event: React.DragEvent<HTMLDivElement>, id: string) => {
+    event.preventDefault();
+    const sourceId = dragTabIdRef.current ?? event.dataTransfer.getData('text/plain');
+    dragTabIdRef.current = null;
+    if (!sourceId || sourceId === id) return;
+    setOpenFiles((prev) => {
+      const fromIndex = prev.findIndex((file) => file.id === sourceId);
+      const toIndex = prev.findIndex((file) => file.id === id);
+      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const handleTabDragEnd = () => {
+    dragTabIdRef.current = null;
+  };
+
+  const isFileDirty = useCallback(
+    (file: ActiveFile) => {
+      const current = fileContents[file.id] ?? '';
+      const saved = savedContents[file.id];
+      if (saved === undefined) return false;
+      return current !== saved;
+    },
+    [fileContents, savedContents]
+  );
+
+  const closeTabsByIds = useCallback(
+    (ids: Set<string>) => {
+      if (ids.size === 0) return;
+      setOpenFiles((prev) => {
+        const next = prev.filter((file) => !ids.has(file.id));
+        if (activeFile && ids.has(activeFile.id)) {
+          if (next.length === 0) {
+            setActiveFile(null);
+            return next;
+          }
+          const prevIndex = prev.findIndex((file) => file.id === activeFile.id);
+          const fallbackIndex = Math.min(
+            Math.max(prevIndex, 0),
+            Math.max(next.length - 1, 0)
+          );
+          setActiveFile(next[fallbackIndex] ?? next[next.length - 1] ?? null);
+        }
+        return next;
+      });
+    },
+    [activeFile]
+  );
+
+  const saveFile = useCallback(
+    async (file: ActiveFile) => {
+      if (!file.meta) return;
+      const content = fileContents[file.id] ?? '';
+      if (file.meta.kind === 'module') {
+        await apiFetch(`/api/modules/${file.meta.backendId}`, {
           method: 'PUT',
           body: {
-            routePath: activeFile.meta.routePath,
-            method: activeFile.meta.method,
+            routePath: file.meta.routePath,
+            method: file.meta.method,
             code: content,
-            fileExtension: coerceModuleExtension(activeFile.meta.fileExtension),
+            fileExtension: coerceModuleExtension(file.meta.fileExtension),
           },
         });
       } else {
-        const uiExtension = coerceUiExtension(activeFile.meta.fileExtension);
+        const uiExtension = coerceUiExtension(file.meta.fileExtension);
         if (uiExtension !== 'css' && !window.Babel) {
           throw new Error('Babel runtime not loaded in browser; cannot build code_blob');
         }
-        // Compile source to code_blob using the in-browser Babel runtime (see ideNew/public/babel/bable.js)
         const compiled = uiExtension === 'css' ? content : compileWithBabel(content);
-        await apiFetch(`/api/ui-entities/${activeFile.meta.backendId}`, {
+        await apiFetch(`/api/ui-entities/${file.meta.backendId}`, {
           method: 'PUT',
           body: {
-            name: activeFile.meta.name,
-            version: activeFile.meta.version,
+            name: file.meta.name,
+            version: file.meta.version,
             code: content,
             codeBlob: compiled,
-            dependencies: activeFile.meta.dependencies ?? [],
+            dependencies: file.meta.dependencies ?? [],
             fileExtension: uiExtension,
           },
         });
       }
-      setSaveStatus('Saved');
-      loadTree();
-      loadHistory();
-    } catch (err) {
-      setSaveError((err as Error).message || 'Save failed');
-    } finally {
-      setSaving(false);
-      setTimeout(() => setSaveStatus(''), 2000);
+      setSavedContents((prev) => ({ ...prev, [file.id]: content }));
+    },
+    [apiFetch, fileContents]
+  );
+
+  const handleSaveFile = useCallback(
+    async (file: ActiveFile) => {
+      if (!file.meta) return;
+      try {
+        await saveFile(file);
+        success('Saved');
+        loadTree();
+        if (activeFile?.id === file.id) {
+          loadHistory();
+        }
+      } catch (err) {
+        showError((err as Error).message || 'Save failed');
+      }
+    },
+    [activeFile?.id, loadHistory, loadTree, saveFile, showError, success]
+  );
+
+  const handleSaveAll = useCallback(async () => {
+    if (openFiles.length === 0) return;
+    const dirtyFiles = openFiles.filter(isFileDirty);
+    if (dirtyFiles.length === 0) {
+      success('Nothing to save');
+      return;
     }
+    let firstError: string | null = null;
+    let savedActive = false;
+    for (const file of dirtyFiles) {
+      try {
+        await saveFile(file);
+        if (activeFile?.id === file.id) savedActive = true;
+      } catch (err) {
+        if (!firstError) {
+          firstError = (err as Error).message || 'Save failed';
+        }
+      }
+    }
+    if (firstError) {
+      showError(firstError);
+    } else {
+      success('Saved all');
+    }
+    loadTree();
+    if (savedActive) {
+      loadHistory();
+    }
+  }, [
+    activeFile?.id,
+    isFileDirty,
+    loadHistory,
+    loadTree,
+    openFiles,
+    saveFile,
+    showError,
+    success,
+  ]);
+
+  const handleResizeStart = (event: React.MouseEvent) => {
+    resizeRef.current = {
+      active: true,
+      startX: event.clientX,
+      startWidth: leftPanelWidthRef.current,
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
   };
 
-  const resetActionFeedback = () => {
-    setActionError('');
-    setActionStatus('');
-  };
+  const handleSave = useCallback(() => {
+    if (!activeFile) return;
+    void handleSaveFile(activeFile);
+  }, [activeFile, handleSaveFile]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (
+        target &&
+        (target.isContentEditable ||
+          tag === 'input' ||
+          tag === 'textarea' ||
+          tag === 'select')
+      ) {
+        // Allow modifier shortcuts even while typing, but ignore plain keys.
+      }
+
+      const isModifier = event.metaKey || event.ctrlKey;
+      if (!isModifier) return;
+
+      const key = event.key.toLowerCase();
+      if (key === 's') {
+        event.preventDefault();
+        if (activeFile) {
+          handleSave();
+        }
+        return;
+      }
+
+      if (key === 'r' && event.shiftKey) {
+        event.preventDefault();
+        loadTree();
+        loadHistory();
+      }
+    };
+
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [activeFile, handleSave, loadHistory, loadTree]);
+
+  const resetActionFeedback = () => {};
 
   const openCreateModal = (
     scope: ExplorerScope,
@@ -830,7 +1167,7 @@ export default function EditorPage() {
     if (createType === 'folder') {
       const name = folderForm.name.trim();
       if (!name || /[\\/]/.test(name)) {
-        setActionError('Folder name cannot be empty or contain slashes.');
+        showError('Folder name cannot be empty or contain slashes.');
         return;
       }
       const nextPath = [...createParentPath, name];
@@ -842,19 +1179,18 @@ export default function EditorPage() {
         : [...folderOverrides, { scope: createScope, path: nextPath }];
       setFolderOverrides(nextOverrides);
       setTreeData(buildExplorerTree(modulesData, uiData, nextOverrides));
-      setActionStatus('Folder created');
-      setTimeout(() => setActionStatus(''), 2000);
+      success('Folder created');
       closeCreateModal();
       return;
     }
 
     if (createScope === 'modules') {
       if (!moduleForm.routePath.trim()) {
-        setActionError('Route path is required.');
+        showError('Route path is required.');
         return;
       }
       if (!moduleForm.method) {
-        setActionError('Method is required.');
+        showError('Method is required.');
         return;
       }
       try {
@@ -872,19 +1208,18 @@ export default function EditorPage() {
         await loadTree();
       } catch (err) {
         const message = (err as Error).message || 'Failed to create module';
-        setActionError(message);
         showError(message);
       }
       return;
     }
 
     if (!uiForm.name.trim() || !uiForm.version.trim()) {
-      setActionError('Name and version are required.');
+      showError('Name and version are required.');
       return;
     }
     const uiExtension = coerceUiExtension(uiForm.fileExtension);
     if (uiExtension !== 'css' && !window.Babel) {
-      setActionError('Babel runtime not loaded in browser; cannot build code_blob.');
+      showError('Babel runtime not loaded in browser; cannot build code_blob.');
       return;
     }
     try {
@@ -907,7 +1242,6 @@ export default function EditorPage() {
       await loadTree();
     } catch (err) {
       const message = (err as Error).message || 'Failed to create UI entity';
-      setActionError(message);
       showError(message);
     }
   };
@@ -944,11 +1278,11 @@ export default function EditorPage() {
     resetActionFeedback();
     if (editMeta.kind === 'module') {
       if (!editModuleForm.routePath.trim()) {
-        setActionError('Route path is required.');
+        showError('Route path is required.');
         return;
       }
       if (!editModuleForm.method) {
-        setActionError('Method is required.');
+        showError('Method is required.');
         return;
       }
       try {
@@ -965,14 +1299,13 @@ export default function EditorPage() {
         await loadTree();
       } catch (err) {
         const message = (err as Error).message || 'Failed to update module';
-        setActionError(message);
         showError(message);
       }
       return;
     }
 
     if (!editUiForm.name.trim() || !editUiForm.version.trim()) {
-      setActionError('Name and version are required.');
+      showError('Name and version are required.');
       return;
     }
     try {
@@ -991,7 +1324,6 @@ export default function EditorPage() {
       await loadTree();
     } catch (err) {
       const message = (err as Error).message || 'Failed to update UI entity';
-      setActionError(message);
       showError(message);
     }
   };
@@ -1016,7 +1348,7 @@ export default function EditorPage() {
     if (!renameFolderScope || !renameFolderPath.length) return;
     const newName = renameFolderName.trim();
     if (!newName || /[\\/]/.test(newName)) {
-      setActionError('Folder name cannot be empty or contain slashes.');
+      showError('Folder name cannot be empty or contain slashes.');
       return;
     }
     const oldPath = renameFolderPath;
@@ -1072,7 +1404,6 @@ export default function EditorPage() {
       await loadTree(nextOverrides);
     } catch (err) {
       const message = (err as Error).message || 'Failed to rename folder';
-      setActionError(message);
       showError(message);
     }
   };
@@ -1139,7 +1470,6 @@ export default function EditorPage() {
       await loadTree();
     } catch (err) {
       const message = (err as Error).message || 'Failed to delete';
-      setActionError(message);
       showError(message);
     }
   };
@@ -1155,7 +1485,6 @@ export default function EditorPage() {
       const scopeInfo = getScopeInfo(parentPath);
       if (!scopeInfo.scope) {
         const message = 'Create items inside Modules or UI Entities.';
-        setActionError(message);
         showError(message);
         return true;
       }
@@ -1247,7 +1576,6 @@ export default function EditorPage() {
       const targetScopeInfo = getScopeInfo(targetParentPath);
       if (!targetScopeInfo.scope || targetScopeInfo.scope !== nodeScopeInfo.scope) {
         const message = 'Cannot move between Modules and UI Entities.';
-        setActionError(message);
         showError(message);
         return true;
       }
@@ -1269,7 +1597,6 @@ export default function EditorPage() {
             .then(() => loadTree())
             .catch((err) => {
               const message = (err as Error).message || 'Failed to move module';
-              setActionError(message);
               showError(message);
             });
           return true;
@@ -1290,7 +1617,6 @@ export default function EditorPage() {
           .then(() => loadTree())
           .catch((err) => {
             const message = (err as Error).message || 'Failed to move UI entity';
-            setActionError(message);
             showError(message);
           });
         return true;
@@ -1350,7 +1676,6 @@ export default function EditorPage() {
           await loadTree(nextOverrides);
         } catch (err) {
           const message = (err as Error).message || 'Failed to move folder';
-          setActionError(message);
           showError(message);
         }
       })();
@@ -1382,66 +1707,182 @@ export default function EditorPage() {
     return activeFile.language === 'jsx' ? 'javascript' : activeFile.language;
   }, [activeFile]);
 
+  const activeFileType = useMemo(() => {
+    if (!activeFile) return '';
+    const metaExt =
+      activeFile.meta?.fileExtension &&
+      typeof activeFile.meta.fileExtension === 'string'
+        ? activeFile.meta.fileExtension
+        : '';
+    const nameExt = extractFileExtension(activeFile.name);
+    return (metaExt || nameExt || 'text').toUpperCase();
+  }, [activeFile]);
+
   const handleRollback = async (revisionId: string) => {
     if (!activeFile?.meta) return;
-    setActionError('');
-    setActionStatus('');
     try {
       if (activeFile.meta.kind === 'module') {
         const updated = (await apiFetch(
           `/api/modules/${activeFile.meta.backendId}/rollback/${revisionId}`,
           { method: 'POST' }
         )) as ModuleDto;
+        const rolledContent = updated.code ?? '';
         setFileContents((prev) => ({
           ...prev,
-          [activeFile.id]: updated.code ?? '',
+          [activeFile.id]: rolledContent,
         }));
+        setSavedContents((prev) => ({ ...prev, [activeFile.id]: rolledContent }));
       } else {
         const updated = (await apiFetch(
           `/api/ui-entities/${activeFile.meta.backendId}/rollback/${revisionId}`,
           { method: 'POST' }
         )) as UIPackageDto;
+        const rolledContent = updated.code ?? updated.codeBlob ?? '';
         setFileContents((prev) => ({
           ...prev,
-          [activeFile.id]: updated.code ?? updated.codeBlob ?? '',
+          [activeFile.id]: rolledContent,
         }));
+        setSavedContents((prev) => ({ ...prev, [activeFile.id]: rolledContent }));
       }
-      setActionStatus('Rolled back');
+      success('Rolled back');
       loadTree();
       loadHistory();
     } catch (err) {
       const message = (err as Error).message || 'Rollback failed';
-      setActionError(message);
       showError(message);
-    } finally {
-      setTimeout(() => setActionStatus(''), 2000);
     }
+  };
+
+  const renderTabContextMenu = () => {
+    if (!tabMenu) return null;
+    const file = openFiles.find((item) => item.id === tabMenu.fileId);
+    if (!file) return null;
+    const index = openFiles.findIndex((item) => item.id === file.id);
+    const leftIds = new Set(openFiles.slice(0, index).map((item) => item.id));
+    const rightIds = new Set(openFiles.slice(index + 1).map((item) => item.id));
+    const dirtyIds = new Set(
+      openFiles.filter((item) => isFileDirty(item)).map((item) => item.id)
+    );
+    const savedIds = new Set(
+      openFiles.filter((item) => !isFileDirty(item)).map((item) => item.id)
+    );
+    const allIds = new Set(openFiles.map((item) => item.id));
+    const itemClass =
+      'flex w-full items-center px-3 py-2 text-left text-sm hover:bg-[#2e2e2e]';
+    const disabledClass = 'opacity-50 cursor-not-allowed hover:bg-transparent';
+
+    return (
+      <div
+        className="fixed z-50 min-w-[220px] rounded border border-[#2a2d2e] bg-[#252526] text-gray-200 shadow-lg"
+        style={{ top: tabMenu.y, left: tabMenu.x }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          className={itemClass}
+          onClick={() => {
+            handleCloseFile(file.id);
+            setTabMenu(null);
+          }}
+        >
+          Close
+        </button>
+        <button
+          className={`${itemClass} ${allIds.size === 0 ? disabledClass : ''}`}
+          onClick={() => {
+            closeTabsByIds(allIds);
+            setTabMenu(null);
+          }}
+          disabled={allIds.size === 0}
+        >
+          Close All
+        </button>
+        <button
+          className={`${itemClass} ${rightIds.size === 0 ? disabledClass : ''}`}
+          onClick={() => {
+            closeTabsByIds(rightIds);
+            setTabMenu(null);
+          }}
+          disabled={rightIds.size === 0}
+        >
+          Close to the Right
+        </button>
+        <button
+          className={`${itemClass} ${leftIds.size === 0 ? disabledClass : ''}`}
+          onClick={() => {
+            closeTabsByIds(leftIds);
+            setTabMenu(null);
+          }}
+          disabled={leftIds.size === 0}
+        >
+          Close to the Left
+        </button>
+        <button
+          className={`${itemClass} ${savedIds.size === 0 ? disabledClass : ''}`}
+          onClick={() => {
+            closeTabsByIds(savedIds);
+            setTabMenu(null);
+          }}
+          disabled={savedIds.size === 0}
+        >
+          Close Saved
+        </button>
+        <div className="border-t border-[#2a2d2e]" />
+        <button
+          className={itemClass}
+          onClick={() => {
+            void handleSaveFile(file);
+            setTabMenu(null);
+          }}
+        >
+          Save
+        </button>
+        <button
+          className={itemClass}
+          onClick={() => {
+            void handleSaveAll();
+            setTabMenu(null);
+          }}
+        >
+          Save All
+        </button>
+        <div className="border-t border-[#2a2d2e]" />
+        <button
+          className={itemClass}
+          onClick={() => {
+            showError('Side-by-side editor is not available yet.');
+            setTabMenu(null);
+          }}
+        >
+          Open in Side
+        </button>
+      </div>
+    );
   };
 
   return (
     <>
       <Script src="/babel/bable.js" strategy="afterInteractive" />
       <div className="flex h-screen flex-col bg-[#1e1e1e] text-gray-100">
-        <header className="flex h-14 items-center border-b border-[#2a2d2e] bg-[#252526] px-4">
+        <header className="flex h-[34px] items-center border-b border-[#2a2d2e] bg-[#252526] px-2">
           <div className="flex items-center gap-4">
             <Link href="/dashboard" className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#2a2d2e] bg-[#1e1e1e]">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#2a2d2e] bg-[#1e1e1e]">
                 <Image
-                  src={branding.logo_lw}
+                  src={branding.logo_lm}
                   alt={branding.brand_name}
-                  width={26}
-                  height={26}
+                  width={18}
+                  height={18}
                 />
               </span>
               <div className="leading-tight">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-gray-400">
+                <div className="text-[8px] font-semibold uppercase tracking-[0.2em] text-gray-400">
                   {branding.brand_name} Idp
                 </div>
-                <div className="text-sm font-semibold text-gray-100">Editor Studio</div>
+                <div className="text-[12px] font-semibold text-gray-100">Editor Studio</div>
               </div>
             </Link>
 
-            <nav className="hidden lg:flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-gray-400">
+            <nav className="hidden lg:flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-400">
               {EDITOR_NAV_ITEMS.map((item) => {
                 const isActive =
                   router.pathname === item.match ||
@@ -1463,21 +1904,7 @@ export default function EditorPage() {
             </nav>
           </div>
 
-          <div className="ml-auto flex items-center gap-3 text-xs">
-            <div
-              className={`flex max-w-[220px] items-center gap-2 rounded-full border px-3 py-1 ${
-                tenantHost
-                  ? 'border-[#2a2d2e] bg-[#1f1f1f] text-gray-200'
-                  : 'border-red-500/40 bg-[#2a1b1b] text-red-200'
-              }`}
-            >
-              <span className="uppercase tracking-[0.2em] text-[10px] text-gray-400">
-                Tenant
-              </span>
-              <span className="truncate font-semibold">
-                {tenantHost ? tenantHost : 'Not selected'}
-              </span>
-            </div>
+          <div className="ml-auto flex items-center gap-2 text-[11px]">
             <Link
               href="/admin/tenants"
               className="hidden sm:inline-flex rounded-full border border-[#2a2d2e] px-3 py-1 text-gray-200 hover:bg-[#1f1f1f]"
@@ -1488,138 +1915,334 @@ export default function EditorPage() {
         </header>
 
         <div className="flex flex-1 min-h-0">
-          <div className="relative w-80 border-r border-[#2a2d2e]">
-          {treeError ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-sm text-red-300">
-              <p>{treeError}</p>
-              <button
-                className="rounded bg-[#094771] px-3 py-1 text-white hover:bg-[#0b5b96]"
-                onClick={() => loadTree()}
+          <div className="flex h-full w-12 flex-col items-center border-r border-[#2a2d2e] bg-[#1b1b1b] py-2">
+            <button
+              title="Explorer"
+              className={`mb-2 flex h-8 w-8 items-center justify-center rounded-lg text-base transition ${
+                leftPanel === 'explorer'
+                  ? 'bg-[#094771] text-white'
+                  : 'text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200'
+              }`}
+              onClick={() => {
+                setLeftPanel('explorer');
+                setLeftPanelOpen(true);
+              }}
+              onDoubleClick={() => {
+                if (leftPanelOpen && leftPanel === 'explorer') {
+                  setLeftPanelOpen(false);
+                } else {
+                  setLeftPanel('explorer');
+                  setLeftPanelOpen(true);
+                }
+              }}
+            >
+              <FiFolder />
+            </button>
+            <button
+              title="History"
+              className={`flex h-8 w-8 items-center justify-center rounded-lg text-base transition ${
+                leftPanel === 'history'
+                  ? 'bg-[#094771] text-white'
+                  : 'text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200'
+              }`}
+              onClick={() => {
+                setLeftPanel('history');
+                setLeftPanelOpen(true);
+              }}
+              onDoubleClick={() => {
+                if (leftPanelOpen && leftPanel === 'history') {
+                  setLeftPanelOpen(false);
+                } else {
+                  setLeftPanel('history');
+                  setLeftPanelOpen(true);
+                }
+              }}
+            >
+              <FiClock />
+            </button>
+            <div className="mt-auto flex w-full flex-col items-center px-1 pb-2">
+              <div
+                className={`flex w-full flex-col items-center gap-2 px-1 py-2 text-[10px] ${
+                  tenantHost ? 'text-gray-200' : 'text-red-200'
+                }`}
+                title={tenantHost ? tenantHost : 'No tenant selected'}
               >
-                Retry
-              </button>
+                <span
+                  className="font-semibold"
+                  style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+                >
+                  {tenantHost ? tenantHost : 'None'}
+                </span>
+              </div>
             </div>
-          ) : !treeData || loadingTree ? (
-            <div className="flex h-full items-center justify-center text-sm text-gray-400">
-              Loading explorer...
-            </div>
-          ) : (
-            <FileExplorer
-              key={treeData.id}
-              onOpenFile={handleOpenFile}
-              initialTree={treeData}
-              onCreateNode={({ type, parentPath }) =>
-                handleCreateRequest({ type, parentPath })
-              }
-              onRenameNode={({ node, parentPath }) =>
-                handleRenameRequest({ node, parentPath })
-              }
-              onDeleteNode={({ node, parentPath }) =>
-                handleDeleteRequest({ node, parentPath })
-              }
-              onMoveNode={({ node, targetId, position, parentPath }) =>
-                handleMoveRequest({ node, targetId, position, parentPath })
-              }
-            />
-          )}
           </div>
 
-          <main className="flex flex-1 flex-col min-w-0">
-          <div className="flex items-center gap-2 border-b border-[#2a2d2e] bg-[#252526] px-3 py-2">
-            <div className="flex flex-wrap items-center gap-2">
-              {openFiles.map((file) => (
-                <button
-                  key={file.id}
-                  onClick={() => setActiveFile(file)}
-                  className={`rounded px-3 py-1 text-sm ${
-                    activeFile?.id === file.id
-                      ? 'bg-[#094771] text-white'
-                      : 'text-gray-200 hover:bg-[#2a2d2e]'
-                  }`}
-                >
-                  {file.name}
-                </button>
-              ))}
-            </div>
-
-            <div className="ml-auto flex items-center gap-3 text-xs text-gray-300">
-              {activeFile?.meta?.kind === 'module' && (
-                <div className="flex items-center gap-2">
-                  <span className="rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 py-1 text-[11px] uppercase tracking-wide">
-                    {activeFile.meta.method}
-                  </span>
-                  <span className="text-gray-200">{activeFile.meta.routePath}</span>
-                </div>
-              )}
-              {activeFile?.meta?.kind === 'ui' && (
-                <div className="flex items-center gap-2">
-                  <span className="rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 py-1 text-[11px] uppercase tracking-wide">
-                    UI Entity
-                  </span>
-                  <span className="text-gray-200">
-                    {activeFile.meta.name}@{activeFile.meta.version}
-                  </span>
-                </div>
-              )}
-
-              {activeFile && (
-                <>
-                  <span>Language</span>
-                  <select
-                    value={
-                      LANGUAGE_OPTIONS.some((option) => option.value === activeFile.language)
-                        ? activeFile.language
-                        : 'javascript'
-                    }
-                    onChange={(e) => handleLanguageChange(e.target.value as EditorLanguage)}
-                    className="rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 py-1 text-sm text-gray-200 focus:border-sky-500 focus:outline-none"
-                  >
-                    {LANGUAGE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    className="rounded bg-[#0b5b96] px-3 py-1 text-white hover:bg-[#0f72be] disabled:opacity-60"
-                    onClick={handleSave}
-                    disabled={saving}
-                  >
-                    {saving ? 'Saving...' : 'Save'}
-                  </button>
-                  {selectedRevision && (
+          {leftPanelOpen && (
+            <div
+              className="relative flex h-full min-w-0 flex-col overflow-hidden border-r border-[#2a2d2e] bg-[#252526] text-gray-100"
+              style={{ width: leftPanelWidth }}
+            >
+              {leftPanel === 'explorer' ? (
+                treeError ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-sm text-red-300">
+                    <p>{treeError}</p>
                     <button
-                      className="rounded border border-[#3c3c3c] px-3 py-1 text-gray-200 hover:bg-[#2a2d2e]"
-                      onClick={() => setHistorySelectedId(null)}
+                      className="rounded bg-[#094771] px-3 py-1 text-white hover:bg-[#0b5b96]"
+                      onClick={() => loadTree()}
                     >
-                      Exit compare
+                      Retry
                     </button>
+                  </div>
+                ) : !treeData || loadingTree ? (
+                  <div className="flex h-full items-center justify-center text-sm text-gray-400">
+                    Loading explorer...
+                  </div>
+                ) : (
+                  <FileExplorer
+                    key={treeData.id}
+                    onOpenFile={handleOpenFile}
+                    initialTree={treeData}
+                    onCreateNode={({ type, parentPath }) =>
+                      handleCreateRequest({ type, parentPath })
+                    }
+                    onRenameNode={({ node, parentPath }) =>
+                      handleRenameRequest({ node, parentPath })
+                    }
+                    onDeleteNode={({ node, parentPath }) =>
+                      handleDeleteRequest({ node, parentPath })
+                    }
+                    onMoveNode={({ node, targetId, position, parentPath }) =>
+                      handleMoveRequest({ node, targetId, position, parentPath })
+                    }
+                  />
+                )
+              ) : (
+                <div className="flex h-full min-h-0 flex-col">
+                  <div className="flex h-[34px] items-center justify-between border-b border-[#2a2d2e] px-3 text-[11px] uppercase text-gray-400">
+                    <div>History</div>
+                    <button
+                      className="rounded p-1 text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200 disabled:opacity-60"
+                      onClick={() => loadHistory(historyPage)}
+                      disabled={historyLoading || !activeFile?.meta}
+                      aria-label="Refresh history"
+                      title="Refresh history"
+                      type="button"
+                    >
+                      <FiRefreshCw className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {!activeFile?.meta ? (
+                    <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
+                      Select a file to view history.
+                    </div>
+                  ) : historyLoading ? (
+                    <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
+                      Loading history...
+                    </div>
+                  ) : historyError ? (
+                    <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-sm text-red-300">
+                      <p>{historyError}</p>
+                      <button
+                        className="rounded bg-[#094771] px-3 py-1 text-white hover:bg-[#0b5b96]"
+                        onClick={() => loadHistory(historyPage)}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex min-h-0 flex-1 flex-col">
+                      <div
+                        ref={historyListRef}
+                        className="flex min-h-0 flex-1 flex-col overflow-hidden"
+                      >
+                        {historyItems.length === 0 ? (
+                          <div className="flex h-full items-center justify-center px-4 text-sm text-gray-400">
+                            No revisions yet.
+                          </div>
+                        ) : (
+                          historyItems.map((item, index) => {
+                            const selected = item.id === historySelectedId;
+                            return (
+                              <div
+                                key={item.id}
+                                ref={index === 0 ? historyRowRef : undefined}
+                                className={`border-b border-[#2a2d2e] px-2 py-1.5 text-[11px] ${
+                                  selected ? 'bg-[#1f1f1f]' : 'bg-transparent'
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex flex-col">
+                                    <div className="flex items-center gap-2 text-[10px] font-semibold text-gray-100">
+                                      <span>r{item.revision}</span>
+                                      <span className="text-[9px] uppercase tracking-wide text-gray-500">
+                                        {(item.action ?? 'update').toUpperCase()}
+                                      </span>
+                                    </div>
+                                    <div className="mt-0.5 text-[9px] text-gray-500">
+                                      {formatHistoryTimestamp(item.createdAt)}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      className="rounded p-1 text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200"
+                                      onClick={() =>
+                                        setHistorySelectedId((prev) =>
+                                          prev === item.id ? null : item.id
+                                        )
+                                      }
+                                      aria-label={selected ? 'Close compare' : 'Compare revision'}
+                                      title={selected ? 'Close compare' : 'Compare revision'}
+                                    >
+                                      {selected ? (
+                                        <FiEyeOff className="h-4 w-4" />
+                                      ) : (
+                                        <FiEye className="h-4 w-4" />
+                                      )}
+                                    </button>
+                                    <button
+                                      className="rounded p-1 text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200"
+                                      onClick={() => handleRollback(item.id)}
+                                      aria-label="Rollback revision"
+                                      title="Rollback revision"
+                                    >
+                                      <FiRotateCcw className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                      <div className="flex h-7 items-center justify-between border-t border-[#2a2d2e] px-2 text-[10px] text-gray-400">
+                        <button
+                          className="rounded p-1 text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200 disabled:opacity-50"
+                          onClick={() => setHistoryPage((prev) => Math.max(1, prev - 1))}
+                          disabled={historyLoading || historyPage <= 1}
+                          aria-label="Previous page"
+                          title="Previous page"
+                        >
+                          <FiChevronLeft className="h-4 w-4" />
+                        </button>
+                        <div>
+                          Page {historyPage} / {historyTotalPages}
+                        </div>
+                        <button
+                          className="rounded p-1 text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200 disabled:opacity-50"
+                          onClick={() =>
+                            setHistoryPage((prev) =>
+                              Math.min(historyTotalPages, prev + 1)
+                            )
+                          }
+                          disabled={historyLoading || historyPage >= historyTotalPages}
+                          aria-label="Next page"
+                          title="Next page"
+                        >
+                          <FiChevronRight className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
                   )}
+                </div>
+              )}
+              <div
+                className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-[#2a2d2e]"
+                onMouseDown={handleResizeStart}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize left panel"
+              />
+            </div>
+          )}
+
+          <main className="flex flex-1 flex-col min-w-0 min-h-0">
+            <div className="flex h-[34px] items-stretch border-b border-[#2a2d2e] bg-[#252526]">
+              <div className="flex min-w-0 flex-1 items-end overflow-x-auto overflow-y-hidden">
+                <div className="flex min-w-max items-end gap-1 px-2">
+                  {openFiles.map((file) => {
+                    const isActive = activeFile?.id === file.id;
+                    return (
+                      <div
+                        key={file.id}
+                        role="tab"
+                        aria-selected={isActive}
+                        tabIndex={0}
+                        draggable
+                        onDragStart={(event) => handleTabDragStart(event, file.id)}
+                        onDragOver={handleTabDragOver}
+                        onDrop={(event) => handleTabDrop(event, file.id)}
+                        onDragEnd={handleTabDragEnd}
+                        onClick={() => setActiveFile(file)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            setActiveFile(file);
+                          }
+                        }}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setActiveFile(file);
+                          setTabMenu({
+                            x: event.clientX,
+                            y: event.clientY,
+                            fileId: file.id,
+                          });
+                        }}
+                        className={`group relative flex h-[30px] cursor-grab select-none items-center gap-1.5 rounded-t-md border pl-2 pr-[0.225rem] py-0.5 text-[11px] active:cursor-grabbing ${
+                          isActive
+                            ? 'border-[#2a2d2e] border-b-[#1e1e1e] bg-[#1e1e1e] text-white shadow-[inset_0_1px_0_#2f2f2f]'
+                            : 'border-transparent text-gray-300 hover:bg-[#2a2d2e] hover:text-white'
+                        }`}
+                        title={file.name}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          {isFileDirty(file) && (
+                            <span className="h-1.5 w-1.5 rounded-full bg-[#d7ba7d]" />
+                          )}
+                          <span className="max-w-[180px] truncate">{file.name}</span>
+                        </span>
+                        <button
+                          type="button"
+                          aria-label={`Close ${file.name}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleCloseFile(file.id);
+                          }}
+                          onMouseDown={(event) => event.stopPropagation()}
+                          onDragStart={(event) => event.stopPropagation()}
+                          className={`flex h-5 w-5 items-center justify-center rounded text-[12px] transition ${
+                            isActive
+                              ? 'text-gray-300 hover:bg-[#3a3d41] hover:text-white'
+                              : 'text-gray-400 hover:bg-[#3a3d41] hover:text-white'
+                          } ${
+                            isFileDirty(file)
+                              ? 'opacity-0 group-hover:opacity-100'
+                              : isActive
+                                ? 'opacity-100'
+                                : 'opacity-0 group-hover:opacity-100'
+                          }`}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 px-2 text-[11px] text-gray-300">
+                {selectedRevision && (
                   <button
                     className="rounded border border-[#3c3c3c] px-3 py-1 text-gray-200 hover:bg-[#2a2d2e]"
-                    onClick={() => loadTree()}
-                    disabled={loadingTree}
+                    onClick={() => setHistorySelectedId(null)}
                   >
-                    Refresh
+                    Exit compare
                   </button>
-                </>
-              )}
+                )}
+              </div>
             </div>
-          </div>
-
-          {(saveStatus || saveError) && (
-            <div className="flex items-center gap-3 border-b border-[#2a2d2e] bg-[#1f1f1f] px-3 py-2 text-xs">
-              {saveStatus && <span className="text-green-300">{saveStatus}</span>}
-              {saveError && <span className="text-red-300">{saveError}</span>}
-            </div>
-          )}
-
-          {(actionStatus || actionError) && (
-            <div className="flex items-center gap-3 border-b border-[#2a2d2e] bg-[#1f1f1f] px-3 py-2 text-xs">
-              {actionStatus && <span className="text-green-300">{actionStatus}</span>}
-              {actionError && <span className="text-red-300">{actionError}</span>}
-            </div>
-          )}
 
           <div className="flex flex-1 min-h-0 bg-[#1e1e1e]">
             {activeFile ? (
@@ -1666,88 +2289,61 @@ export default function EditorPage() {
             )}
           </div>
           </main>
+        </div>
 
-          <aside className="flex w-80 flex-col border-l border-[#2a2d2e] bg-[#1f1f1f]">
-            <div className="flex items-center justify-between border-b border-[#2a2d2e] px-4 py-3">
-              <div className="text-sm font-semibold text-gray-100">History</div>
-              <button
-                className="rounded border border-[#3c3c3c] px-2 py-1 text-xs text-gray-200 hover:bg-[#2a2d2e]"
-                onClick={loadHistory}
-                disabled={historyLoading || !activeFile?.meta}
-              >
-                Refresh
-              </button>
-            </div>
-
-            {!activeFile?.meta ? (
-              <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
-                Select a file to view history.
-              </div>
-            ) : historyLoading ? (
-              <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
-                Loading history...
-              </div>
-            ) : historyError ? (
-              <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-sm text-red-300">
-                <p>{historyError}</p>
-                <button
-                  className="rounded bg-[#094771] px-3 py-1 text-white hover:bg-[#0b5b96]"
-                  onClick={loadHistory}
-                >
-                  Retry
-                </button>
-              </div>
-            ) : historyItems.length === 0 ? (
-              <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
-                No revisions yet.
-              </div>
-            ) : (
-              <div className="flex-1 overflow-auto">
-                {historyItems.map((item) => {
-                  const selected = item.id === historySelectedId;
-                  return (
-                    <div
-                      key={item.id}
-                      className={`border-b border-[#2a2d2e] px-4 py-3 text-xs ${
-                        selected ? 'bg-[#1a1a1a]' : 'bg-transparent'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="font-semibold text-gray-100">
-                          r{item.revision}
-                        </div>
-                        <div className="text-[10px] text-gray-400">
-                          {formatHistoryTimestamp(item.createdAt)}
-                        </div>
-                      </div>
-                      <div className="mt-1 text-[11px] text-gray-300">
-                        {(item.action ?? 'update').toUpperCase()}
-                      </div>
-                      <div className="mt-3 flex items-center gap-2">
-                        <button
-                          className="rounded border border-[#3c3c3c] px-2 py-1 text-[11px] text-gray-200 hover:bg-[#2a2d2e]"
-                          onClick={() =>
-                            setHistorySelectedId((prev) =>
-                              prev === item.id ? null : item.id
-                            )
-                          }
-                        >
-                          {selected ? 'Close' : 'Compare'}
-                        </button>
-                        <button
-                          className="rounded border border-[#3c3c3c] px-2 py-1 text-[11px] text-gray-200 hover:bg-[#2a2d2e]"
-                          onClick={() => handleRollback(item.id)}
-                        >
-                          Rollback
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+        <div className="flex h-7 items-center justify-between border-t border-[#2a2d2e] bg-[#252526] px-3 text-[11px] text-gray-300">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="truncate text-gray-200 leading-none">
+              {activeFile ? activeFile.name : 'No file selected'}
+            </span>
+            {activeFile && (
+              <span className="flex h-5 items-center rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 text-[10px] uppercase tracking-wide text-gray-300">
+                {activeFileType}
+              </span>
+            )}
+            {activeFile?.meta?.kind === 'ui' && (
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 items-center rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 text-[10px] uppercase tracking-wide">
+                  UI Entity
+                </span>
+                <span className="text-gray-200 leading-none">
+                  {activeFile.meta.name}@{activeFile.meta.version}
+                </span>
               </div>
             )}
-          </aside>
+            {activeFile?.meta?.kind === 'module' && (
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 items-center rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 text-[10px] uppercase tracking-wide">
+                  {activeFile.meta.method}
+                </span>
+                <span className="text-gray-200 leading-none">{activeFile.meta.routePath}</span>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {activeFile && (
+              <>
+                <span className="text-gray-400 leading-none">Language</span>
+                <select
+                  value={
+                    LANGUAGE_OPTIONS.some((option) => option.value === activeFile.language)
+                      ? activeFile.language
+                      : 'javascript'
+                  }
+                  onChange={(e) => handleLanguageChange(e.target.value as EditorLanguage)}
+                  className="h-5 rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 text-[11px] text-gray-200 focus:border-sky-500 focus:outline-none"
+                >
+                  {LANGUAGE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+          </div>
         </div>
+        {renderTabContextMenu()}
       </div>
 
       <Modal
