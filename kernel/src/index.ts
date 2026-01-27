@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 
+window.React = React;
 interface Options {
   registryUrl?: string;
 }
@@ -34,12 +35,12 @@ export class Kernel {
 
   async fetchAndEval(name: string, version: string) {
     const url = `${this.registryUrl}/${encodeURIComponent(
-      name
+      name,
     )}/${encodeURIComponent(version || "latest")}`;
     const res = await fetch(url);
     if (!res.ok) {
       throw new Error(
-        `Failed to fetch package ${name}@${version || "latest"} (${res.status})`
+        `Failed to fetch package ${name}@${version || "latest"} (${res.status})`,
       );
     }
     const payload = (await res.json()) as {
@@ -73,7 +74,7 @@ export class Kernel {
       "exports",
       "require",
       "React",
-      payload.source
+      payload.source,
     );
     const result = factory(module, module.exports, require, React);
     if (result !== undefined) {
@@ -102,11 +103,11 @@ export class Kernel {
   requireLocal(name: string) {
     if (name === "react" || name === "React") return React;
     const entryKey = Array.from(this.cache.keys()).find((key) =>
-      key.startsWith(`${name}@`)
+      key.startsWith(`${name}@`),
     );
     if (!entryKey) {
       throw new Error(
-        `Module not loaded: ${name}. Use Kernel.load('${name}') first.`
+        `Module not loaded: ${name}. Use Kernel.load('${name}') first.`,
       );
     }
     const entry = this.cache.get(entryKey);
@@ -115,7 +116,7 @@ export class Kernel {
     }
     if (entry.then) {
       throw new Error(
-        `Module ${name} is still loading; await Kernel.load('${name}')`
+        `Module ${name} is still loading; await Kernel.load('${name}')`,
       );
     }
     return entry;
@@ -129,7 +130,14 @@ export class Kernel {
     }
     const container = document.getElementById(containerId)!;
     const root = createRoot(container); // Create a root
-    root.render(pkg.App());
+    const Component = pkg.App ?? pkg.default ?? pkg;
+    if (!Component) {
+      throw new Error(`Package ${name} has no App export`);
+    }
+    const element = React.isValidElement(Component)
+      ? Component
+      : React.createElement(Component);
+    root.render(element);
   }
 
   async boot(name: string, containerId = "root", version = "latest") {

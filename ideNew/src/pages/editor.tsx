@@ -13,8 +13,11 @@ import {
   FiEye,
   FiEyeOff,
   FiFolder,
+  FiCornerDownLeft,
+  FiChevronsRight,
   FiRefreshCw,
   FiRotateCcw,
+  FiSearch,
 } from 'react-icons/fi';
 import FileExplorer, { ExplorerNode } from '@/components/FileExplorer';
 import { Modal } from '@/components/ui/Modal';
@@ -56,6 +59,25 @@ type TabContextMenuState = {
   fileId: string;
 };
 
+type SearchMatchRange = monaco.IRange;
+
+type SearchResult = {
+  id: string;
+  fileId: string;
+  fileName: string;
+  line: number;
+  column: number;
+  preview: string;
+  range: SearchMatchRange;
+};
+
+type SearchPattern = {
+  source: string;
+  isRegex: boolean;
+  regex: RegExp | null;
+  error: string | null;
+};
+
 declare global {
   interface Window {
     Babel?: {
@@ -80,6 +102,8 @@ type NodeMeta =
       dependencies: string[];
       fileExtension?: string;
     };
+
+type PreviewTarget = Extract<NodeMeta, { kind: 'ui' }>;
 
 type ModuleDto = {
   id: string;
@@ -284,6 +308,8 @@ const findPathById = (root: ExplorerNode, nodeId: string): ExplorerNode[] => {
 const MODULE_METHOD_OPTIONS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 const FILE_EXTENSION_OPTIONS = [MODULE_EXTENSION];
 const FOLDER_STORAGE_KEY = 'editor-folder-overrides';
+const PREVIEW_PORT_STORAGE_KEY = 'editor-preview-port';
+const DEFAULT_PREVIEW_PORT = process.env.NEXT_PUBLIC_KERNEL_PREVIEW_PORT?.trim() || '3000';
 
 const DEFAULT_MODULE_CODE = `module.exports = async function handler(req, adapters) {
   return {
@@ -483,6 +509,9 @@ const compileWithBabel = (code: string): string => {
   }
 };
 
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const getFileIdFromUriPath = (path: string): string | null => {
   const parts = path.split('/').filter(Boolean);
   if (parts.length === 0) return null;
@@ -491,6 +520,146 @@ const getFileIdFromUriPath = (path: string): string | null => {
     return parts.length >= 2 ? parts[parts.length - 2] : null;
   }
   return last;
+};
+
+const buildSearchPattern = (
+  query: string,
+  matchCase: boolean,
+  wholeWord: boolean,
+  useRegex: boolean
+): SearchPattern => {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return { source: '', isRegex: false, regex: null, error: null };
+  }
+  let source = useRegex ? trimmed : escapeRegExp(trimmed);
+  let isRegex = useRegex;
+  if (wholeWord) {
+    source = `\\b${source}\\b`;
+    isRegex = true;
+  }
+  if (!isRegex) {
+    return { source: trimmed, isRegex: false, regex: null, error: null };
+  }
+  const flags = matchCase ? 'g' : 'gi';
+  try {
+    const regex = new RegExp(source, flags);
+    return { source, isRegex: true, regex, error: null };
+  } catch {
+    return { source, isRegex: true, regex: null, error: 'Invalid regular expression' };
+  }
+};
+
+const buildSearchResults = (
+  query: string,
+  files: Array<{ id: string; name: string; content: string }>,
+  pattern: SearchPattern,
+  matchCase: boolean
+): SearchResult[] => {
+  const trimmed = query.trim();
+  if (!trimmed || pattern.error) return [];
+  const needle = trimmed.toLowerCase();
+  const results: SearchResult[] = [];
+  files.forEach((file) => {
+    if (!file.content) return;
+    const lines = file.content.split('\n');
+    lines.forEach((line, lineIndex) => {
+      if (pattern.regex) {
+        const lineRegex = new RegExp(pattern.regex.source, pattern.regex.flags);
+        let match: RegExpExecArray | null;
+        while ((match = lineRegex.exec(line)) !== null) {
+          const matchIndex = match.index;
+          const matchText = match[0] ?? '';
+          const startColumn = matchIndex + 1;
+          const endColumn = matchIndex + matchText.length + 1;
+          const preview = line.trim();
+          results.push({
+            id: `${file.id}:${lineIndex}:${matchIndex}`,
+            fileId: file.id,
+            fileName: file.name,
+            line: lineIndex + 1,
+            column: startColumn,
+            preview: preview || line,
+            range: {
+              startLineNumber: lineIndex + 1,
+              startColumn,
+              endLineNumber: lineIndex + 1,
+              endColumn,
+            },
+          });
+          if (matchText.length === 0) {
+            lineRegex.lastIndex += 1;
+          }
+        }
+        return;
+      }
+      const source = matchCase ? line : line.toLowerCase();
+      const lookup = matchCase ? trimmed : needle;
+      let fromIndex = 0;
+      while (true) {
+        const matchIndex = source.indexOf(lookup, fromIndex);
+        if (matchIndex === -1) break;
+        const startColumn = matchIndex + 1;
+        const endColumn = matchIndex + trimmed.length + 1;
+        const preview = line.trim();
+        results.push({
+          id: `${file.id}:${lineIndex}:${matchIndex}`,
+          fileId: file.id,
+          fileName: file.name,
+          line: lineIndex + 1,
+          column: startColumn,
+          preview: preview || line,
+          range: {
+            startLineNumber: lineIndex + 1,
+            startColumn,
+            endLineNumber: lineIndex + 1,
+            endColumn,
+          },
+        });
+        fromIndex = matchIndex + Math.max(1, lookup.length);
+      }
+    });
+  });
+  return results;
+};
+
+const parseFilterRegex = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { regex: null as RegExp | null, error: null as string | null };
+  }
+  try {
+    return { regex: new RegExp(trimmed, 'i'), error: null };
+  } catch {
+    return { regex: null, error: 'Invalid regex' };
+  }
+};
+
+const replaceAtRange = (
+  content: string,
+  range: SearchMatchRange,
+  replacement: string
+) => {
+  const lines = content.split('\n');
+  const startLineIndex = range.startLineNumber - 1;
+  const endLineIndex = range.endLineNumber - 1;
+  if (startLineIndex < 0 || endLineIndex >= lines.length) return content;
+  let startOffset = 0;
+  for (let i = 0; i < startLineIndex; i += 1) {
+    startOffset += lines[i].length + 1;
+  }
+  let endOffset = startOffset;
+  if (startLineIndex === endLineIndex) {
+    endOffset += range.endColumn - 1;
+  } else {
+    endOffset += lines[startLineIndex].length + 1;
+    for (let i = startLineIndex + 1; i < endLineIndex; i += 1) {
+      endOffset += lines[i].length + 1;
+    }
+    endOffset += range.endColumn - 1;
+  }
+  startOffset += range.startColumn - 1;
+  return content.slice(0, startOffset) + replacement + content.slice(endOffset);
 };
 
 export default function EditorPage() {
@@ -574,7 +743,9 @@ export default function EditorPage() {
   const splitRatioRef = useRef(splitRatio);
   const splitResizeRef = useRef<{ active: boolean }>({ active: false });
   const dragTabIdRef = useRef<string | null>(null);
-  const [leftPanel, setLeftPanel] = useState<'explorer' | 'history'>('explorer');
+  const [leftPanel, setLeftPanel] = useState<'explorer' | 'history' | 'search'>(
+    'explorer'
+  );
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
@@ -595,6 +766,37 @@ export default function EditorPage() {
   const editorAreaRef = useRef<HTMLDivElement | null>(null);
   const mainEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const sideEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const searchDecorationsRef = useRef<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchSelected, setSearchSelected] = useState<SearchResult | null>(null);
+  const [pendingSearchSelection, setPendingSearchSelection] =
+    useState<SearchResult | null>(null);
+  const [searchMatchCase, setSearchMatchCase] = useState(false);
+  const [searchWholeWord, setSearchWholeWord] = useState(false);
+  const [searchUseRegex, setSearchUseRegex] = useState(false);
+  const [searchReplace, setSearchReplace] = useState('');
+  const [searchIncludePattern, setSearchIncludePattern] = useState('');
+  const [searchExcludePattern, setSearchExcludePattern] = useState('');
+  const [editorView, setEditorView] = useState<'code' | 'preview'>('code');
+  const [previewNonce, setPreviewNonce] = useState(0);
+  const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
+  const [previewPort, setPreviewPort] = useState(() => {
+    if (typeof window === 'undefined') return DEFAULT_PREVIEW_PORT;
+    const stored = localStorage.getItem(PREVIEW_PORT_STORAGE_KEY);
+    return stored !== null ? stored : DEFAULT_PREVIEW_PORT;
+  });
+  const previewBaseUrl = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    if (!tenantHost) return '';
+    const protocol = window.location.protocol || 'http:';
+    const host = tenantHost
+      .replace(/^https?:\/\//, '')
+      .split('/')[0]
+      .split(':')[0];
+    const normalizedPort = previewPort.trim();
+    const portSuffix = normalizedPort ? `:${normalizedPort}` : '';
+    return `${protocol}//${host}${portSuffix}`;
+  }, [previewPort, tenantHost]);
   const rightPaneSet = useMemo(() => new Set(rightPaneIds), [rightPaneIds]);
   const leftTabs = useMemo(
     () => openFiles.filter((file) => !rightPaneSet.has(file.id)),
@@ -657,6 +859,11 @@ export default function EditorPage() {
     if (typeof window === 'undefined') return;
     setTenantHost(getSelectedTenantHost());
   }, [ready]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(PREVIEW_PORT_STORAGE_KEY, previewPort);
+  }, [previewPort]);
 
   useEffect(() => {
     leftPanelWidthRef.current = leftPanelWidth;
@@ -1078,6 +1285,57 @@ export default function EditorPage() {
     }
     updateFileContent(fileId, value);
   };
+
+  const searchPattern = useMemo(
+    () =>
+      buildSearchPattern(searchQuery, searchMatchCase, searchWholeWord, searchUseRegex),
+    [searchMatchCase, searchQuery, searchUseRegex, searchWholeWord]
+  );
+
+  const clearSearchDecorations = useCallback(() => {
+    const editor = mainEditorRef.current;
+    if (!editor) return;
+    searchDecorationsRef.current = editor.deltaDecorations(
+      searchDecorationsRef.current,
+      []
+    );
+  }, []);
+
+  const applySearchDecorations = useCallback(
+    (range?: SearchMatchRange) => {
+      const editor = mainEditorRef.current;
+      const model = editor?.getModel();
+      if (!editor || !model || !searchQuery.trim() || searchPattern.error) {
+        clearSearchDecorations();
+        return;
+      }
+      const matches = model.findMatches(
+        searchPattern.source,
+        false,
+        searchPattern.isRegex,
+        searchMatchCase,
+        null,
+        true
+      );
+      const decorations: monaco.editor.IModelDeltaDecoration[] = matches.map(
+        (match) => ({
+          range: match.range,
+          options: { inlineClassName: 'monaco-search-match' },
+      })
+      );
+      if (range) {
+        decorations.push({
+          range,
+          options: { inlineClassName: 'monaco-search-current' },
+        });
+      }
+      searchDecorationsRef.current = editor.deltaDecorations(
+        searchDecorationsRef.current,
+        decorations
+      );
+    },
+    [clearSearchDecorations, searchMatchCase, searchPattern, searchQuery]
+  );
 
   const moveTabToPane = useCallback(
     (id: string, pane: 'left' | 'right') => {
@@ -2004,6 +2262,57 @@ export default function EditorPage() {
     return map;
   }, [treeData]);
 
+  const searchIncludeFilter = useMemo(
+    () => parseFilterRegex(searchIncludePattern),
+    [searchIncludePattern]
+  );
+  const searchExcludeFilter = useMemo(
+    () => parseFilterRegex(searchExcludePattern),
+    [searchExcludePattern]
+  );
+
+  const nodeById = useMemo(() => {
+    const map = new Map<string, ExplorerNode>();
+    if (!treeData) return map;
+    const walk = (node: ExplorerNode) => {
+      map.set(node.id, node);
+      node.children?.forEach(walk);
+    };
+    walk(treeData);
+    return map;
+  }, [treeData]);
+
+  const searchFiles = useMemo(() => {
+    if (!treeData) return [];
+    const items: Array<{ id: string; name: string; content: string }> = [];
+    const walk = (node: ExplorerNode) => {
+      if (node.type === 'file') {
+        if (searchIncludeFilter.regex && !searchIncludeFilter.regex.test(node.name)) {
+          return;
+        }
+        if (searchExcludeFilter.regex && searchExcludeFilter.regex.test(node.name)) {
+          return;
+        }
+        const content =
+          fileContents[node.id] ??
+          savedContents[node.id] ??
+          node.content ??
+          '';
+        items.push({ id: node.id, name: node.name, content });
+      } else {
+        node.children?.forEach(walk);
+      }
+    };
+    walk(treeData);
+    return items;
+  }, [
+    fileContents,
+    savedContents,
+    searchExcludeFilter.regex,
+    searchIncludeFilter.regex,
+    treeData,
+  ]);
+
   const getNodeContent = useCallback(
     (id: string) => nodeContentMap.get(id) ?? '',
     [nodeContentMap]
@@ -2014,6 +2323,123 @@ export default function EditorPage() {
       savedContents[id] !== undefined ? savedContents[id] : getNodeContent(id),
     [getNodeContent, savedContents]
   );
+
+  const searchResults = useMemo(
+    () => buildSearchResults(searchQuery, searchFiles, searchPattern, searchMatchCase),
+    [searchMatchCase, searchPattern, searchQuery, searchFiles]
+  );
+
+  useEffect(() => {
+    if (editorView !== 'preview') return;
+    setPreviewNonce((prev) => prev + 1);
+  }, [editorView, previewTarget?.backendId, previewTarget?.version, tenantHost]);
+
+  const previewSrc = useMemo(() => {
+    if (!previewTarget || !tenantHost || !previewBaseUrl) {
+      return '';
+    }
+    const name = encodeURIComponent(previewTarget.name);
+    const version = encodeURIComponent(previewTarget.version);
+    const tenant = encodeURIComponent(
+      tenantHost.replace(/^https?:\/\//, '').split('/')[0].split(':')[0]
+    );
+    const base = previewBaseUrl.replace(/\/$/, '');
+    return `${base}/preview.html?name=${name}&version=${version}&tenantHost=${tenant}&t=${previewNonce}`;
+  }, [previewBaseUrl, previewNonce, previewTarget, tenantHost]);
+
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchSelected(null);
+      setPendingSearchSelection(null);
+      clearSearchDecorations();
+    }
+  }, [clearSearchDecorations, searchQuery]);
+
+  useEffect(() => {
+    setSearchSelected(null);
+    setPendingSearchSelection(null);
+    clearSearchDecorations();
+  }, [clearSearchDecorations, searchMatchCase, searchUseRegex, searchWholeWord]);
+
+  useEffect(() => {
+    if (!pendingSearchSelection) return;
+    if (!activeFile || activeFile.id !== pendingSearchSelection.fileId) return;
+    const editor = mainEditorRef.current;
+    if (!editor) return;
+    const range = pendingSearchSelection.range;
+    editor.setSelection(range);
+    editor.revealRangeInCenter(range);
+    applySearchDecorations(range);
+    setPendingSearchSelection(null);
+  }, [activeFile?.id, applySearchDecorations, pendingSearchSelection]);
+
+  useEffect(() => {
+    if (!searchQuery.trim() || !searchSelected || searchSelected.fileId !== activeFile?.id) {
+      clearSearchDecorations();
+    }
+  }, [activeFile?.id, clearSearchDecorations, searchQuery, searchSelected]);
+
+  useEffect(() => {
+    if (!searchSelected || searchSelected.fileId !== activeFile?.id) return;
+    applySearchDecorations(searchSelected.range);
+  }, [activeFile?.id, applySearchDecorations, searchSelected]);
+
+  const openSearchResult = useCallback(
+    (result: SearchResult) => {
+      const node = nodeById.get(result.fileId);
+      if (!node) return;
+      if (rightPaneSet.has(result.fileId)) {
+        moveTabToPane(result.fileId, 'left');
+      }
+      handleOpenFile(node);
+      setSearchSelected(result);
+      setPendingSearchSelection(result);
+    },
+    [handleOpenFile, moveTabToPane, nodeById, rightPaneSet]
+  );
+
+  const replaceSelectedResult = useCallback(() => {
+    if (!searchSelected) return;
+    const fileId = searchSelected.fileId;
+    const content = fileContents[fileId] ?? getPersistedContent(fileId);
+    const updated = replaceAtRange(content, searchSelected.range, searchReplace);
+    if (updated === content) return;
+    setFileContents((prev) => ({ ...prev, [fileId]: updated }));
+    setSearchSelected(null);
+    setPendingSearchSelection(null);
+  }, [fileContents, getPersistedContent, searchReplace, searchSelected]);
+
+  const replaceAllResults = useCallback(() => {
+    if (!searchQuery.trim() || searchPattern.error) return;
+    const regex = searchPattern.isRegex
+      ? new RegExp(
+          searchPattern.source,
+          searchMatchCase ? 'g' : 'gi'
+        )
+      : new RegExp(escapeRegExp(searchQuery), searchMatchCase ? 'g' : 'gi');
+    const updates: Record<string, string> = {};
+    searchFiles.forEach((file) => {
+      const content = fileContents[file.id] ?? getPersistedContent(file.id);
+      const nextContent = content.replace(regex, searchReplace);
+      if (nextContent !== content) {
+        updates[file.id] = nextContent;
+      }
+    });
+    if (Object.keys(updates).length === 0) return;
+    setFileContents((prev) => ({ ...prev, ...updates }));
+    setSearchSelected(null);
+    setPendingSearchSelection(null);
+  }, [
+    fileContents,
+    getPersistedContent,
+    searchMatchCase,
+    searchFiles,
+    searchPattern.error,
+    searchPattern.isRegex,
+    searchPattern.source,
+    searchQuery,
+    searchReplace,
+  ]);
 
   const activeContent = activeFile
     ? fileContents[activeFile.id] ?? getPersistedContent(activeFile.id)
@@ -2132,6 +2558,13 @@ export default function EditorPage() {
     }
   };
 
+  const handleSwitchToPreview = useCallback(() => {
+    if (activeFile && activeFile.meta && activeFile.meta.kind === 'ui') {
+      setPreviewTarget(activeFile.meta);
+    }
+    setEditorView('preview');
+  }, [activeFile]);
+
   const renderTabContextMenu = () => {
     if (!tabMenu) return null;
     const file = openFiles.find((item) => item.id === tabMenu.fileId);
@@ -2247,7 +2680,7 @@ export default function EditorPage() {
     <>
       <Script src="/babel/bable.js" strategy="afterInteractive" />
       <div className="flex h-screen flex-col bg-[#1e1e1e] text-gray-100">
-        <header className="flex h-[34px] items-center border-b border-[#2a2d2e] bg-[#252526] px-2">
+        <header className="relative flex h-[34px] items-center border-b border-[#2a2d2e] bg-[#252526] px-2">
           <div className="flex items-center gap-4">
             <Link href="/dashboard" className="flex items-center gap-3">
               <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#2a2d2e] bg-[#1e1e1e]">
@@ -2288,6 +2721,46 @@ export default function EditorPage() {
             </nav>
           </div>
 
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <div className="pointer-events-auto flex items-center gap-3 rounded-full border border-[#2a2d2e] bg-[#1f1f1f] p-0.5 text-[10px] uppercase tracking-wide text-gray-300">
+              <button
+                type="button"
+                onClick={() => setEditorView('code')}
+                className={`rounded-full px-3 py-0.5 transition ${
+                  editorView === 'code'
+                    ? 'bg-[#0b5b96] text-white'
+                    : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                Code
+              </button>
+              <button
+                type="button"
+                onClick={handleSwitchToPreview}
+                className={`rounded-full px-3 py-0.5 transition ${
+                  editorView === 'preview'
+                    ? 'bg-[#0b5b96] text-white'
+                    : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                Preview
+              </button>
+              {editorView === 'preview' && (
+                <div className="flex items-center gap-2 border-l border-[#2a2d2e] pl-2 text-[10px] text-gray-400">
+                  <span className="uppercase tracking-[0.2em]">Port</span>
+                  <input
+                    value={previewPort}
+                    onChange={(event) =>
+                      setPreviewPort(event.target.value.replace(/[^0-9]/g, ''))
+                    }
+                    placeholder={DEFAULT_PREVIEW_PORT}
+                    className="h-5 w-16 rounded border border-[#2a2d2e] bg-[#1b1b1b] px-2 text-[10px] text-gray-200 placeholder:text-gray-500 focus:border-[#0b5b96] focus:outline-none"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="ml-auto flex items-center gap-2 text-[11px]">
             <Link
               href="/admin/tenants"
@@ -2321,6 +2794,28 @@ export default function EditorPage() {
               }}
             >
               <FiFolder />
+            </button>
+            <button
+              title="Search"
+              className={`mb-2 flex h-8 w-8 items-center justify-center rounded-lg text-base transition ${
+                leftPanel === 'search'
+                  ? 'bg-[#094771] text-white'
+                  : 'text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200'
+              }`}
+              onClick={() => {
+                setLeftPanel('search');
+                setLeftPanelOpen(true);
+              }}
+              onDoubleClick={() => {
+                if (leftPanelOpen && leftPanel === 'search') {
+                  setLeftPanelOpen(false);
+                } else {
+                  setLeftPanel('search');
+                  setLeftPanelOpen(true);
+                }
+              }}
+            >
+              <FiSearch />
             </button>
             <button
               title="History"
@@ -2400,7 +2895,7 @@ export default function EditorPage() {
                     }
                   />
                 )
-              ) : (
+              ) : leftPanel === 'history' ? (
                 <div className="flex h-full min-h-0 flex-col">
                   <div className="flex h-[34px] items-center justify-between border-b border-[#2a2d2e] px-3 text-[11px] uppercase text-gray-400">
                     <div>History</div>
@@ -2529,6 +3024,167 @@ export default function EditorPage() {
                     </div>
                   )}
                 </div>
+              ) : (
+                <div className="flex h-full min-h-0 flex-col">
+                  <div className="flex h-[34px] items-center justify-between border-b border-[#2a2d2e] px-3 text-[11px] uppercase text-gray-400">
+                    <div>Search</div>
+                    <div className="text-[10px] text-gray-500">
+                      {searchResults.length} result
+                      {searchResults.length === 1 ? '' : 's'}
+                    </div>
+                  </div>
+                  <div className="border-b border-[#2a2d2e] p-3">
+                    <input
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder="Search files"
+                      className="w-full rounded border border-[#2a2d2e] bg-[#1b1b1b] px-2 py-1 text-[12px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-[#0b5b96]"
+                    />
+                    <div className="mt-2 flex items-center gap-2 text-[10px] text-gray-400">
+                      <button
+                        type="button"
+                        className={`rounded border px-2 py-0.5 ${
+                          searchMatchCase
+                            ? 'border-[#0b5b96] bg-[#0b5b96] text-white'
+                            : 'border-[#2a2d2e] text-gray-400 hover:bg-[#1f1f1f]'
+                        }`}
+                        onClick={() => setSearchMatchCase((prev) => !prev)}
+                        title="Match case"
+                      >
+                        Aa
+                      </button>
+                      <button
+                        type="button"
+                        className={`rounded border px-2 py-0.5 ${
+                          searchWholeWord
+                            ? 'border-[#0b5b96] bg-[#0b5b96] text-white'
+                            : 'border-[#2a2d2e] text-gray-400 hover:bg-[#1f1f1f]'
+                        }`}
+                        onClick={() => setSearchWholeWord((prev) => !prev)}
+                        title="Match whole word"
+                      >
+                        W
+                      </button>
+                      <button
+                        type="button"
+                        className={`rounded border px-2 py-0.5 ${
+                          searchUseRegex
+                            ? 'border-[#0b5b96] bg-[#0b5b96] text-white'
+                            : 'border-[#2a2d2e] text-gray-400 hover:bg-[#1f1f1f]'
+                        }`}
+                        onClick={() => setSearchUseRegex((prev) => !prev)}
+                        title="Use regular expression"
+                      >
+                        .*
+                      </button>
+                      <span className="ml-auto text-[10px] text-red-300">
+                        {searchPattern.error}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="border-b border-[#2a2d2e] p-3">
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={searchReplace}
+                        onChange={(event) => setSearchReplace(event.target.value)}
+                        placeholder="Replace"
+                        className="flex-1 rounded border border-[#2a2d2e] bg-[#1b1b1b] px-2 py-1 text-[12px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-[#0b5b96]"
+                      />
+                      <button
+                        type="button"
+                        className="rounded border border-[#2a2d2e] p-1.5 text-gray-200 hover:bg-[#1f1f1f] disabled:opacity-50"
+                        onClick={replaceSelectedResult}
+                        disabled={!searchSelected}
+                        title="Replace"
+                        aria-label="Replace"
+                      >
+                        <FiCornerDownLeft className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded border border-[#2a2d2e] p-1.5 text-gray-200 hover:bg-[#1f1f1f] disabled:opacity-50"
+                        onClick={replaceAllResults}
+                        disabled={searchResults.length === 0}
+                        title="Replace all"
+                        aria-label="Replace all"
+                      >
+                        <FiChevronsRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="border-b border-[#2a2d2e] p-3">
+                    <div className="flex flex-col gap-2 text-[10px] text-gray-400">
+                      <div className="flex items-center gap-2">
+                        <span className="w-16">Include</span>
+                        <input
+                          value={searchIncludePattern}
+                          onChange={(event) => setSearchIncludePattern(event.target.value)}
+                          placeholder="e.g. \\.tsx$"
+                          className="flex-1 rounded border border-[#2a2d2e] bg-[#1b1b1b] px-2 py-1 text-[11px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-[#0b5b96]"
+                        />
+                        <span className="text-[10px] text-red-300">
+                          {searchIncludeFilter.error}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="w-16">Exclude</span>
+                        <input
+                          value={searchExcludePattern}
+                          onChange={(event) => setSearchExcludePattern(event.target.value)}
+                          placeholder="e.g. \\.spec\\."
+                          className="flex-1 rounded border border-[#2a2d2e] bg-[#1b1b1b] px-2 py-1 text-[11px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-[#0b5b96]"
+                        />
+                        <span className="text-[10px] text-red-300">
+                          {searchExcludeFilter.error}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-gray-500">
+                        Regex filters match against file names.
+                      </span>
+                    </div>
+                  </div>
+                  {searchQuery.trim().length === 0 ? (
+                    <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
+                      Type to search across files.
+                    </div>
+                  ) : searchResults.length === 0 ? (
+                    <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
+                      No matches found.
+                    </div>
+                  ) : (
+                    <div className="flex-1 overflow-auto">
+                      <div className="space-y-1 p-2">
+                        {searchResults.map((result) => {
+                          const isActive = searchSelected?.id === result.id;
+                          return (
+                            <button
+                              key={result.id}
+                              type="button"
+                              onClick={() => openSearchResult(result)}
+                              className={`flex w-full flex-col gap-1 rounded border px-2 py-1.5 text-left text-[11px] transition ${
+                                isActive
+                                  ? 'border-[#0b5b96] bg-[#1f2f3a] text-white'
+                                  : 'border-transparent text-gray-300 hover:border-[#2a2d2e] hover:bg-[#1f1f1f]'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate text-[11px] text-gray-200">
+                                  {result.fileName}
+                                </span>
+                                <span className="text-[10px] text-gray-500">
+                                  {result.line}:{result.column}
+                                </span>
+                              </div>
+                              <div className="truncate text-[10px] text-gray-400">
+                                {result.preview}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
               <div
                 className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-[#2a2d2e]"
@@ -2541,7 +3197,7 @@ export default function EditorPage() {
           )}
 
           <main className="flex flex-1 flex-col min-w-0 min-h-0">
-            <div className="flex h-[34px] items-stretch border-b border-[#2a2d2e] bg-[#252526]">
+            <div className="relative flex h-[34px] items-stretch border-b border-[#2a2d2e] bg-[#252526]">
               <div className="flex min-w-0 flex-1 items-stretch">
                 <div
                   className="flex min-w-0 items-end overflow-x-auto overflow-y-hidden"
@@ -2723,7 +3379,6 @@ export default function EditorPage() {
                   </>
                 )}
               </div>
-
               <div className="flex items-center gap-2 px-2 text-[11px] text-gray-300">
                 {selectedRevision && (
                   <button
@@ -2744,7 +3399,11 @@ export default function EditorPage() {
             onDragOver={handleTabDragOver}
             onDrop={handleEditorDrop}
           >
-            <div className="flex flex-1 min-h-0 min-w-0">
+            <div
+              className={`flex flex-1 min-h-0 min-w-0 ${
+                editorView === 'preview' ? 'hidden' : ''
+              }`}
+            >
               <div className={`flex min-h-0 min-w-0 flex-1 ${showDiff ? 'hidden' : ''}`}>
                 <div
                   className="flex min-w-0 flex-col"
@@ -2849,7 +3508,30 @@ export default function EditorPage() {
                 />
               </div>
             </div>
-            {!activeFile && (
+            <div
+              className={`flex min-h-0 flex-1 ${
+                editorView === 'preview' ? '' : 'hidden'
+              }`}
+            >
+              {!previewTarget ? (
+                <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
+                  Select a UI entity to preview.
+                </div>
+              ) : !tenantHost ? (
+                <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
+                  Select a tenant to load preview.
+                </div>
+              ) : (
+                <iframe
+                  key={previewSrc}
+                  title="UI preview"
+                  className="h-full w-full border-0 bg-white"
+                  src={previewSrc}
+                  sandbox="allow-scripts allow-same-origin allow-forms"
+                />
+              )}
+            </div>
+            {!activeFile && editorView === 'code' && (
               <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">
                 Select a module or UI entity from the explorer to start editing.
               </div>
@@ -3276,6 +3958,17 @@ export default function EditorPage() {
             : `Delete "${deleteTarget?.label}"?`}
         </p>
       </Modal>
+
+      <style jsx global>{`
+        .monaco-editor .monaco-search-match {
+          background-color: rgba(11, 91, 150, 0.3);
+          border: 1px solid rgba(11, 91, 150, 0.55);
+        }
+        .monaco-editor .monaco-search-current {
+          background-color: rgba(11, 91, 150, 0.55);
+          border: 1px solid rgba(11, 91, 150, 0.9);
+        }
+      `}</style>
     </>
   );
 }
