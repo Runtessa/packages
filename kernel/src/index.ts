@@ -67,19 +67,21 @@ export class Kernel {
       };
     }
 
-    const module = { exports: {} };
+    const module = { exports: {} as any };
     const require = (pkgName: string) => this.requireLocal(pkgName);
+    const source = this.decorateBundleSource(payload.source || "");
     const factory = new Function(
       "module",
       "exports",
       "require",
       "React",
-      payload.source,
+      source,
     );
     const result = factory(module, module.exports, require, React);
     if (result !== undefined) {
       module.exports = result;
     }
+    module.exports = this.wrapExports(module.exports);
     return module.exports;
   }
 
@@ -120,6 +122,110 @@ export class Kernel {
       );
     }
     return entry;
+  }
+
+  private decorateBundleSource(source: string) {
+    if (!source) return source;
+    if (!source.includes("const __modules") || !source.includes("const __require")) {
+      return source;
+    }
+    const suffix = `
+;try {
+  if (typeof __require === 'function') {
+    const entry = module && module.exports ? module.exports : null;
+    const canAttach = entry && (typeof entry === 'object' || typeof entry === 'function');
+    if (canAttach) {
+      entry.__kernelRequire = __require;
+      const moduleKeys = (typeof __modules === 'object' && __modules) ? Object.keys(__modules) : [];
+      entry.__kernelModules = moduleKeys;
+    }
+  }
+} catch (e) {}
+`;
+    return `${source}\n${suffix}`;
+  }
+
+  private wrapExports(value: any) {
+    if (!value || (typeof value !== "object" && typeof value !== "function")) {
+      return value;
+    }
+    if ((value as any).__kernelWrapped) return value;
+    const kernelRequire = (value as any).__kernelRequire;
+    const moduleKeys = (value as any).__kernelModules;
+    if (typeof kernelRequire !== "function" || !Array.isArray(moduleKeys)) {
+      return value;
+    }
+
+    const resolved = new Map<string, any>();
+    const moduleKeySet = new Set<string>(moduleKeys);
+    const getBasename = (key: string) => {
+      const normalized = key.replace(/\\/g, "/");
+      const last = normalized.split("/").pop() || normalized;
+      return last.replace(/\.[^.]+$/, "");
+    };
+
+    const resolveExport = (prop: string) => {
+      if (resolved.has(prop)) return resolved.get(prop);
+      const propLower = prop.toLowerCase();
+      const preferred: string[] = [];
+      const fallback: string[] = [];
+      moduleKeys.forEach((key) => {
+        if (key.endsWith(".css")) return;
+        const base = getBasename(key).toLowerCase();
+        if (base.includes(propLower)) {
+          preferred.push(key);
+        } else {
+          fallback.push(key);
+        }
+      });
+      const ordered = preferred.concat(fallback);
+      const preferredSet = new Set(preferred);
+
+      for (const key of ordered) {
+        if (!moduleKeySet.has(key)) continue;
+        let mod: any;
+        try {
+          mod = kernelRequire(key);
+        } catch (err) {
+          if (preferredSet.has(key)) {
+            throw err;
+          }
+          continue;
+        }
+        if (!mod) continue;
+        if (prop === "default" && mod.default !== undefined) {
+          resolved.set(prop, mod.default);
+          return mod.default;
+        }
+        if (Object.prototype.hasOwnProperty.call(mod, prop)) {
+          resolved.set(prop, mod[prop]);
+          return mod[prop];
+        }
+      }
+      resolved.set(prop, undefined);
+      return undefined;
+    };
+
+    const handler: ProxyHandler<any> = {
+      get(target, prop) {
+        if (typeof prop !== "string") return (target as any)[prop];
+        if (
+          prop === "__kernelRequire" ||
+          prop === "__kernelModules" ||
+          prop === "__kernelWrapped"
+        ) {
+          return (target as any)[prop];
+        }
+        if (Object.prototype.hasOwnProperty.call(target, prop)) {
+          return (target as any)[prop];
+        }
+        return resolveExport(prop);
+      },
+    };
+
+    const proxy = new Proxy(value, handler);
+    (proxy as any).__kernelWrapped = true;
+    return proxy;
   }
 
   async mount(name: string, containerId = "root", version = "latest") {
