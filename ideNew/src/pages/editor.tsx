@@ -1387,6 +1387,15 @@ export default function EditorPage() {
   }, [editorView, isSharedMode, sharedProject]);
 
   useEffect(() => {
+    if (isSharedMode) return;
+    if (previewTarget) return;
+    if (uiData.length === 0) return;
+    const first = uiData[0];
+    if (!first?.name || !first?.version) return;
+    setPreviewTarget({ kind: 'ui', name: first.name, version: first.version });
+  }, [isSharedMode, previewTarget, uiData]);
+
+  useEffect(() => {
     splitRatioRef.current = splitRatio;
     if (typeof window === 'undefined') return;
     localStorage.setItem(SPLIT_RATIO_STORAGE_KEY, String(splitRatio));
@@ -3486,21 +3495,20 @@ export default function EditorPage() {
   };
 
   const handleSwitchToPreview = useCallback(() => {
-    if (activeFile && activeFile.meta && activeFile.meta.kind === 'ui') {
-      setPreviewTarget({
-        kind: 'ui',
-        name: activeFile.meta.name,
-        version: activeFile.meta.version,
-      });
-    } else if (isSharedMode && sharedProject) {
+    if (isSharedMode && sharedProject) {
       setPreviewTarget({
         kind: 'shared',
         name: sharedProject.name,
         version: sharedProject.version,
       });
+    } else if (!isSharedMode && !previewTarget && uiData.length > 0) {
+      const first = uiData[0];
+      if (first?.name && first?.version) {
+        setPreviewTarget({ kind: 'ui', name: first.name, version: first.version });
+      }
     }
     setEditorView('preview');
-  }, [activeFile, isSharedMode, sharedProject]);
+  }, [isSharedMode, previewTarget, sharedProject, uiData]);
 
   const renderTabContextMenu = () => {
     if (!tabMenu) return null;
@@ -3658,8 +3666,8 @@ export default function EditorPage() {
             </nav>
           </div>
 
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="pointer-events-auto flex items-center gap-3 rounded-full border border-[#2a2d2e] bg-[#1f1f1f] p-0.5 text-[10px] uppercase tracking-wide text-gray-300">
+          <div className="ml-auto flex items-center gap-2 text-[11px]">
+            <div className="flex items-center gap-3 rounded-full border border-[#2a2d2e] bg-[#1f1f1f] p-0.5 text-[10px] uppercase tracking-wide text-gray-300">
               <button
                 type="button"
                 onClick={() => setEditorView('code')}
@@ -3696,15 +3704,6 @@ export default function EditorPage() {
                 </div>
               )}
             </div>
-          </div>
-
-          <div className="ml-auto flex items-center gap-2 text-[11px]">
-            <Link
-              href="/admin/tenants"
-              className="hidden sm:inline-flex rounded-full border border-[#2a2d2e] px-3 py-1 text-gray-200 hover:bg-[#1f1f1f]"
-            >
-              Manage tenants
-            </Link>
           </div>
         </header>
 
@@ -4140,7 +4139,11 @@ export default function EditorPage() {
           )}
 
           <main className="flex flex-1 flex-col min-w-0 min-h-0">
-            <div className="relative flex h-[34px] items-stretch border-b border-[#2a2d2e] bg-[#252526]">
+            <div
+              className={`relative flex h-[34px] items-stretch border-b border-[#2a2d2e] bg-[#252526] ${
+                editorView === 'preview' ? 'hidden' : ''
+              }`}
+            >
               <div className="flex min-w-0 flex-1 items-stretch">
                 <div
                   className="flex min-w-0 items-end overflow-x-auto overflow-y-hidden"
@@ -4460,7 +4463,9 @@ export default function EditorPage() {
                 <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
                   {isSharedMode
                     ? 'Switch to preview to load the shared project.'
-                    : 'Select a UI entity to preview.'}
+                    : uiData.length === 0
+                      ? 'No UI entities available for preview.'
+                      : 'Preview is loading...'}
                 </div>
               ) : !tenantHost ? (
                 <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
