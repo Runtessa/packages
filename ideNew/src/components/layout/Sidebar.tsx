@@ -8,6 +8,7 @@ import {
   FiUsers,
   FiCode,
   FiLayers,
+  FiPackage,
 } from "react-icons/fi";
 import { Button } from "@/components/ui/Button";
 import { useSessionToken } from "@/lib/client/session";
@@ -36,6 +37,13 @@ const navItems: NavItem[] = [
     href: "/admin/tenants",
     icon: FiLayers,
     match: "/admin/tenants",
+    roles: ["admin"],
+  },
+  {
+    label: "Shared Projects",
+    href: "/admin/shared-packages",
+    icon: FiPackage,
+    match: "/admin/shared-packages",
     roles: ["admin"],
   },
   {

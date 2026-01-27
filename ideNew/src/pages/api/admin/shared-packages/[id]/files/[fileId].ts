@@ -1,0 +1,97 @@
+import { NextApiRequest, NextApiResponse } from 'next';
+import { withApiHandler } from '@/lib/api-helpers';
+import { requireAdmin } from '@/lib/auth';
+import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
+import { GlobalUIPackageFile } from '@/lib/entities/GlobalUIPackageFile';
+
+const normalizePath = (raw: unknown) => {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    const err = new Error('path is required');
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  return raw.trim().replace(/\\/g, '/');
+};
+
+const normalizeContent = (raw: unknown) => {
+  if (typeof raw !== 'string') {
+    const err = new Error('content is required');
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  return raw;
+};
+
+const normalizeFileExtension = (path: string, raw: unknown) => {
+  if (typeof raw === 'string' && raw.trim()) {
+    return raw.replace(/^\./, '').toLowerCase();
+  }
+  const ext = path.split('.').pop();
+  return ext ? ext.toLowerCase() : 'tsx';
+};
+
+const serialize = (file: GlobalUIPackageFile) => ({
+  id: file.id,
+  path: file.path,
+  fileExtension: file.fileExtension,
+  content: file.content,
+  createdAt: file.createdAt,
+  updatedAt: file.updatedAt,
+});
+
+export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
+  await requireAdmin(req);
+  await ensureCoreSchema();
+
+  const fileRepo = CoreDataSource.getRepository(GlobalUIPackageFile);
+  const fileId = req.query.fileId as string;
+  const file = await fileRepo.findOne({
+    where: { id: fileId },
+    relations: ['project'],
+  });
+  if (!file) {
+    res.status(404).json({ error: 'Shared project file not found' });
+    return;
+  }
+
+  if (req.method === 'GET') {
+    res.status(200).json({ file: serialize(file) });
+    return;
+  }
+
+  if (req.method === 'PUT') {
+    const nextPath =
+      req.body?.path !== undefined ? normalizePath(req.body.path) : file.path;
+    const nextContent =
+      req.body?.content !== undefined
+        ? normalizeContent(req.body.content)
+        : file.content;
+    const nextExt = normalizeFileExtension(nextPath, req.body?.fileExtension);
+
+    if (nextPath !== file.path) {
+      const conflict = await fileRepo.findOne({
+        where: { project: { id: file.project?.id }, path: nextPath },
+      });
+      if (conflict && conflict.id !== file.id) {
+        res.status(409).json({ error: 'Another file already uses this path' });
+        return;
+      }
+    }
+
+    file.path = nextPath;
+    file.fileExtension = nextExt;
+    file.content = nextContent;
+    await fileRepo.save(file);
+    res.status(200).json({ file: serialize(file) });
+    return;
+  }
+
+  if (req.method === 'DELETE') {
+    await fileRepo.remove(file);
+    res.status(204).end();
+    return;
+  }
+
+  res.setHeader('Allow', ['GET', 'PUT', 'DELETE']);
+  res.status(405).end();
+});

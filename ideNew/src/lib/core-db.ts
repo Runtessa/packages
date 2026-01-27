@@ -7,6 +7,8 @@ import { Tenant } from './entities/Tenant';
 import { UIPackage } from './entities/UIEntities';
 import { ModuleRevision } from './entities/ModuleRevision';
 import { UIPackageRevision } from './entities/UIPackageRevision';
+import { GlobalUIPackage } from './entities/GlobalUIPackage';
+import { GlobalUIPackageFile } from './entities/GlobalUIPackageFile';
 
 const dbType = (process.env.CORE_DB_TYPE ||
   process.env.DB_TYPE ||
@@ -34,9 +36,19 @@ const baseOptions = {
   type: dbType,
   url: databaseUrl,
   database: dbName,
-  synchronize: false,
+  synchronize: process.env.CORE_DB_SYNC === 'true',
   logging: false,
-  entities: [Tenant, Account, Secret, ModuleEntity, UIPackage, ModuleRevision, UIPackageRevision],
+  entities: [
+    Tenant,
+    Account,
+    Secret,
+    ModuleEntity,
+    UIPackage,
+    GlobalUIPackage,
+    GlobalUIPackageFile,
+    ModuleRevision,
+    UIPackageRevision,
+  ],
 } as DataSourceOptions;
 
 export const CoreDataSource = new DataSource(baseOptions);
@@ -46,6 +58,20 @@ let initialized = false;
 export const ensureCoreSchema = async () => {
   if (!initialized) {
     await CoreDataSource.initialize();
+    const allowSync =
+      process.env.CORE_DB_SYNC === 'true' || process.env.NODE_ENV !== 'production';
+    if (allowSync) {
+      const queryRunner = CoreDataSource.createQueryRunner();
+      try {
+        const hasGlobalTable = await queryRunner.hasTable('global_ui_packages');
+        const hasFileTable = await queryRunner.hasTable('global_ui_package_files');
+        if (!hasGlobalTable || !hasFileTable) {
+          await CoreDataSource.synchronize();
+        }
+      } finally {
+        await queryRunner.release();
+      }
+    }
     initialized = true;
     console.log(`Core Data Source has been initialized (${dbType})!`);
   }

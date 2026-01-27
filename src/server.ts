@@ -11,7 +11,7 @@ import { SandboxRunner } from "./engine/SandboxRunner";
 import { AuthController } from "./app/controllers/AuthController";
 import { Dispatcher } from "./app/controllers/Dispatcher";
 import { AuthGuard } from "./app/middleware/AuthGuard";
-import { ContextMiddleware } from "./app/middleware/ContextMiddleware";
+import { ContextMiddleware, OptionalContextMiddleware } from "./app/middleware/ContextMiddleware";
 import { AdminController } from "./app/controllers/AdminController";
 import { TenantStage } from "./entities/Tenant";
 import { TenantRequest } from "./types/RequestContext";
@@ -80,6 +80,7 @@ const bootstrap = async () => {
   const uiEntityController = new UIEntityController(AppDataSource);
 
   const contextMiddleware = ContextMiddleware(AppDataSource);
+  const optionalContextMiddleware = OptionalContextMiddleware(AppDataSource);
   const authGuard = AuthGuard(AppDataSource, cryptoService);
 
   app.post("/admin/tenants", adminController.createTenant);
@@ -89,6 +90,7 @@ const bootstrap = async () => {
     "/api",
     ApiRouter(
       contextMiddleware,
+      optionalContextMiddleware,
       authGuard,
       registryController,
       moduleController,

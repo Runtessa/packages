@@ -101,9 +101,20 @@ type NodeMeta =
       version: string;
       dependencies: string[];
       fileExtension?: string;
+    }
+  | {
+      kind: 'shared';
+      projectId: string;
+      fileId: string;
+      path: string;
+      fileExtension?: string;
     };
 
-type PreviewTarget = Extract<NodeMeta, { kind: 'ui' }>;
+type PreviewTarget = {
+  kind: 'ui' | 'shared';
+  name: string;
+  version: string;
+};
 
 type ModuleDto = {
   id: string;
@@ -121,6 +132,26 @@ type UIPackageDto = {
   codeBlob: string;
   dependencies: string[];
   fileExtension?: string;
+};
+
+type SharedProjectDto = {
+  id: string;
+  name: string;
+  version: string;
+  entryPath: string;
+  dependencies: string[];
+  fileExtension?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type SharedFileDto = {
+  id: string;
+  path: string;
+  fileExtension?: string;
+  content: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 type ModuleRevisionDto = {
@@ -161,6 +192,7 @@ type HistoryResponse<T> = {
 };
 
 type ExplorerScope = 'modules' | 'ui';
+type PanelScope = 'modules' | 'ui' | 'shared';
 
 type FolderOverride = {
   scope: ExplorerScope;
@@ -186,6 +218,11 @@ type FolderFormState = {
   name: string;
 };
 
+type SharedFileFormState = {
+  path: string;
+  content: string;
+};
+
 const LANGUAGE_OPTIONS: { value: EditorLanguage; label: string }[] = [
   { value: 'javascript', label: 'JavaScript' },
   { value: 'jsx', label: 'JSX' },
@@ -200,6 +237,7 @@ const EDITOR_NAV_ITEMS = [
   { label: 'Editor', href: '/editor', match: '/editor' },
   { label: 'Dashboard', href: '/dashboard', match: '/dashboard' },
   { label: 'Docs', href: '/docs', match: '/docs' },
+  { label: 'Shared Projects', href: '/admin/shared-packages', match: '/admin/shared-packages' },
   { label: 'Tenants', href: '/admin/tenants', match: '/admin/tenants' },
 ];
 
@@ -288,6 +326,9 @@ const getScopeInfo = (pathNodes: ExplorerNode[]) => {
   return { scope: null, path: [] as string[] };
 };
 
+const getSharedPathFromNodes = (pathNodes: ExplorerNode[]) =>
+  pathNodes.filter((_, index) => index > 0).map((node) => node.name);
+
 const findPathById = (root: ExplorerNode, nodeId: string): ExplorerNode[] => {
   const stack: { node: ExplorerNode; path: ExplorerNode[] }[] = [
     { node: root, path: [] },
@@ -308,6 +349,7 @@ const findPathById = (root: ExplorerNode, nodeId: string): ExplorerNode[] => {
 const MODULE_METHOD_OPTIONS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 const FILE_EXTENSION_OPTIONS = [MODULE_EXTENSION];
 const FOLDER_STORAGE_KEY = 'editor-folder-overrides';
+const SHARED_FOLDER_STORAGE_KEY = 'editor-shared-folder-overrides';
 const PREVIEW_PORT_STORAGE_KEY = 'editor-preview-port';
 const DEFAULT_PREVIEW_PORT = process.env.NEXT_PUBLIC_KERNEL_PREVIEW_PORT?.trim() || '3000';
 
@@ -324,6 +366,10 @@ const DEFAULT_UI_CODE = `export default function NewComponent() {
 }
 `;
 const DEFAULT_CSS_CODE = `/* Add styles for UI entities here */`;
+const DEFAULT_SHARED_FILE: SharedFileFormState = {
+  path: '',
+  content: '',
+};
 
 const makeFolderId = (scope: ExplorerScope, segments: string[]) =>
   `${scope}-folder-${segments.join('/')}`;
@@ -445,6 +491,94 @@ const buildPersistedContentMap = (
   return next;
 };
 
+const SHARED_NODE_PREFIX = 'shared-';
+
+const getSharedNodeId = (fileId: string) => `${SHARED_NODE_PREFIX}${fileId}`;
+
+const normalizeSharedPath = (value: string) =>
+  value.trim().replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/{2,}/g, '/');
+
+const splitSharedPath = (value: string) => {
+  const normalized = normalizeSharedPath(value);
+  return normalized ? normalized.split('/').filter(Boolean) : [];
+};
+
+const makeSharedFolderId = (segments: string[]) =>
+  `shared-folder-${segments.join('/')}`;
+
+const ensureSharedFolderPath = (root: ExplorerNode, segments: string[]) => {
+  let current = root;
+  segments.forEach((segment, idx) => {
+    const path = segments.slice(0, idx + 1);
+    const id = makeSharedFolderId(path);
+    const existing = current.children?.find(
+      (child) => child.type === 'folder' && child.id === id
+    );
+    if (existing) {
+      current = existing;
+      return;
+    }
+    const next: ExplorerNode = {
+      id,
+      name: segment,
+      type: 'folder',
+      children: [],
+    };
+    current.children = [...(current.children ?? []), next];
+    current = next;
+  });
+  return current;
+};
+
+const buildSharedTree = (
+  project: SharedProjectDto | null,
+  files: SharedFileDto[],
+  overrides: string[][]
+): ExplorerNode => {
+  const root: ExplorerNode = {
+    id: 'root',
+    name: project?.name || 'Shared Project',
+    type: 'folder',
+    children: [],
+  };
+
+  files.forEach((file) => {
+    const segments = splitSharedPath(file.path);
+    const fileName = segments.pop() || file.path || 'untitled';
+    const parent = ensureSharedFolderPath(root, segments);
+    parent.children = [
+      ...(parent.children ?? []),
+      {
+        id: getSharedNodeId(file.id),
+        name: fileName,
+        type: 'file',
+        meta: {
+          kind: 'shared',
+          projectId: project?.id ?? '',
+          fileId: file.id,
+          path: file.path,
+          fileExtension: file.fileExtension,
+        },
+        content: file.content,
+      },
+    ];
+  });
+
+  overrides.forEach((path) => {
+    ensureSharedFolderPath(root, path);
+  });
+
+  return root;
+};
+
+const buildSharedContentMap = (files: SharedFileDto[]) => {
+  const next: Record<string, string> = {};
+  files.forEach((file) => {
+    next[getSharedNodeId(file.id)] = file.content ?? '';
+  });
+  return next;
+};
+
 const parseDependencies = (value: string) =>
   value
     .split(/[\n,]+/g)
@@ -507,6 +641,117 @@ const compileWithBabel = (code: string): string => {
     console.log(er);
     return code;
   }
+};
+
+const resolveSharedExtension = (path: string, explicit?: string) => {
+  const normalized = explicit?.replace(/^\./, '').toLowerCase();
+  if (normalized) return normalized;
+  const idx = path.lastIndexOf('.');
+  if (idx !== -1 && idx < path.length - 1) {
+    return path.slice(idx + 1).toLowerCase();
+  }
+  return 'tsx';
+};
+
+const buildCssModuleSource = (path: string, cssText: string) => {
+  const safeText = JSON.stringify(cssText ?? '');
+  const id = JSON.stringify(`shared-style:${path}`);
+  return `
+const cssText = ${safeText};
+if (typeof document !== 'undefined') {
+  const attr = 'data-shared-style';
+  let style = document.querySelector('style[' + attr + '=' + ${id} + ']');
+  if (!style) {
+    style = document.createElement('style');
+    style.setAttribute(attr, ${id});
+    document.head.appendChild(style);
+  }
+  if (style.textContent !== cssText) {
+    style.textContent = cssText;
+  }
+}
+module.exports = cssText;
+`;
+};
+
+const buildSharedBundle = (project: SharedProjectDto, files: SharedFileDto[]) => {
+  const moduleEntries: string[] = [];
+  files.forEach((file) => {
+    const normalizedPath = normalizeSharedPath(file.path);
+    const source = file.content ?? '';
+    const ext = resolveSharedExtension(normalizedPath, file.fileExtension);
+    let compiled = '';
+    if (ext === 'css') {
+      compiled = buildCssModuleSource(normalizedPath, source);
+    } else if (ext === 'json') {
+      const jsonValue = source.trim() ? source : 'null';
+      compiled = `module.exports = ${jsonValue};`;
+    } else {
+      if (typeof window !== 'undefined' && !window.Babel) {
+        throw new Error('Babel runtime not loaded in browser; cannot build bundle.');
+      }
+      compiled = compileWithBabel(source);
+    }
+    moduleEntries.push(
+      `${JSON.stringify(normalizedPath)}: function(module, exports, require, __filename, __dirname) {\n${compiled}\n}`
+    );
+  });
+
+  const entryPath = normalizeSharedPath(project.entryPath || 'src/index.tsx');
+  const bundleLines = [
+    'const __modules = {',
+    moduleEntries.join(',\n'),
+    '};',
+    'const __cache = {};',
+    "const __extensions = ['.tsx', '.ts', '.jsx', '.js', '.json', '.css'];",
+    'const __externalRequire = require;',
+    'const __normalize = (value) => {',
+    "  const parts = String(value || '').split('/').filter(Boolean);",
+    '  const stack = [];',
+    '  for (const part of parts) {',
+    "    if (part === '.' || part === '') continue;",
+    "    if (part === '..') { stack.pop(); continue; }",
+    '    stack.push(part);',
+    '  }',
+    "  return stack.join('/');",
+    '};',
+    'const __resolve = (request, from) => {',
+    "  const raw = String(request || '');",
+    '  const normalizedBare = __normalize(raw);',
+    '  if (__modules[normalizedBare]) return normalizedBare;',
+    '  for (const ext of __extensions) {',
+    '    if (__modules[normalizedBare + ext]) return normalizedBare + ext;',
+    '  }',
+    "  if (!raw.startsWith('.') && !raw.startsWith('/')) return raw;",
+    '  const baseParts = from ? String(from).split(`/`).slice(0, -1) : [];',
+    "  const targetParts = raw.startsWith('/') ? raw.split('/') : baseParts.concat(raw.split('/'));",
+    '  const normalized = __normalize(targetParts.join(`/`));',
+    '  if (__modules[normalized]) return normalized;',
+    '  for (const ext of __extensions) {',
+    '    if (__modules[normalized + ext]) return normalized + ext;',
+    '  }',
+    '  return normalized;',
+    '};',
+    'const __require = (request, from) => {',
+    "  const raw = String(request || '');",
+    '  const resolved = __resolve(raw, from || "");',
+    '  const factory = __modules[resolved];',
+    '  if (!factory) {',
+    "    if (!raw.startsWith('.') && !raw.startsWith('/')) {",
+    '      return __externalRequire(raw);',
+    '    }',
+    "    throw new Error('Cannot find module ' + raw);",
+    '  }',
+    '  if (__cache[resolved]) return __cache[resolved].exports;',
+    '  const module = { exports: {} };',
+    '  __cache[resolved] = module;',
+    "  const dirname = resolved.split('/').slice(0, -1).join('/');",
+    '  factory(module, module.exports, (id) => __require(id, resolved), resolved, dirname);',
+    '  return module.exports;',
+    '};',
+    `module.exports = __require(${JSON.stringify(entryPath)});`,
+  ];
+  return bundleLines.join('\n');
 };
 
 const escapeRegExp = (value: string) =>
@@ -666,8 +911,15 @@ export default function EditorPage() {
   const router = useRouter();
   const { token, clear, ready } = useSessionToken();
   const { success, error: showError } = useToast();
+  const sharedProjectId = useMemo(() => {
+    if (!router.isReady) return null;
+    const value = router.query.sharedProject;
+    return typeof value === 'string' && value.trim() ? value : null;
+  }, [router.isReady, router.query.sharedProject]);
+  const isSharedMode = Boolean(sharedProjectId);
   const [fileContents, setFileContents] = useState<Record<string, string>>({});
   const [savedContents, setSavedContents] = useState<Record<string, string>>({});
+  const savedContentsRef = useRef<Record<string, string>>({});
   const [activeFile, setActiveFile] = useState<ActiveFile | null>(null);
   const [openFiles, setOpenFiles] = useState<ActiveFile[]>([]);
   const [treeData, setTreeData] = useState<ExplorerNode | null>(null);
@@ -675,11 +927,17 @@ export default function EditorPage() {
   const [treeError, setTreeError] = useState<string>('');
   const [modulesData, setModulesData] = useState<ModuleDto[]>([]);
   const [uiData, setUiData] = useState<UIPackageDto[]>([]);
+  const [sharedProject, setSharedProject] = useState<SharedProjectDto | null>(null);
+  const [sharedFiles, setSharedFiles] = useState<SharedFileDto[]>([]);
+  const sharedFilesRef = useRef<SharedFileDto[]>([]);
+  const [sharedFolderOverrides, setSharedFolderOverrides] = useState<string[][]>(
+    []
+  );
   const [folderOverrides, setFolderOverrides] = useState<FolderOverride[]>([]);
   const [tenantHost, setTenantHost] = useState('');
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createType, setCreateType] = useState<'file' | 'folder' | null>(null);
-  const [createScope, setCreateScope] = useState<ExplorerScope | null>(null);
+  const [createScope, setCreateScope] = useState<PanelScope | null>(null);
   const [createParentPath, setCreateParentPath] = useState<string[]>([]);
   const [moduleForm, setModuleForm] = useState<ModuleFormState>({
     routePath: '/',
@@ -694,6 +952,8 @@ export default function EditorPage() {
     dependencies: '',
     code: DEFAULT_UI_CODE,
   });
+  const [sharedFileForm, setSharedFileForm] =
+    useState<SharedFileFormState>(DEFAULT_SHARED_FILE);
   const [folderForm, setFolderForm] = useState<FolderFormState>({ name: '' });
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editMeta, setEditMeta] = useState<NodeMeta | null>(null);
@@ -710,14 +970,15 @@ export default function EditorPage() {
     dependencies: '',
     code: '',
   });
+  const [editSharedPath, setEditSharedPath] = useState('');
   const [renameFolderOpen, setRenameFolderOpen] = useState(false);
-  const [renameFolderScope, setRenameFolderScope] = useState<ExplorerScope | null>(null);
+  const [renameFolderScope, setRenameFolderScope] = useState<PanelScope | null>(null);
   const [renameFolderPath, setRenameFolderPath] = useState<string[]>([]);
   const [renameFolderName, setRenameFolderName] = useState('');
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<
-    | { type: 'file'; scope: ExplorerScope; meta: NodeMeta; label: string }
-    | { type: 'folder'; scope: ExplorerScope; path: string[]; label: string }
+    | { type: 'file'; scope: PanelScope; meta: NodeMeta; label: string }
+    | { type: 'folder'; scope: PanelScope; path: string[]; label: string }
     | null
   >(null);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
@@ -797,6 +1058,14 @@ export default function EditorPage() {
     const portSuffix = normalizedPort ? `:${normalizedPort}` : '';
     return `${protocol}//${host}${portSuffix}`;
   }, [previewPort, tenantHost]);
+  const sidebarLabel = isSharedMode
+    ? sharedProject?.name || 'Shared Project'
+    : tenantHost || 'None';
+  const sidebarLabelTone = isSharedMode
+    ? 'text-gray-200'
+    : tenantHost
+      ? 'text-gray-200'
+      : 'text-red-200';
   const rightPaneSet = useMemo(() => new Set(rightPaneIds), [rightPaneIds]);
   const leftTabs = useMemo(
     () => openFiles.filter((file) => !rightPaneSet.has(file.id)),
@@ -806,6 +1075,12 @@ export default function EditorPage() {
     () => openFiles.filter((file) => rightPaneSet.has(file.id)),
     [openFiles, rightPaneSet]
   );
+  useEffect(() => {
+    savedContentsRef.current = savedContents;
+  }, [savedContents]);
+  useEffect(() => {
+    sharedFilesRef.current = sharedFiles;
+  }, [sharedFiles]);
   useEffect(() => {
     if (leftTabs.length > 0 || rightTabs.length === 0) return;
     setRightPaneIds([]);
@@ -838,6 +1113,34 @@ export default function EditorPage() {
         headers: {
           'Content-Type': 'application/json',
           ...(tenantHost ? { 'X-Tenant-Host': tenantHost } : {}),
+          ...(token ? { Authorization: `Session ${token}` } : {}),
+        },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+      });
+      const text = await res.text();
+      const data = text ? JSON.parse(text) : {};
+      if (!res.ok) {
+        if (res.status === 401) {
+          clear();
+        }
+        throw new Error(data.error || 'Request failed');
+      }
+      return data;
+    },
+    [clear, token]
+  );
+
+  const adminFetch = useCallback(
+    async (url: string, options: { method?: string; body?: unknown } = {}) => {
+      if (!token) {
+        const err = new Error('Session token is missing');
+        (err as any).statusCode = 401;
+        throw err;
+      }
+      const res = await fetch(url, {
+        method: options.method ?? 'GET',
+        headers: {
+          'Content-Type': 'application/json',
           ...(token ? { Authorization: `Session ${token}` } : {}),
         },
         body: options.body ? JSON.stringify(options.body) : undefined,
@@ -931,6 +1234,10 @@ export default function EditorPage() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    if (isSharedMode) {
+      setFolderOverrides([]);
+      return;
+    }
     if (!tenantHost) {
       setFolderOverrides([]);
       return;
@@ -946,22 +1253,78 @@ export default function EditorPage() {
     } catch {
       setFolderOverrides([]);
     }
-  }, [tenantHost]);
+  }, [isSharedMode, tenantHost]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    if (isSharedMode) return;
     if (!tenantHost) return;
     localStorage.setItem(
       `${FOLDER_STORAGE_KEY}:${tenantHost}`,
       JSON.stringify(folderOverrides)
     );
-  }, [folderOverrides, tenantHost]);
+  }, [folderOverrides, isSharedMode, tenantHost]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!isSharedMode || !sharedProjectId) {
+      setSharedFolderOverrides([]);
+      return;
+    }
+    const stored = localStorage.getItem(
+      `${SHARED_FOLDER_STORAGE_KEY}:${sharedProjectId}`
+    );
+    if (!stored) {
+      setSharedFolderOverrides([]);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(stored) as string[][];
+      setSharedFolderOverrides(parsed);
+    } catch {
+      setSharedFolderOverrides([]);
+    }
+  }, [isSharedMode, sharedProjectId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!isSharedMode || !sharedProjectId) return;
+    localStorage.setItem(
+      `${SHARED_FOLDER_STORAGE_KEY}:${sharedProjectId}`,
+      JSON.stringify(sharedFolderOverrides)
+    );
+  }, [isSharedMode, sharedFolderOverrides, sharedProjectId]);
+
+  useEffect(() => {
+    if (isSharedMode) return;
     if (!treeData) return;
     setTreeData(buildExplorerTree(modulesData, uiData, folderOverrides));
-  }, [folderOverrides, modulesData, uiData]);
+  }, [folderOverrides, isSharedMode, modulesData, uiData]);
 
+
+  const loadSharedProject = useCallback(async () => {
+    if (!sharedProjectId) return;
+    setLoadingTree(true);
+    setTreeError('');
+    try {
+      const [projectResponse, filesResponse] = await Promise.all([
+        adminFetch(`/api/admin/shared-packages/${sharedProjectId}`),
+        adminFetch(`/api/admin/shared-packages/${sharedProjectId}/files`),
+      ]);
+      const project = projectResponse.package as SharedProjectDto;
+      const files = (filesResponse.files as SharedFileDto[]) || [];
+      setSharedProject(project);
+      setSharedFiles(files);
+      setModulesData([]);
+      setUiData([]);
+      setTreeData(buildSharedTree(project, files, sharedFolderOverrides));
+      setSavedContents(buildSharedContentMap(files));
+    } catch (err) {
+      setTreeError((err as Error).message || 'Failed to load shared project');
+    } finally {
+      setLoadingTree(false);
+    }
+  }, [adminFetch, sharedFolderOverrides, sharedProjectId]);
 
   const loadTree = useCallback(async (overrides: FolderOverride[] = folderOverrides) => {
     setLoadingTree(true);
@@ -985,9 +1348,43 @@ export default function EditorPage() {
   }, [apiFetch, folderOverrides]);
 
   useEffect(() => {
+    if (!router.isReady) return;
     if (!ready || !token) return;
+    if (isSharedMode) {
+      loadSharedProject();
+      return;
+    }
     loadTree();
-  }, [loadTree, ready, token]);
+  }, [isSharedMode, loadSharedProject, loadTree, ready, router.isReady, token]);
+
+  useEffect(() => {
+    if (isSharedMode) return;
+    if (sharedProject) setSharedProject(null);
+    if (sharedFiles.length) setSharedFiles([]);
+  }, [isSharedMode, sharedFiles.length, sharedProject]);
+
+  const reloadTree = useCallback(async () => {
+    if (isSharedMode) {
+      await loadSharedProject();
+      return;
+    }
+    await loadTree();
+  }, [isSharedMode, loadSharedProject, loadTree]);
+
+  useEffect(() => {
+    if (!isSharedMode || !sharedProject) return;
+    setTreeData(buildSharedTree(sharedProject, sharedFiles, sharedFolderOverrides));
+  }, [isSharedMode, sharedFiles, sharedFolderOverrides, sharedProject]);
+
+  useEffect(() => {
+    if (!isSharedMode || !sharedProject) return;
+    if (editorView !== 'preview') return;
+    setPreviewTarget({
+      kind: 'shared',
+      name: sharedProject.name,
+      version: sharedProject.version,
+    });
+  }, [editorView, isSharedMode, sharedProject]);
 
   useEffect(() => {
     splitRatioRef.current = splitRatio;
@@ -1132,6 +1529,13 @@ export default function EditorPage() {
       setHistoryTotal(0);
       return;
     }
+    if (activeFile.meta.kind === 'shared') {
+      setHistoryItems([]);
+      setHistoryError('History is not available for shared projects yet.');
+      setHistoryTotal(0);
+      setHistoryLoading(false);
+      return;
+    }
     setHistoryLoading(true);
     setHistoryError('');
     try {
@@ -1245,7 +1649,12 @@ export default function EditorPage() {
       const fromPath = path ? getFileIdFromUriPath(path) : null;
       const candidate = fromPath ?? fallbackId ?? null;
       if (!candidate) return null;
-      if (!candidate.startsWith('module-') && !candidate.startsWith('ui-')) return null;
+      if (
+        !candidate.startsWith('module-') &&
+        !candidate.startsWith('ui-') &&
+        !candidate.startsWith('shared-')
+      )
+        return null;
       return candidate;
     },
     []
@@ -1509,10 +1918,81 @@ export default function EditorPage() {
     moveTabToPane(sourceId, isRightSide ? 'right' : 'left');
   };
 
+  const syncSharedPackage = useCallback(
+    async (
+      project: SharedProjectDto,
+      files: SharedFileDto[],
+      entryPathOverride?: string
+    ) => {
+      const normalizedEntry = normalizeSharedPath(
+        entryPathOverride ?? project.entryPath ?? ''
+      );
+      if (!normalizedEntry) {
+        throw new Error('Shared project entry path is missing.');
+      }
+      const entryFile = files.find(
+        (file) => normalizeSharedPath(file.path) === normalizedEntry
+      );
+      if (!entryFile) {
+        throw new Error(`Entry file not found: ${normalizedEntry}`);
+      }
+      const entrySource = entryFile.content ?? '';
+      const entryExtension = resolveSharedExtension(
+        normalizedEntry,
+        entryFile.fileExtension
+      );
+      const bundle = buildSharedBundle({ ...project, entryPath: normalizedEntry }, files);
+      await adminFetch(`/api/admin/shared-packages/${project.id}`, {
+        method: 'PUT',
+        body: {
+          name: project.name,
+          version: project.version,
+          entryPath: normalizedEntry,
+          code: entrySource,
+          codeBlob: bundle,
+          dependencies: project.dependencies ?? [],
+          fileExtension: entryExtension,
+        },
+      });
+      return { ...project, entryPath: normalizedEntry };
+    },
+    [adminFetch]
+  );
+
   const saveFile = useCallback(
     async (file: ActiveFile) => {
       if (!file.meta) return;
       const content = fileContents[file.id] ?? savedContents[file.id] ?? '';
+      if (file.meta.kind === 'shared') {
+        if (!sharedProject) {
+          throw new Error('Shared project is not loaded.');
+        }
+        const projectId = file.meta.projectId || sharedProject.id;
+        await adminFetch(
+          `/api/admin/shared-packages/${projectId}/files/${file.meta.fileId}`,
+          {
+            method: 'PUT',
+            body: {
+              path: file.meta.path,
+              content,
+              fileExtension: file.meta.fileExtension,
+            },
+          }
+        );
+        const currentSaved = savedContentsRef.current;
+        const currentFiles = sharedFilesRef.current;
+        const nextSaved = { ...currentSaved, [file.id]: content };
+        const nextFiles = currentFiles.map((item) =>
+          item.id === file.meta.fileId ? { ...item, content } : item
+        );
+        const nextProject = await syncSharedPackage(sharedProject, nextFiles);
+        savedContentsRef.current = nextSaved;
+        sharedFilesRef.current = nextFiles;
+        setSharedProject(nextProject);
+        setSharedFiles(nextFiles);
+        setSavedContents(nextSaved);
+        return;
+      }
       if (file.meta.kind === 'module') {
         await apiFetch(`/api/modules/${file.meta.backendId}`, {
           method: 'PUT',
@@ -1543,7 +2023,13 @@ export default function EditorPage() {
       }
       setSavedContents((prev) => ({ ...prev, [file.id]: content }));
     },
-    [apiFetch, fileContents, savedContents]
+    [
+      adminFetch,
+      apiFetch,
+      fileContents,
+      sharedProject,
+      syncSharedPackage,
+    ]
   );
 
   const handleSaveFile = useCallback(
@@ -1552,15 +2038,15 @@ export default function EditorPage() {
       try {
         await saveFile(file);
         success('Saved');
-        loadTree();
-        if (activeFile?.id === file.id) {
+        await reloadTree();
+        if (activeFile?.id === file.id && file.meta.kind !== 'shared') {
           loadHistory();
         }
       } catch (err) {
         showError((err as Error).message || 'Save failed');
       }
     },
-    [activeFile?.id, loadHistory, loadTree, saveFile, showError, success]
+    [activeFile?.id, loadHistory, reloadTree, saveFile, showError, success]
   );
 
   const handleSaveAll = useCallback(async () => {
@@ -1587,15 +2073,16 @@ export default function EditorPage() {
     } else {
       success('Saved all');
     }
-    loadTree();
-    if (savedActive) {
+    await reloadTree();
+    if (savedActive && activeFile?.meta?.kind !== 'shared') {
       loadHistory();
     }
   }, [
     activeFile?.id,
+    activeFile?.meta?.kind,
     isFileDirty,
     loadHistory,
-    loadTree,
+    reloadTree,
     openFiles,
     saveFile,
     showError,
@@ -1664,7 +2151,7 @@ export default function EditorPage() {
 
       if (key === 'r' && event.shiftKey) {
         event.preventDefault();
-        loadTree();
+        reloadTree();
         loadHistory();
         return;
       }
@@ -1677,13 +2164,13 @@ export default function EditorPage() {
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [activeFile, handleSave, loadHistory, loadTree, requestReload]);
+  }, [activeFile, handleSave, loadHistory, reloadTree, requestReload]);
 
 
   const resetActionFeedback = () => {};
 
   const openCreateModal = (
-    scope: ExplorerScope,
+    scope: PanelScope,
     type: 'file' | 'folder',
     parentPath: string[]
   ) => {
@@ -1691,6 +2178,20 @@ export default function EditorPage() {
     setCreateScope(scope);
     setCreateType(type);
     setCreateParentPath(parentPath);
+    if (scope === 'shared') {
+      if (type === 'file') {
+        const ext = sharedProject?.fileExtension || 'tsx';
+        const base = parentPath.length ? `${parentPath.join('/')}/` : '';
+        setSharedFileForm({
+          path: `${base}new-file.${ext}`,
+          content: '',
+        });
+      } else {
+        setFolderForm({ name: '' });
+      }
+      setCreateModalOpen(true);
+      return;
+    }
     if (type === 'file') {
       if (scope === 'modules') {
         const routePath = buildRoutePath(parentPath);
@@ -1722,11 +2223,70 @@ export default function EditorPage() {
     setCreateType(null);
     setCreateParentPath([]);
     setFolderForm({ name: '' });
+    setSharedFileForm(DEFAULT_SHARED_FILE);
   };
 
   const handleCreateSubmit = async () => {
     if (!createScope || !createType) return;
     resetActionFeedback();
+    if (createScope === 'shared') {
+      if (!sharedProjectId) {
+        showError('Shared project is not loaded.');
+        return;
+      }
+      if (createType === 'folder') {
+        const name = folderForm.name.trim();
+        if (!name || /[\\/]/.test(name)) {
+          showError('Folder name cannot be empty or contain slashes.');
+          return;
+        }
+        const nextPath = [...createParentPath, name];
+        const exists = sharedFolderOverrides.some(
+          (item) => item.join('/') === nextPath.join('/')
+        );
+        const nextOverrides = exists
+          ? sharedFolderOverrides
+          : [...sharedFolderOverrides, nextPath];
+        setSharedFolderOverrides(nextOverrides);
+        if (sharedProject) {
+          setTreeData(buildSharedTree(sharedProject, sharedFiles, nextOverrides));
+        }
+        success('Folder created');
+        closeCreateModal();
+        return;
+      }
+
+      const normalizedPath = normalizeSharedPath(sharedFileForm.path);
+      if (!normalizedPath) {
+        showError('File path is required.');
+        return;
+      }
+      const duplicate = sharedFiles.some(
+        (file) => normalizeSharedPath(file.path) === normalizedPath
+      );
+      if (duplicate) {
+        showError('File already exists at this path.');
+        return;
+      }
+      try {
+        const content = sharedFileForm.content ?? '';
+        await adminFetch(`/api/admin/shared-packages/${sharedProjectId}/files`, {
+          method: 'POST',
+          body: {
+            path: normalizedPath,
+            content,
+            fileExtension: resolveSharedExtension(normalizedPath),
+          },
+        });
+        success('File created');
+        closeCreateModal();
+        await reloadTree();
+      } catch (err) {
+        const message = (err as Error).message || 'Failed to create file';
+        showError(message);
+      }
+      return;
+    }
     if (createType === 'folder') {
       const name = folderForm.name.trim();
       if (!name || /[\\/]/.test(name)) {
@@ -1812,7 +2372,9 @@ export default function EditorPage() {
   const openEditModal = (meta: NodeMeta) => {
     resetActionFeedback();
     setEditMeta(meta);
-    if (meta.kind === 'module') {
+    if (meta.kind === 'shared') {
+      setEditSharedPath(meta.path);
+    } else if (meta.kind === 'module') {
       setEditModuleForm({
         routePath: meta.routePath,
         method: meta.method,
@@ -1834,11 +2396,66 @@ export default function EditorPage() {
   const closeEditModal = () => {
     setEditModalOpen(false);
     setEditMeta(null);
+    setEditSharedPath('');
   };
 
   const handleEditSubmit = async () => {
     if (!editMeta) return;
     resetActionFeedback();
+    if (editMeta.kind === 'shared') {
+      if (!sharedProject) {
+        showError('Shared project is not loaded.');
+        return;
+      }
+      const normalizedPath = normalizeSharedPath(editSharedPath);
+      if (!normalizedPath) {
+        showError('File path is required.');
+        return;
+      }
+      const duplicate = sharedFiles.some(
+        (file) =>
+          file.id !== editMeta.fileId &&
+          normalizeSharedPath(file.path) === normalizedPath
+      );
+      if (duplicate) {
+        showError('File already exists at this path.');
+        return;
+      }
+      try {
+        await adminFetch(
+          `/api/admin/shared-packages/${sharedProject.id}/files/${editMeta.fileId}`,
+          {
+            method: 'PUT',
+            body: {
+              path: normalizedPath,
+              fileExtension: resolveSharedExtension(
+                normalizedPath,
+                editMeta.fileExtension
+              ),
+            },
+          }
+        );
+        const nextFiles = sharedFiles.map((file) =>
+          file.id === editMeta.fileId ? { ...file, path: normalizedPath } : file
+        );
+        const entryPath = normalizeSharedPath(sharedProject.entryPath || '');
+        const nextProject =
+          normalizeSharedPath(editMeta.path) === entryPath
+            ? { ...sharedProject, entryPath: normalizedPath }
+            : sharedProject;
+        const updatedProject = await syncSharedPackage(nextProject, nextFiles);
+        setSharedProject(updatedProject);
+        setSharedFiles(nextFiles);
+        sharedFilesRef.current = nextFiles;
+        success('File updated');
+        closeEditModal();
+        await reloadTree();
+      } catch (err) {
+        const message = (err as Error).message || 'Failed to update file';
+        showError(message);
+      }
+      return;
+    }
     if (editMeta.kind === 'module') {
       if (!editModuleForm.routePath.trim()) {
         showError('Route path is required.');
@@ -1891,7 +2508,7 @@ export default function EditorPage() {
     }
   };
 
-  const openRenameFolderModal = (scope: ExplorerScope, path: string[]) => {
+  const openRenameFolderModal = (scope: PanelScope, path: string[]) => {
     resetActionFeedback();
     const name = path[path.length - 1] || '';
     setRenameFolderScope(scope);
@@ -1919,7 +2536,58 @@ export default function EditorPage() {
 
     resetActionFeedback();
     try {
-      if (renameFolderScope === 'modules') {
+      if (renameFolderScope === 'shared') {
+        if (!sharedProject) {
+          showError('Shared project is not loaded.');
+          return;
+        }
+        const updates = sharedFiles.filter((file) =>
+          pathStartsWith(splitSharedPath(file.path), oldPath)
+        );
+        await Promise.all(
+          updates.map((file) => {
+            const segments = splitSharedPath(file.path);
+            const remainder = segments.slice(oldPath.length);
+            const nextPath = normalizeSharedPath([...newPath, ...remainder].join('/'));
+            return adminFetch(
+              `/api/admin/shared-packages/${sharedProject.id}/files/${file.id}`,
+              { method: 'PUT', body: { path: nextPath } }
+            );
+          })
+        );
+        const nextFiles = sharedFiles.map((file) => {
+          if (!pathStartsWith(splitSharedPath(file.path), oldPath)) return file;
+          const segments = splitSharedPath(file.path);
+          const remainder = segments.slice(oldPath.length);
+          return {
+            ...file,
+            path: normalizeSharedPath([...newPath, ...remainder].join('/')),
+          };
+        });
+        const nextOverrides = sharedFolderOverrides.map((path) => {
+          if (!pathStartsWith(path, oldPath)) return path;
+          const remainder = path.slice(oldPath.length);
+          return [...newPath, ...remainder];
+        });
+        setSharedFolderOverrides(nextOverrides);
+        const entrySegments = splitSharedPath(sharedProject.entryPath || '');
+        const nextProject = pathStartsWith(entrySegments, oldPath)
+          ? {
+              ...sharedProject,
+              entryPath: normalizeSharedPath(
+                [...newPath, ...entrySegments.slice(oldPath.length)].join('/')
+              ),
+            }
+          : sharedProject;
+        const updatedProject = await syncSharedPackage(nextProject, nextFiles);
+        setSharedProject(updatedProject);
+        setSharedFiles(nextFiles);
+        sharedFilesRef.current = nextFiles;
+        success('Folder updated');
+        closeRenameFolderModal();
+        await reloadTree();
+        return;
+      } else if (renameFolderScope === 'modules') {
         const updates = modulesData.filter((mod) =>
           pathStartsWith(splitRoutePath(mod.routePath || '/'), oldPath)
         );
@@ -1973,8 +2641,8 @@ export default function EditorPage() {
 
   const openDeleteModal = (
     target:
-      | { type: 'file'; scope: ExplorerScope; meta: NodeMeta; label: string }
-      | { type: 'folder'; scope: ExplorerScope; path: string[]; label: string }
+      | { type: 'file'; scope: PanelScope; meta: NodeMeta; label: string }
+      | { type: 'folder'; scope: PanelScope; path: string[]; label: string }
   ) => {
     resetActionFeedback();
     setDeleteTarget(target);
@@ -1992,6 +2660,36 @@ export default function EditorPage() {
     try {
       if (deleteTarget.type === 'file') {
         const meta = deleteTarget.meta;
+        if (meta.kind === 'shared') {
+          if (!sharedProject) {
+            showError('Shared project is not loaded.');
+            return;
+          }
+          const entryPath = normalizeSharedPath(sharedProject.entryPath || '');
+          if (normalizeSharedPath(meta.path) === entryPath) {
+            showError('Cannot delete the entry file. Update entry path first.');
+            return;
+          }
+          await adminFetch(
+            `/api/admin/shared-packages/${sharedProject.id}/files/${meta.fileId}`,
+            { method: 'DELETE' }
+          );
+          const nextFiles = sharedFiles.filter((file) => file.id !== meta.fileId);
+          const nextSaved = { ...savedContents };
+          const nodeId = getSharedNodeId(meta.fileId);
+          delete nextSaved[nodeId];
+          setSavedContents(nextSaved);
+          savedContentsRef.current = nextSaved;
+          removeFileEntries(new Set([nodeId]));
+          const updatedProject = await syncSharedPackage(sharedProject, nextFiles);
+          setSharedProject(updatedProject);
+          setSharedFiles(nextFiles);
+          sharedFilesRef.current = nextFiles;
+          success('File deleted');
+          closeDeleteModal();
+          await reloadTree();
+          return;
+        }
         if (meta.kind === 'module') {
           await apiFetch(`/api/modules/${meta.backendId}`, { method: 'DELETE' });
         } else {
@@ -1999,6 +2697,58 @@ export default function EditorPage() {
         }
         success('File deleted');
       } else {
+        if (deleteTarget.scope === 'shared') {
+          if (!sharedProject) {
+            showError('Shared project is not loaded.');
+            return;
+          }
+          const entryPath = normalizeSharedPath(sharedProject.entryPath || '');
+          const removals = sharedFiles.filter((file) =>
+            pathStartsWith(splitSharedPath(file.path), deleteTarget.path)
+          );
+          if (
+            removals.some(
+              (file) => normalizeSharedPath(file.path) === entryPath
+            )
+          ) {
+            showError('Cannot delete the folder containing the entry file.');
+            return;
+          }
+          await Promise.all(
+            removals.map((file) =>
+              adminFetch(
+                `/api/admin/shared-packages/${sharedProject.id}/files/${file.id}`,
+                { method: 'DELETE' }
+              )
+            )
+          );
+          const nextFiles = sharedFiles.filter(
+            (file) =>
+              !pathStartsWith(splitSharedPath(file.path), deleteTarget.path)
+          );
+          const nextOverrides = sharedFolderOverrides.filter(
+            (path) => !pathStartsWith(path, deleteTarget.path)
+          );
+          setSharedFolderOverrides(nextOverrides);
+          const removeIds = new Set(
+            removals.map((file) => getSharedNodeId(file.id))
+          );
+          const nextSaved = { ...savedContents };
+          removeIds.forEach((id) => delete nextSaved[id]);
+          setSavedContents(nextSaved);
+          savedContentsRef.current = nextSaved;
+          removeFileEntries(removeIds);
+          if (nextFiles.length > 0) {
+            const updatedProject = await syncSharedPackage(sharedProject, nextFiles);
+            setSharedProject(updatedProject);
+          }
+          setSharedFiles(nextFiles);
+          sharedFilesRef.current = nextFiles;
+          success('Folder deleted');
+          closeDeleteModal();
+          await reloadTree();
+          return;
+        }
         if (deleteTarget.scope === 'modules') {
           const removals = modulesData.filter((mod) =>
             pathStartsWith(splitRoutePath(mod.routePath || '/'), deleteTarget.path)
@@ -2045,6 +2795,11 @@ export default function EditorPage() {
       type: 'file' | 'folder';
       parentPath: ExplorerNode[];
     }) => {
+      if (isSharedMode) {
+        const sharedPath = getSharedPathFromNodes(parentPath);
+        openCreateModal('shared', type, sharedPath);
+        return true;
+      }
       const scopeInfo = getScopeInfo(parentPath);
       if (!scopeInfo.scope) {
         const message = 'Create items inside Modules or UI Entities.';
@@ -2054,7 +2809,7 @@ export default function EditorPage() {
       openCreateModal(scopeInfo.scope, type, scopeInfo.path);
       return true;
     },
-    [openCreateModal, showError]
+    [isSharedMode, openCreateModal, showError]
   );
 
   const handleRenameRequest = useCallback(
@@ -2065,6 +2820,19 @@ export default function EditorPage() {
       node: ExplorerNode;
       parentPath: ExplorerNode[];
     }) => {
+      if (isSharedMode) {
+        if (node.id === 'root') return true;
+        if (node.type === 'file') {
+          const meta = node.meta as NodeMeta | undefined;
+          if (!meta) return true;
+          openEditModal(meta);
+          return true;
+        }
+        const sharedPath = getSharedPathFromNodes([...parentPath, node]);
+        if (sharedPath.length === 0) return true;
+        openRenameFolderModal('shared', sharedPath);
+        return true;
+      }
       const scopeInfo = getScopeInfo([...parentPath, node]);
       if (!scopeInfo.scope) return true;
       if (node.type === 'file') {
@@ -2079,7 +2847,7 @@ export default function EditorPage() {
       openRenameFolderModal(scopeInfo.scope, scopeInfo.path);
       return true;
     },
-    [openEditModal, openRenameFolderModal]
+    [isSharedMode, openEditModal, openRenameFolderModal]
   );
 
   const handleDeleteRequest = useCallback(
@@ -2090,6 +2858,29 @@ export default function EditorPage() {
       node: ExplorerNode;
       parentPath: ExplorerNode[];
     }) => {
+      if (isSharedMode) {
+        if (node.id === 'root') return true;
+        if (node.type === 'file') {
+          const meta = node.meta as NodeMeta | undefined;
+          if (!meta) return true;
+          openDeleteModal({
+            type: 'file',
+            scope: 'shared',
+            meta,
+            label: node.name,
+          });
+          return true;
+        }
+        const sharedPath = getSharedPathFromNodes([...parentPath, node]);
+        if (!sharedPath.length) return true;
+        openDeleteModal({
+          type: 'folder',
+          scope: 'shared',
+          path: sharedPath,
+          label: node.name,
+        });
+        return true;
+      }
       const scopeInfo = getScopeInfo([...parentPath, node]);
       if (!scopeInfo.scope) return true;
       if (node.type === 'file') {
@@ -2114,7 +2905,7 @@ export default function EditorPage() {
       });
       return true;
     },
-    [openDeleteModal]
+    [isSharedMode, openDeleteModal]
   );
 
   const handleMoveRequest = useCallback(
@@ -2129,6 +2920,123 @@ export default function EditorPage() {
       position: 'inside' | 'before' | 'after';
       parentPath: ExplorerNode[];
     }) => {
+      if (isSharedMode) {
+        if (!treeData || !sharedProject) return true;
+        const targetPath = findPathById(treeData, targetId);
+        if (!targetPath.length) return true;
+        const targetParentPath =
+          position === 'inside' ? targetPath : targetPath.slice(0, -1);
+        const targetSegments = getSharedPathFromNodes(targetParentPath);
+
+        if (node.type === 'file') {
+          const meta = node.meta as NodeMeta | undefined;
+          if (!meta || meta.kind !== 'shared') return true;
+          const newPath = normalizeSharedPath(
+            [...targetSegments, node.name].join('/')
+          );
+          const currentPath = normalizeSharedPath(meta.path);
+          if (!newPath || newPath === currentPath) return true;
+          const duplicate = sharedFiles.some(
+            (file) =>
+              file.id !== meta.fileId &&
+              normalizeSharedPath(file.path) === newPath
+          );
+          if (duplicate) {
+            showError('A file already exists at that destination.');
+            return true;
+          }
+          (async () => {
+            try {
+              await adminFetch(
+                `/api/admin/shared-packages/${sharedProject.id}/files/${meta.fileId}`,
+                {
+                  method: 'PUT',
+                  body: {
+                    path: newPath,
+                    fileExtension: resolveSharedExtension(newPath, meta.fileExtension),
+                  },
+                }
+              );
+              const nextFiles = sharedFiles.map((file) =>
+                file.id === meta.fileId ? { ...file, path: newPath } : file
+              );
+              const entryPath = normalizeSharedPath(sharedProject.entryPath || '');
+              const nextProject =
+                currentPath === entryPath
+                  ? { ...sharedProject, entryPath: newPath }
+                  : sharedProject;
+              const updatedProject = await syncSharedPackage(nextProject, nextFiles);
+              setSharedProject(updatedProject);
+              setSharedFiles(nextFiles);
+              sharedFilesRef.current = nextFiles;
+              await reloadTree();
+            } catch (err) {
+              const message = (err as Error).message || 'Failed to move file';
+              showError(message);
+            }
+          })();
+          return true;
+        }
+
+        if (node.id === 'root') return true;
+        const oldPath = getSharedPathFromNodes([...parentPath, node]);
+        const newPath = [...targetSegments, node.name];
+        if (oldPath.join('/') === newPath.join('/')) return true;
+
+        (async () => {
+          try {
+            const updates = sharedFiles.filter((file) =>
+              pathStartsWith(splitSharedPath(file.path), oldPath)
+            );
+            await Promise.all(
+              updates.map((file) => {
+                const segments = splitSharedPath(file.path);
+                const remainder = segments.slice(oldPath.length);
+                const nextPath = normalizeSharedPath(
+                  [...newPath, ...remainder].join('/')
+                );
+                return adminFetch(
+                  `/api/admin/shared-packages/${sharedProject.id}/files/${file.id}`,
+                  { method: 'PUT', body: { path: nextPath } }
+                );
+              })
+            );
+            const nextFiles = sharedFiles.map((file) => {
+              if (!pathStartsWith(splitSharedPath(file.path), oldPath)) return file;
+              const segments = splitSharedPath(file.path);
+              const remainder = segments.slice(oldPath.length);
+              return {
+                ...file,
+                path: normalizeSharedPath([...newPath, ...remainder].join('/')),
+              };
+            });
+            const nextOverrides = sharedFolderOverrides.map((path) => {
+              if (!pathStartsWith(path, oldPath)) return path;
+              const remainder = path.slice(oldPath.length);
+              return [...newPath, ...remainder];
+            });
+            setSharedFolderOverrides(nextOverrides);
+            const entrySegments = splitSharedPath(sharedProject.entryPath || '');
+            const nextProject = pathStartsWith(entrySegments, oldPath)
+              ? {
+                  ...sharedProject,
+                  entryPath: normalizeSharedPath(
+                    [...newPath, ...entrySegments.slice(oldPath.length)].join('/')
+                  ),
+                }
+              : sharedProject;
+            const updatedProject = await syncSharedPackage(nextProject, nextFiles);
+            setSharedProject(updatedProject);
+            setSharedFiles(nextFiles);
+            sharedFilesRef.current = nextFiles;
+            await reloadTree();
+          } catch (err) {
+            const message = (err as Error).message || 'Failed to move folder';
+            showError(message);
+          }
+        })();
+        return true;
+      }
       if (!treeData) return true;
       const nodeScopeInfo = getScopeInfo([...parentPath, node]);
       if (!nodeScopeInfo.scope) return true;
@@ -2245,7 +3153,23 @@ export default function EditorPage() {
 
       return true;
     },
-    [apiFetch, folderOverrides, loadTree, modulesData, showError, treeData, uiData]
+    [
+      adminFetch,
+      apiFetch,
+      folderOverrides,
+      isSharedMode,
+      loadTree,
+      reloadTree,
+      modulesData,
+      savedContents,
+      sharedFiles,
+      sharedFolderOverrides,
+      sharedProject,
+      showError,
+      syncSharedPackage,
+      treeData,
+      uiData,
+    ]
   );
 
   const nodeContentMap = useMemo(() => {
@@ -2332,7 +3256,7 @@ export default function EditorPage() {
   useEffect(() => {
     if (editorView !== 'preview') return;
     setPreviewNonce((prev) => prev + 1);
-  }, [editorView, previewTarget?.backendId, previewTarget?.version, tenantHost]);
+  }, [editorView, previewTarget?.name, previewTarget?.version, tenantHost]);
 
   const previewSrc = useMemo(() => {
     if (!previewTarget || !tenantHost || !previewBaseUrl) {
@@ -2537,7 +3461,7 @@ export default function EditorPage() {
           [activeFile.id]: rolledContent,
         }));
         setSavedContents((prev) => ({ ...prev, [activeFile.id]: rolledContent }));
-      } else {
+      } else if (activeFile.meta.kind === 'ui') {
         const updated = (await apiFetch(
           `/api/ui-entities/${activeFile.meta.backendId}/rollback/${revisionId}`,
           { method: 'POST' }
@@ -2548,9 +3472,12 @@ export default function EditorPage() {
           [activeFile.id]: rolledContent,
         }));
         setSavedContents((prev) => ({ ...prev, [activeFile.id]: rolledContent }));
+      } else {
+        showError('Rollback is not available for shared projects yet.');
+        return;
       }
       success('Rolled back');
-      loadTree();
+      await reloadTree();
       loadHistory();
     } catch (err) {
       const message = (err as Error).message || 'Rollback failed';
@@ -2560,10 +3487,20 @@ export default function EditorPage() {
 
   const handleSwitchToPreview = useCallback(() => {
     if (activeFile && activeFile.meta && activeFile.meta.kind === 'ui') {
-      setPreviewTarget(activeFile.meta);
+      setPreviewTarget({
+        kind: 'ui',
+        name: activeFile.meta.name,
+        version: activeFile.meta.version,
+      });
+    } else if (isSharedMode && sharedProject) {
+      setPreviewTarget({
+        kind: 'shared',
+        name: sharedProject.name,
+        version: sharedProject.version,
+      });
     }
     setEditorView('preview');
-  }, [activeFile]);
+  }, [activeFile, isSharedMode, sharedProject]);
 
   const renderTabContextMenu = () => {
     if (!tabMenu) return null;
@@ -2841,16 +3778,14 @@ export default function EditorPage() {
             </button>
             <div className="mt-auto flex w-full flex-col items-center px-1 pb-2">
               <div
-                className={`flex w-full flex-col items-center gap-2 px-1 py-2 text-[10px] ${
-                  tenantHost ? 'text-gray-200' : 'text-red-200'
-                }`}
-                title={tenantHost ? tenantHost : 'No tenant selected'}
+                className={`flex w-full flex-col items-center gap-2 px-1 py-2 text-[10px] ${sidebarLabelTone}`}
+                title={sidebarLabel}
               >
                 <span
                   className="font-semibold"
                   style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
                 >
-                  {tenantHost ? tenantHost : 'None'}
+                  {sidebarLabel}
                 </span>
               </div>
             </div>
@@ -2867,7 +3802,7 @@ export default function EditorPage() {
                     <p>{treeError}</p>
                     <button
                       className="rounded bg-[#094771] px-3 py-1 text-white hover:bg-[#0b5b96]"
-                      onClick={() => loadTree()}
+                      onClick={() => reloadTree()}
                     >
                       Retry
                     </button>
@@ -2902,7 +3837,11 @@ export default function EditorPage() {
                     <button
                       className="rounded p-1 text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200 disabled:opacity-60"
                       onClick={() => loadHistory(historyPage)}
-                      disabled={historyLoading || !activeFile?.meta}
+                      disabled={
+                        historyLoading ||
+                        !activeFile?.meta ||
+                        activeFile.meta.kind === 'shared'
+                      }
                       aria-label="Refresh history"
                       title="Refresh history"
                       type="button"
@@ -2914,6 +3853,10 @@ export default function EditorPage() {
                   {!activeFile?.meta ? (
                     <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
                       Select a file to view history.
+                    </div>
+                  ) : activeFile.meta.kind === 'shared' ? (
+                    <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
+                      History is not available for shared projects yet.
                     </div>
                   ) : historyLoading ? (
                     <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
@@ -3515,7 +4458,9 @@ export default function EditorPage() {
             >
               {!previewTarget ? (
                 <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
-                  Select a UI entity to preview.
+                  {isSharedMode
+                    ? 'Switch to preview to load the shared project.'
+                    : 'Select a UI entity to preview.'}
                 </div>
               ) : !tenantHost ? (
                 <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
@@ -3533,7 +4478,9 @@ export default function EditorPage() {
             </div>
             {!activeFile && editorView === 'code' && (
               <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">
-                Select a module or UI entity from the explorer to start editing.
+                {isSharedMode
+                  ? 'Select a file from the shared project to start editing.'
+                  : 'Select a module or UI entity from the explorer to start editing.'}
               </div>
             )}
           </div>
@@ -3568,6 +4515,14 @@ export default function EditorPage() {
                 <span className="text-gray-200 leading-none">{activeFile.meta.routePath}</span>
               </div>
             )}
+            {activeFile?.meta?.kind === 'shared' && (
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 items-center rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 text-[10px] uppercase tracking-wide">
+                  Shared
+                </span>
+                <span className="text-gray-200 leading-none">{activeFile.meta.path}</span>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {activeFile && (
@@ -3600,9 +4555,17 @@ export default function EditorPage() {
         onClose={closeCreateModal}
         title={
           createType === 'folder'
-            ? `Create folder (${createScope === 'modules' ? 'Modules' : 'UI Entities'})`
+            ? `Create folder (${
+                createScope === 'shared'
+                  ? 'Shared Project'
+                  : createScope === 'modules'
+                  ? 'Modules'
+                  : 'UI Entities'
+              })`
             : createScope === 'modules'
             ? 'Create module'
+            : createScope === 'shared'
+            ? 'Create shared file'
             : 'Create UI entity'
         }
         footer={
@@ -3669,6 +4632,33 @@ export default function EditorPage() {
                   onChange={(e) => setModuleForm({ ...moduleForm, code: e.target.value })}
                 />
               </div>
+            </FormLayout>
+          </form>
+        ) : createScope === 'shared' ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleCreateSubmit();
+            }}
+            className="space-y-4"
+          >
+            <FormLayout>
+              <Input
+                label="File path"
+                value={sharedFileForm.path}
+                onChange={(e) =>
+                  setSharedFileForm((prev) => ({ ...prev, path: e.target.value }))
+                }
+                placeholder="src/new-file.tsx"
+              />
+              <TextArea
+                label="Initial content (optional)"
+                value={sharedFileForm.content}
+                onChange={(e) =>
+                  setSharedFileForm((prev) => ({ ...prev, content: e.target.value }))
+                }
+                rows={6}
+              />
             </FormLayout>
           </form>
         ) : (
@@ -3830,7 +4820,13 @@ export default function EditorPage() {
       <Modal
         open={editModalOpen}
         onClose={closeEditModal}
-        title={editMeta?.kind === 'module' ? 'Edit module' : 'Edit UI entity'}
+        title={
+          editMeta?.kind === 'module'
+            ? 'Edit module'
+            : editMeta?.kind === 'shared'
+            ? 'Edit shared file'
+            : 'Edit UI entity'
+        }
         footer={
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={closeEditModal}>
@@ -3873,6 +4869,15 @@ export default function EditorPage() {
                 label: ext,
                 value: ext,
               }))}
+            />
+          </FormLayout>
+        ) : editMeta?.kind === 'shared' ? (
+          <FormLayout>
+            <Input
+              label="File path"
+              value={editSharedPath}
+              onChange={(e) => setEditSharedPath(e.target.value)}
+              placeholder="src/file.tsx"
             />
           </FormLayout>
         ) : (

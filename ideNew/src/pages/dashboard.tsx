@@ -60,6 +60,11 @@ export default function DashboardPage() {
         href: '/admin/users',
         description: 'Invite teammates and adjust roles.',
       });
+      links.push({
+        label: 'Shared projects',
+        href: '/admin/shared-packages',
+        description: 'Manage shared UI projects for all tenants.',
+      });
     }
     return links;
   }, [user]);
