@@ -54,10 +54,16 @@ const baseOptions = {
 export const CoreDataSource = new DataSource(baseOptions);
 
 let initialized = false;
+let initPromise: Promise<void> | null = null;
 
 export const ensureCoreSchema = async () => {
-  if (!initialized) {
-    await CoreDataSource.initialize();
+  if (initialized) return;
+  if (initPromise) return initPromise;
+
+  initPromise = (async () => {
+    if (!CoreDataSource.isInitialized) {
+      await CoreDataSource.initialize();
+    }
     const allowSync =
       process.env.CORE_DB_SYNC === 'true' || process.env.NODE_ENV !== 'production';
     if (allowSync) {
@@ -65,7 +71,9 @@ export const ensureCoreSchema = async () => {
       try {
         const hasGlobalTable = await queryRunner.hasTable('global_ui_packages');
         const hasFileTable = await queryRunner.hasTable('global_ui_package_files');
-        if (!hasGlobalTable || !hasFileTable) {
+        const hasDraftVersion =
+          hasGlobalTable && (await queryRunner.hasColumn('global_ui_packages', 'draft_version'));
+        if (!hasGlobalTable || !hasFileTable || !hasDraftVersion) {
           await CoreDataSource.synchronize();
         }
       } finally {
@@ -74,7 +82,13 @@ export const ensureCoreSchema = async () => {
     }
     initialized = true;
     console.log(`Core Data Source has been initialized (${dbType})!`);
-  }
+  })()
+    .catch((err) => {
+      initPromise = null;
+      throw err;
+    });
+
+  return initPromise;
 };
 
 export const getCoreDataSource = () => CoreDataSource;

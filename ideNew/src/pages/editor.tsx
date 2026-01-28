@@ -13,6 +13,7 @@ import {
   FiEye,
   FiEyeOff,
   FiFolder,
+  FiFlag,
   FiCornerDownLeft,
   FiChevronsRight,
   FiRefreshCw,
@@ -36,6 +37,8 @@ const MonacoDiffEditor = dynamic(
   () => import('@monaco-editor/react').then((mod) => mod.DiffEditor),
   { ssr: false }
 );
+
+const CORE_API_BASE = process.env.NEXT_PUBLIC_CORE_API_URL?.trim() || '';
 
 type EditorLanguage =
   | 'javascript'
@@ -122,6 +125,9 @@ type ModuleDto = {
   method: string;
   code: string;
   fileExtension?: string;
+  draftVersion?: string;
+  publishedVersion?: string;
+  publishedAt?: string;
 };
 
 type UIPackageDto = {
@@ -132,6 +138,9 @@ type UIPackageDto = {
   codeBlob: string;
   dependencies: string[];
   fileExtension?: string;
+  draftVersion?: string;
+  publishedVersion?: string;
+  publishedAt?: string;
 };
 
 type SharedProjectDto = {
@@ -141,6 +150,9 @@ type SharedProjectDto = {
   entryPath: string;
   dependencies: string[];
   fileExtension?: string;
+  draftVersion?: string;
+  publishedVersion?: string;
+  publishedAt?: string;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -189,6 +201,19 @@ type HistoryResponse<T> = {
   total: number;
   page: number;
   pageSize: number;
+};
+
+type StagingItem = {
+  id: string;
+  kind: 'module' | 'ui' | 'shared';
+  title: string;
+  draftVersion?: string;
+  publishedVersion?: string;
+  publishedAt?: string;
+  backendId?: string;
+  projectId?: string;
+  fileId?: string;
+  dirty?: boolean;
 };
 
 type ExplorerScope = 'modules' | 'ui';
@@ -304,8 +329,7 @@ const formatModuleFileName = (mod: ModuleDto) => {
 const formatUiFileName = (pkg: UIPackageDto) => {
   const nameSegments = splitUiName(pkg.name || 'ui');
   const baseName = nameSegments[nameSegments.length - 1] || 'ui';
-  const version = pkg.version || 'latest';
-  return `${sanitizeForFilename(baseName)}@${sanitizeForFilename(version)}.ui.${coerceUiExtension(pkg.fileExtension)}`;
+  return `${sanitizeForFilename(baseName)}.ui.${coerceUiExtension(pkg.fileExtension)}`;
 };
 
 const getScopeInfo = (pathNodes: ExplorerNode[]) => {
@@ -1004,9 +1028,11 @@ export default function EditorPage() {
   const splitRatioRef = useRef(splitRatio);
   const splitResizeRef = useRef<{ active: boolean }>({ active: false });
   const dragTabIdRef = useRef<string | null>(null);
-  const [leftPanel, setLeftPanel] = useState<'explorer' | 'history' | 'search'>(
-    'explorer'
-  );
+  const [leftPanel, setLeftPanel] = useState<
+    'explorer' | 'history' | 'search' | 'staging'
+  >('explorer');
+  const [stagingBusy, setStagingBusy] = useState(false);
+  const [stagingBusyId, setStagingBusyId] = useState<string | null>(null);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
@@ -1038,6 +1064,7 @@ export default function EditorPage() {
   const [searchReplace, setSearchReplace] = useState('');
   const [searchIncludePattern, setSearchIncludePattern] = useState('');
   const [searchExcludePattern, setSearchExcludePattern] = useState('');
+
   const [editorView, setEditorView] = useState<'code' | 'preview'>('code');
   const [previewNonce, setPreviewNonce] = useState(0);
   const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
@@ -1095,6 +1122,13 @@ export default function EditorPage() {
   );
   const [tabMenu, setTabMenu] = useState<TabContextMenuState | null>(null);
 
+  const resolveApiUrl = useCallback((url: string) => {
+    if (/^https?:\/\//i.test(url)) return url;
+    if (!CORE_API_BASE) return url;
+    const base = CORE_API_BASE.replace(/\/$/, '');
+    return `${base}${url.startsWith('/') ? '' : '/'}${url}`;
+  }, []);
+
   const apiFetch = useCallback(
     async (url: string, options: { method?: string; body?: unknown } = {}) => {
       if (!token) {
@@ -1108,7 +1142,7 @@ export default function EditorPage() {
         (err as any).statusCode = 400;
         throw err;
       }
-      const res = await fetch(url, {
+      const res = await fetch(resolveApiUrl(url), {
         method: options.method ?? 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -1127,7 +1161,7 @@ export default function EditorPage() {
       }
       return data;
     },
-    [clear, token]
+    [clear, resolveApiUrl, token]
   );
 
   const adminFetch = useCallback(
@@ -1824,6 +1858,68 @@ export default function EditorPage() {
     [fileContents, savedContents]
   );
 
+  const dirtyFileIds = useMemo(
+    () => new Set(openFiles.filter(isFileDirty).map((file) => file.id)),
+    [isFileDirty, openFiles]
+  );
+
+  const sharedDirty = useMemo(
+    () => openFiles.some((file) => file.meta?.kind === 'shared' && isFileDirty(file)),
+    [isFileDirty, openFiles]
+  );
+
+  const stagingItems = useMemo(() => {
+    const items: StagingItem[] = [];
+    modulesData.forEach((mod) => {
+      const fileId = `module-${mod.id}`;
+      items.push({
+        id: fileId,
+        kind: 'module',
+        title: `${mod.method} ${mod.routePath}`,
+        draftVersion: mod.draftVersion,
+        publishedVersion: mod.publishedVersion,
+        publishedAt: mod.publishedAt,
+        backendId: mod.id,
+        fileId,
+        dirty: dirtyFileIds.has(fileId),
+      });
+    });
+    uiData.forEach((pkg) => {
+      const fileId = `ui-${pkg.id}`;
+      items.push({
+        id: fileId,
+        kind: 'ui',
+        title: pkg.name,
+        draftVersion: pkg.draftVersion,
+        publishedVersion: pkg.publishedVersion,
+        publishedAt: pkg.publishedAt,
+        backendId: pkg.id,
+        fileId,
+        dirty: dirtyFileIds.has(fileId),
+      });
+    });
+    if (isSharedMode && sharedProject) {
+      items.push({
+        id: `shared-project-${sharedProject.id}`,
+        kind: 'shared',
+        title: sharedProject.name,
+        draftVersion: sharedProject.draftVersion,
+        publishedVersion: sharedProject.publishedVersion,
+        publishedAt: sharedProject.publishedAt,
+        projectId: sharedProject.id,
+        dirty: sharedDirty,
+      });
+    }
+    items.sort((a, b) => a.title.localeCompare(b.title));
+    return items;
+  }, [dirtyFileIds, isSharedMode, modulesData, sharedDirty, sharedProject, uiData]);
+
+  const stagingCounts = useMemo(() => {
+    const total = stagingItems.length;
+    const published = stagingItems.filter((item) => item.publishedVersion).length;
+    return { total, published, drafts: total - published };
+  }, [stagingItems]);
+
   const requestCloseTabs = useCallback(
     (ids: Set<string>) => {
       if (ids.size === 0) return;
@@ -2097,6 +2193,50 @@ export default function EditorPage() {
     showError,
     success,
   ]);
+
+  const publishTarget = useCallback(
+    async (target: StagingItem) => {
+      if (stagingBusy) return;
+      try {
+        setStagingBusy(true);
+        setStagingBusyId(target.id);
+        if (target.kind === 'module') {
+          if (!target.backendId) {
+            throw new Error('Module id is missing.');
+          }
+          await apiFetch(`/api/modules/${target.backendId}/publish`, { method: 'POST' });
+          success('Module published');
+          await reloadTree();
+          return;
+        }
+        if (target.kind === 'ui') {
+          if (!target.backendId) {
+            throw new Error('UI entity id is missing.');
+          }
+          await apiFetch(`/api/ui-entities/${target.backendId}/publish`, { method: 'POST' });
+          success('UI entity published');
+          await reloadTree();
+          return;
+        }
+        const projectId = target.projectId || sharedProject?.id;
+        if (!projectId) {
+          throw new Error('Shared project is not loaded.');
+        }
+        await adminFetch(`/api/admin/shared-packages/${projectId}/publish`, {
+          method: 'POST',
+        });
+        const refreshed = await adminFetch(`/api/admin/shared-packages/${projectId}`);
+        setSharedProject(refreshed.package ?? refreshed);
+        success('Shared project published');
+      } catch (err) {
+        showError((err as Error).message || 'Publish failed');
+      } finally {
+        setStagingBusy(false);
+        setStagingBusyId(null);
+      }
+    },
+    [adminFetch, apiFetch, reloadTree, sharedProject?.id, showError, stagingBusy, success]
+  );
 
   const handleCloseFile = (id: string) => {
     requestCloseTabs(new Set([id]));
@@ -3775,6 +3915,28 @@ export default function EditorPage() {
             >
               <FiClock />
             </button>
+            <button
+              title="Staging"
+              className={`mb-2 flex h-8 w-8 items-center justify-center rounded-lg text-base transition ${
+                leftPanel === 'staging'
+                  ? 'bg-[#094771] text-white'
+                  : 'text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200'
+              }`}
+              onClick={() => {
+                setLeftPanel('staging');
+                setLeftPanelOpen(true);
+              }}
+              onDoubleClick={() => {
+                if (leftPanelOpen && leftPanel === 'staging') {
+                  setLeftPanelOpen(false);
+                } else {
+                  setLeftPanel('staging');
+                  setLeftPanelOpen(true);
+                }
+              }}
+            >
+              <FiFlag />
+            </button>
             <div className="mt-auto flex w-full flex-col items-center px-1 pb-2">
               <div
                 className={`flex w-full flex-col items-center gap-2 px-1 py-2 text-[10px] ${sidebarLabelTone}`}
@@ -3965,6 +4127,88 @@ export default function EditorPage() {
                       </div>
                     </div>
                   )}
+                </div>
+              ) : leftPanel === 'staging' ? (
+                <div className="flex h-full min-h-0 flex-col">
+                  <div className="flex h-[34px] items-center justify-between border-b border-[#2a2d2e] px-3 text-[11px] uppercase text-gray-400">
+                    <div>Staging</div>
+                    <div className="text-[10px] text-gray-500">
+                      {stagingCounts.published}/{stagingCounts.total} published
+                    </div>
+                  </div>
+                  <div className="flex flex-1 flex-col gap-2 overflow-auto p-2 text-[11px] text-gray-300">
+                    {stagingItems.length === 0 ? (
+                      <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
+                        No files available for staging.
+                      </div>
+                    ) : (
+                      stagingItems.map((item) => {
+                        const isPublished = Boolean(item.publishedVersion);
+                        const isDirty = Boolean(item.dirty);
+                        const isPublishing = stagingBusy && stagingBusyId === item.id;
+                        const kindLabel =
+                          item.kind === 'module'
+                            ? 'Module'
+                            : item.kind === 'ui'
+                              ? 'UI'
+                              : 'Shared';
+                        return (
+                          <div
+                            key={item.id}
+                            className="rounded border border-[#2a2d2e] bg-[#1f1f1f] p-2"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="truncate text-[12px] font-semibold text-gray-100">
+                                    {item.title}
+                                  </span>
+                                  <span className="rounded border border-[#2a2d2e] px-1.5 py-0.5 text-[9px] uppercase text-gray-400">
+                                    {kindLabel}
+                                  </span>
+                                </div>
+                                <div className="mt-1 text-[10px] text-gray-400">
+                                  <span className="mr-2">
+                                    Draft: {item.draftVersion || '—'}
+                                  </span>
+                                  <span>Published: {item.publishedVersion || '—'}</span>
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-2">
+                                {isDirty && (
+                                  <span className="rounded bg-[#3b1f1f] px-1.5 py-0.5 text-[9px] text-red-200">
+                                    Unsaved
+                                  </span>
+                                )}
+                                <span
+                                  className={`rounded px-1.5 py-0.5 text-[9px] ${
+                                    isPublished
+                                      ? 'bg-emerald-900/40 text-emerald-300'
+                                      : 'bg-[#2a2d2e] text-gray-400'
+                                  }`}
+                                >
+                                  {isPublished ? 'Published' : 'Draft'}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="rounded bg-[#0b5b96] px-2 py-1 text-[10px] font-semibold text-white hover:bg-[#0f72be] disabled:opacity-60"
+                                  onClick={() => publishTarget(item)}
+                                  disabled={stagingBusy || isDirty}
+                                >
+                                  {isPublishing ? 'Publishing…' : isPublished ? 'Republish' : 'Publish'}
+                                </button>
+                              </div>
+                            </div>
+                            <div className="mt-1 text-[9px] text-gray-500">
+                              {item.publishedAt
+                                ? `Published ${formatHistoryTimestamp(item.publishedAt)}`
+                                : 'Not published yet'}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
               ) : (
                 <div className="flex h-full min-h-0 flex-col">
@@ -4507,9 +4751,7 @@ export default function EditorPage() {
                 <span className="flex h-5 items-center rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 text-[10px] uppercase tracking-wide">
                   UI Entity
                 </span>
-                <span className="text-gray-200 leading-none">
-                  {activeFile.meta.name}@{activeFile.meta.version}
-                </span>
+                <span className="text-gray-200 leading-none">{activeFile.meta.name}</span>
               </div>
             )}
             {activeFile?.meta?.kind === 'module' && (

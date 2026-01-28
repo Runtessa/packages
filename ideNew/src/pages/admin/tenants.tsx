@@ -17,7 +17,6 @@ import { getSelectedTenantHost, setSelectedTenantHost } from '@/lib/client/tenan
 type TenantSummary = {
   id: string;
   hostname: string;
-  stage: string;
   isSuspended: boolean;
   resourceConfig?: { memory: number; timeout: number };
   restrictRoutes?: string[];
@@ -27,7 +26,6 @@ type TenantSummary = {
 
 type TenantFormState = {
   hostname: string;
-  stage: string;
   isSuspended: boolean;
   memory: string;
   timeout: string;
@@ -45,15 +43,8 @@ type TenantFormErrors = {
   timeout: string;
 };
 
-const stageOptions = [
-  { label: 'Dev', value: 'DEV' },
-  { label: 'Staging', value: 'STAGING' },
-  { label: 'Prod', value: 'PROD' },
-];
-
 const DEFAULT_FORM: TenantFormState = {
   hostname: '',
-  stage: 'DEV',
   isSuspended: false,
   memory: '512',
   timeout: '5000',
@@ -190,7 +181,6 @@ export default function AdminTenantsPage() {
       id: tenant.id,
       originalHostname: tenant.hostname,
       hostname: tenant.hostname,
-      stage: tenant.stage || DEFAULT_FORM.stage,
       isSuspended: tenant.isSuspended,
       memory: String(tenant.resourceConfig?.memory ?? Number(DEFAULT_FORM.memory)),
       timeout: String(tenant.resourceConfig?.timeout ?? Number(DEFAULT_FORM.timeout)),
@@ -224,7 +214,6 @@ export default function AdminTenantsPage() {
 
   const buildPayload = (values: TenantFormState) => ({
     hostname: values.hostname.trim(),
-    stage: values.stage,
     isSuspended: values.isSuspended,
     resourceConfig: {
       memory: Number(values.memory),
@@ -353,7 +342,7 @@ export default function AdminTenantsPage() {
         subtitle="Choose a tenant, update settings, or open the editor for that tenant."
       >
         <DataTable
-          headers={['Hostname', 'Stage', 'Status', 'Resources', 'Updated', 'Actions']}
+          headers={['Hostname', 'Status', 'Resources', 'Updated', 'Actions']}
           loading={loading}
           emptyMessage="No tenants found."
         >
@@ -369,7 +358,6 @@ export default function AdminTenantsPage() {
                   )}
                 </div>
               </td>
-              <td className="px-4 py-3 text-textMuted">{tenant.stage}</td>
               <td className="px-4 py-3 text-textMuted">
                 {tenant.isSuspended ? 'Suspended' : 'Active'}
               </td>
@@ -436,12 +424,6 @@ export default function AdminTenantsPage() {
                 error={validationErrors.hostname}
               />
             </div>
-            <Select
-              label="Stage"
-              value={form.stage}
-              onChange={(e) => setForm({ ...form, stage: e.target.value })}
-              options={stageOptions}
-            />
             <label className="flex items-center gap-2 pt-6 text-sm text-textPrimary">
               <input
                 type="checkbox"
@@ -518,12 +500,6 @@ export default function AdminTenantsPage() {
                 error={editValidationErrors.hostname}
               />
             </div>
-            <Select
-              label="Stage"
-              value={editForm.stage}
-              onChange={(e) => setEditForm({ ...editForm, stage: e.target.value })}
-              options={stageOptions}
-            />
             <label className="flex items-center gap-2 pt-6 text-sm text-textPrimary">
               <input
                 type="checkbox"

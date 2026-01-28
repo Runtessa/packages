@@ -5,6 +5,8 @@ import { CoreDataSource } from '@/lib/core-db';
 import { UIPackage } from '@/lib/entities/UIEntities';
 import { UIPackageRevision } from '@/lib/entities/UIPackageRevision';
 import { resolveTenant } from '@/lib/tenancy';
+import redis from '@/lib/redis';
+import { generateVersion } from '@/lib/version';
 
 const normalizeName = (raw: unknown): string => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -67,6 +69,9 @@ const serialize = (pkg: UIPackage) => ({
   codeBlob: pkg.codeBlob,
   dependencies: pkg.dependencies ?? [],
   fileExtension: pkg.fileExtension,
+  draftVersion: pkg.draftVersion,
+  publishedVersion: pkg.publishedVersion ?? undefined,
+  publishedAt: pkg.publishedAt ?? undefined,
   createdAt: pkg.createdAt,
   updatedAt: pkg.updatedAt,
 });
@@ -158,6 +163,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     pkg.codeBlob = nextCompiled;
     pkg.dependencies = nextDeps;
     pkg.fileExtension = nextExt;
+    pkg.draftVersion = generateVersion();
     await repo.save(pkg);
 
     res.status(200).json(serialize(pkg));
@@ -173,6 +179,11 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       return;
     }
     await createRevision(pkg, tenant, user.id, 'delete');
+    const encoded = encodeURIComponent(pkg.name);
+    await redis.del(
+      `registry:tenant:${tenant.id}:${encoded}:latest`,
+      `registry:tenant:${tenant.id}:${encoded}:${pkg.version}`
+    );
     await repo.remove(pkg);
     res.status(204).end();
     return;

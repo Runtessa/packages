@@ -1,10 +1,19 @@
 import { NextFunction, Response } from 'express';
 import { DataSource } from 'typeorm';
 import { AppError } from '../../common/AppError';
+import { isDeveloperAccess } from '../../common/devAccess';
+import { publishedCache } from '../../core/publishedCache';
 import { AdapterFactory } from '../../engine/AdapterFactory';
 import { SandboxRunner, SandboxRequestContext } from '../../engine/SandboxRunner';
 import { ModuleEntity, HttpMethod } from '../../entities/Module';
 import { TenantRequest } from '../../types/RequestContext';
+
+type ModuleLike = {
+  routePath: string;
+  method: HttpMethod;
+  code: string;
+  fileExtension?: string;
+};
 
 export class Dispatcher {
   constructor(
@@ -25,10 +34,40 @@ export class Dispatcher {
       }
 
       const moduleRepo = this.dataSource.getRepository(ModuleEntity);
-      const modules = await moduleRepo.find({
-        where: { tenant: { id: req.tenant.id }, method: normalizedMethod as HttpMethod },
-        order: { routePath: 'ASC' },
-      });
+      const isDev = isDeveloperAccess(req);
+      let modules: ModuleLike[] = [];
+
+      if (isDev) {
+        modules = await moduleRepo.find({
+          where: { tenant: { id: req.tenant.id }, method: normalizedMethod as HttpMethod },
+          order: { routePath: 'ASC' },
+        });
+      } else {
+        const cacheKey = this.publishedModulesCacheKey(req.tenant.id, normalizedMethod as HttpMethod);
+        const cached = await publishedCache.get<ModuleLike[]>(cacheKey);
+        if (cached) {
+          modules = cached;
+        } else {
+          const published = await moduleRepo.find({
+            where: { tenant: { id: req.tenant.id } },
+            order: { publishedRoutePath: 'ASC', routePath: 'ASC' },
+          });
+          modules = published
+            .filter(
+              (mod) =>
+                Boolean(mod.publishedCode) &&
+                Boolean(mod.publishedVersion) &&
+                (mod.publishedMethod ?? mod.method) === (normalizedMethod as HttpMethod)
+            )
+            .map((mod) => ({
+              routePath: mod.publishedRoutePath ?? mod.routePath,
+              method: (mod.publishedMethod ?? mod.method) as HttpMethod,
+              code: mod.publishedCode ?? '',
+              fileExtension: mod.publishedFileExtension ?? mod.fileExtension,
+            }));
+          await publishedCache.set(cacheKey, modules);
+        }
+      }
 
       const matchResult = this.findMatchingModule(modules, req.path);
       if (!matchResult) {
@@ -48,7 +87,6 @@ export class Dispatcher {
         tenant: {
           id: req.tenant.id,
           hostname: req.tenant.hostname,
-          stage: req.tenant.stage,
           resourceConfig: req.tenant.resourceConfig ?? { memory: 512, timeout: 5_000 },
         },
         account: req.account
@@ -90,9 +128,9 @@ export class Dispatcher {
   }
 
   private findMatchingModule(
-    modules: ModuleEntity[],
+    modules: ModuleLike[],
     path: string,
-  ): { module: ModuleEntity; params: Record<string, string> } | null {
+  ): { module: ModuleLike; params: Record<string, string> } | null {
     for (const mod of modules) {
       const params = this.matchPath(mod.routePath, path);
       if (params) {
@@ -121,5 +159,9 @@ export class Dispatcher {
       }
     }
     return params;
+  }
+
+  private publishedModulesCacheKey(tenantId: string, method: HttpMethod) {
+    return `module:published:${tenantId}:${method}`;
   }
 }

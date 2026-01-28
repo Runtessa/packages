@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
-import { Tenant, TenantStage } from '@/lib/entities/Tenant';
+import { Tenant } from '@/lib/entities/Tenant';
 
 const DEFAULT_RESOURCE_CONFIG = { memory: 512, timeout: 5000 };
 
@@ -13,22 +13,6 @@ const normalizeHostname = (raw: unknown) => {
     throw err;
   }
   return raw.trim();
-};
-
-const normalizeStage = (raw: unknown, fallback: TenantStage = TenantStage.DEV): TenantStage => {
-  if (raw === undefined || raw === null || raw === '') return fallback;
-  if (typeof raw !== 'string') {
-    const err = new Error('stage must be a string');
-    (err as any).statusCode = 400;
-    throw err;
-  }
-  const upper = raw.toUpperCase();
-  if (!Object.values(TenantStage).includes(upper as TenantStage)) {
-    const err = new Error('stage must be DEV, STAGING, or PROD');
-    (err as any).statusCode = 400;
-    throw err;
-  }
-  return upper as TenantStage;
 };
 
 const normalizeNumber = (raw: unknown, label: string, fallback: number) => {
@@ -89,7 +73,6 @@ const normalizeBoolean = (raw: unknown, fallback: boolean) => {
 const serializeTenant = (tenant: Tenant) => ({
   id: tenant.id,
   hostname: tenant.hostname,
-  stage: tenant.stage,
   isSuspended: tenant.isSuspended,
   resourceConfig: tenant.resourceConfig,
   restrictRoutes: tenant.restrictRoutes ?? [],
@@ -116,7 +99,6 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     await ensureCoreSchema();
 
     const hostname = normalizeHostname(req.body?.hostname);
-    const stage = normalizeStage(req.body?.stage, TenantStage.DEV);
     const isSuspended = normalizeBoolean(req.body?.isSuspended, false);
     const resourceConfig = normalizeResourceConfig(req.body?.resourceConfig, DEFAULT_RESOURCE_CONFIG);
     const restrictRoutes = normalizeRestrictRoutes(req.body?.restrictRoutes, []);
@@ -130,7 +112,6 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
 
     const tenant = repo.create({
       hostname,
-      stage,
       isSuspended,
       resourceConfig,
       restrictRoutes,

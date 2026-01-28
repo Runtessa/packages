@@ -1,5 +1,7 @@
 import { NextFunction, Response } from 'express';
 import { DataSource } from 'typeorm';
+import { isDeveloperAccess } from '../../common/devAccess';
+import { publishedCache } from '../../core/publishedCache';
 import { GlobalUIPackage } from '../../entities/GlobalUIPackage';
 import { UIPackage } from '../../entities/UIEntities';
 import { resolveGlobalDataSource } from '../../core/globalDatasource';
@@ -15,6 +17,8 @@ export class RegistryController {
       if (!name) {
         return res.status(400).json({ error: 'Package name required' });
       }
+      const versionToken = version || 'latest';
+      const isDev = isDeveloperAccess(req);
 
       const globalDataSource = await resolveGlobalDataSource(this.dataSource);
       const globalRepo = globalDataSource.getRepository(GlobalUIPackage);
@@ -46,15 +50,24 @@ export class RegistryController {
         });
       };
 
+      if (!isDev) {
+        const globalCacheKey = this.registryCacheKey('global', undefined, name, versionToken);
+        const cached = await publishedCache.get(globalCacheKey);
+        if (cached) {
+          return res.json(cached);
+        }
+      }
+
       const globalPkg = await findGlobalPackage();
       if (globalPkg) {
-        return res.json({
-          name: globalPkg.name,
-          version: globalPkg.version,
-          source: globalPkg.codeBlob,
-          dependencies: globalPkg.dependencies ?? [],
-          fileExtension: globalPkg.fileExtension,
-        });
+        if (isDev) {
+          return res.json(this.serializeDraft(globalPkg));
+        }
+        if (this.hasPublished(globalPkg)) {
+          const payload = this.serializePublished(globalPkg);
+          await publishedCache.set(this.registryCacheKey('global', undefined, name, versionToken), payload);
+          return res.json(payload);
+        }
       }
 
       const builtinPackage = resolveGlobalPackage(name, version);
@@ -68,21 +81,79 @@ export class RegistryController {
         });
       }
 
-      const pkg = req.tenant ? await findPackage(req.tenant.id) : null;
+      if (!req.tenant) {
+        return res.status(404).json({ error: 'Package not found' });
+      }
+
+      if (!isDev) {
+        const tenantCacheKey = this.registryCacheKey('tenant', req.tenant.id, name, versionToken);
+        const cached = await publishedCache.get(tenantCacheKey);
+        if (cached) {
+          return res.json(cached);
+        }
+      }
+
+      const pkg = await findPackage(req.tenant.id);
 
       if (!pkg) {
         return res.status(404).json({ error: 'Package not found' });
       }
 
-      return res.json({
-        name: pkg.name,
-        version: pkg.version,
-        source: pkg.codeBlob,
-        dependencies: pkg.dependencies ?? [],
-        fileExtension: pkg.fileExtension,
-      });
+      if (isDev) {
+        return res.json(this.serializeDraft(pkg));
+      }
+
+      if (!this.hasPublished(pkg)) {
+        return res.status(404).json({ error: 'Package not published' });
+      }
+
+      const payload = this.serializePublished(pkg);
+      await publishedCache.set(
+        this.registryCacheKey('tenant', req.tenant.id, name, versionToken),
+        payload
+      );
+      return res.json(payload);
     } catch (error) {
       next(error);
     }
   };
+
+  private hasPublished(pkg: UIPackage | GlobalUIPackage) {
+    return Boolean(pkg.publishedCodeBlob) && Boolean(pkg.publishedVersion);
+  }
+
+  private registryCacheKey(
+    scope: 'tenant' | 'global',
+    tenantId: string | undefined,
+    name: string,
+    version: string
+  ) {
+    const encoded = encodeURIComponent(name);
+    if (scope === 'tenant' && tenantId) {
+      return `registry:tenant:${tenantId}:${encoded}:${version}`;
+    }
+    return `registry:global:${encoded}:${version}`;
+  }
+
+  private serializeDraft(pkg: UIPackage | GlobalUIPackage) {
+    return {
+      name: pkg.name,
+      version: pkg.draftVersion || pkg.version,
+      packageVersion: pkg.version,
+      source: pkg.codeBlob,
+      dependencies: pkg.dependencies ?? [],
+      fileExtension: pkg.fileExtension,
+    };
+  }
+
+  private serializePublished(pkg: UIPackage | GlobalUIPackage) {
+    return {
+      name: pkg.name,
+      version: pkg.publishedVersion || pkg.version,
+      packageVersion: pkg.version,
+      source: pkg.publishedCodeBlob || '',
+      dependencies: pkg.publishedDependencies ?? [],
+      fileExtension: pkg.publishedFileExtension ?? pkg.fileExtension,
+    };
+  }
 }

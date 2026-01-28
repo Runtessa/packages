@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
-import { Tenant, TenantStage } from '@/lib/entities/Tenant';
+import { Tenant } from '@/lib/entities/Tenant';
 
 const DEFAULT_RESOURCE_CONFIG = { memory: 512, timeout: 5000 };
 
@@ -24,22 +24,6 @@ const normalizeHostname = (raw: unknown) => {
     throw err;
   }
   return raw.trim();
-};
-
-const normalizeStage = (raw: unknown, fallback: TenantStage): TenantStage => {
-  if (raw === undefined || raw === null || raw === '') return fallback;
-  if (typeof raw !== 'string') {
-    const err = new Error('stage must be a string');
-    (err as any).statusCode = 400;
-    throw err;
-  }
-  const upper = raw.toUpperCase();
-  if (!Object.values(TenantStage).includes(upper as TenantStage)) {
-    const err = new Error('stage must be DEV, STAGING, or PROD');
-    (err as any).statusCode = 400;
-    throw err;
-  }
-  return upper as TenantStage;
 };
 
 const normalizeNumber = (raw: unknown, label: string, fallback: number) => {
@@ -100,7 +84,6 @@ const normalizeBoolean = (raw: unknown, fallback: boolean) => {
 const serializeTenant = (tenant: Tenant) => ({
   id: tenant.id,
   hostname: tenant.hostname,
-  stage: tenant.stage,
   isSuspended: tenant.isSuspended,
   resourceConfig: tenant.resourceConfig,
   restrictRoutes: tenant.restrictRoutes ?? [],
@@ -134,7 +117,6 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
 
     const nextHostname =
       req.body?.hostname !== undefined ? normalizeHostname(req.body.hostname) : tenant.hostname;
-    const nextStage = normalizeStage(req.body?.stage, tenant.stage);
     const nextSuspended = normalizeBoolean(req.body?.isSuspended, tenant.isSuspended);
     const nextResourceConfig = normalizeResourceConfig(
       req.body?.resourceConfig,
@@ -154,7 +136,6 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     }
 
     tenant.hostname = nextHostname;
-    tenant.stage = nextStage;
     tenant.isSuspended = nextSuspended;
     tenant.resourceConfig = nextResourceConfig;
     tenant.restrictRoutes = nextRestrictRoutes;

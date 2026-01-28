@@ -1,6 +1,8 @@
 import { NextFunction, Response } from 'express';
 import { DataSource } from 'typeorm';
 import { AppError } from '../../common/AppError';
+import { generateVersion } from '../../common/version';
+import { publishedCache } from '../../core/publishedCache';
 import { UIPackage } from '../../entities/UIEntities';
 import { UIPackageRevision } from '../../entities/UIPackageRevision';
 import { TenantRequest } from '../../types/RequestContext';
@@ -68,6 +70,7 @@ export class UIEntityController {
         codeBlob: compiledCode,
         dependencies: normalizedDeps,
         fileExtension,
+        draftVersion: generateVersion(),
         tenant: req.tenant!,
       });
       await repo.save(pkg);
@@ -128,6 +131,7 @@ export class UIEntityController {
       pkg.codeBlob = nextCompiled;
       pkg.dependencies = nextDeps;
       pkg.fileExtension = nextExt;
+      pkg.draftVersion = generateVersion();
       await repo.save(pkg);
 
       return res.json(this.serialize(pkg));
@@ -147,6 +151,7 @@ export class UIEntityController {
         return res.status(404).json({ error: 'UI entity not found' });
       }
       await this.createRevision(req, pkg, 'delete');
+      await this.clearPublishedCache(pkg, req.tenant!.id);
       await repo.remove(pkg);
       return res.status(204).send();
     } catch (error) {
@@ -216,7 +221,36 @@ export class UIEntityController {
       pkg.codeBlob = revision.codeBlob;
       pkg.dependencies = revision.dependencies ?? [];
       pkg.fileExtension = revision.fileExtension;
+      pkg.draftVersion = generateVersion();
       await repo.save(pkg);
+
+      return res.json(this.serialize(pkg));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  publish = async (req: TenantRequest, res: Response, next: NextFunction) => {
+    try {
+      this.ensureTenant(req);
+      const repo = this.dataSource.getRepository(UIPackage);
+      const pkg = await repo.findOne({
+        where: { id: req.params.id, tenant: { id: req.tenant!.id } },
+      });
+      if (!pkg) {
+        return res.status(404).json({ error: 'UI entity not found' });
+      }
+
+      pkg.publishedVersion = generateVersion();
+      pkg.publishedCode = pkg.code;
+      pkg.publishedCodeBlob = pkg.codeBlob;
+      pkg.publishedDependencies = pkg.dependencies ?? [];
+      pkg.publishedFileExtension = pkg.fileExtension;
+      pkg.publishedAt = new Date();
+      await repo.save(pkg);
+
+      await publishedCache.del(this.registryCacheKey(req.tenant!.id, pkg.name, 'latest'));
+      await publishedCache.del(this.registryCacheKey(req.tenant!.id, pkg.name, pkg.version));
 
       return res.json(this.serialize(pkg));
     } catch (error) {
@@ -295,6 +329,15 @@ export class UIEntityController {
     await revRepo.save(revision);
   }
 
+  private registryCacheKey(tenantId: string, name: string, version: string) {
+    return `registry:tenant:${tenantId}:${encodeURIComponent(name)}:${version}`;
+  }
+
+  private async clearPublishedCache(pkg: UIPackage, tenantId: string) {
+    await publishedCache.del(this.registryCacheKey(tenantId, pkg.name, 'latest'));
+    await publishedCache.del(this.registryCacheKey(tenantId, pkg.name, pkg.version));
+  }
+
   private serialize(pkg: UIPackage) {
     return {
       id: pkg.id,
@@ -304,6 +347,9 @@ export class UIEntityController {
       codeBlob: pkg.codeBlob,
       dependencies: pkg.dependencies ?? [],
       fileExtension: pkg.fileExtension,
+      draftVersion: pkg.draftVersion,
+      publishedVersion: pkg.publishedVersion ?? undefined,
+      publishedAt: pkg.publishedAt ?? undefined,
       createdAt: pkg.createdAt,
       updatedAt: pkg.updatedAt,
     };

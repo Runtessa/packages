@@ -13,8 +13,6 @@ import { Dispatcher } from "./app/controllers/Dispatcher";
 import { AuthGuard } from "./app/middleware/AuthGuard";
 import { ContextMiddleware, OptionalContextMiddleware } from "./app/middleware/ContextMiddleware";
 import { AdminController } from "./app/controllers/AdminController";
-import { TenantStage } from "./entities/Tenant";
-import { TenantRequest } from "./types/RequestContext";
 import { RegistryController } from "./app/controllers/RegistryController";
 import { ModuleController } from "./app/controllers/ModuleController";
 import { UIEntityController } from "./app/controllers/UIEntityController";
@@ -114,8 +112,6 @@ const bootstrap = async () => {
   app.all("*", contextMiddleware, authGuard, dispatcher.handle);
 
   app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
-    const tenantStage =
-      (req as TenantRequest).tenant?.stage ?? res.locals?.tenantStage;
     const isAppError = err instanceof AppError;
     const status = isAppError ? err.status : 500;
     const payload: Record<string, unknown> = {
@@ -125,9 +121,10 @@ const bootstrap = async () => {
         : {}),
     };
 
-    if (tenantStage === TenantStage.DEV) {
+    const isDev = process.env.NODE_ENV !== "production";
+    if (isDev) {
       payload.stack = err.stack;
-    } else if (tenantStage === TenantStage.PROD && status >= 500) {
+    } else if (status >= 500) {
       payload.error = "Internal server error";
     }
 

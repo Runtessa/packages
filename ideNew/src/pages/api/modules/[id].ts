@@ -5,6 +5,8 @@ import { CoreDataSource } from '@/lib/core-db';
 import { HttpMethod, ModuleEntity } from '@/lib/entities/Module';
 import { ModuleRevision } from '@/lib/entities/ModuleRevision';
 import { resolveTenant } from '@/lib/tenancy';
+import redis from '@/lib/redis';
+import { generateVersion } from '@/lib/version';
 
 const normalizeMethod = (raw: unknown): HttpMethod => {
   if (typeof raw !== 'string') {
@@ -53,6 +55,9 @@ const serialize = (mod: ModuleEntity) => ({
   method: mod.method,
   code: mod.code,
   fileExtension: mod.fileExtension,
+  draftVersion: mod.draftVersion,
+  publishedVersion: mod.publishedVersion ?? undefined,
+  publishedAt: mod.publishedAt ?? undefined,
   createdAt: mod.createdAt,
   updatedAt: mod.updatedAt,
 });
@@ -133,6 +138,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     mod.method = nextMethod;
     mod.code = nextCode;
     mod.fileExtension = nextExt;
+    mod.draftVersion = generateVersion();
     await repo.save(mod);
 
     res.status(200).json(serialize(mod));
@@ -148,6 +154,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       return;
     }
     await createRevision(mod, tenant, user.id, 'delete');
+    const method = (mod.publishedMethod ?? mod.method) as HttpMethod;
+    await redis.del(`module:published:${tenant.id}:${method}`);
     await repo.remove(mod);
     res.status(204).end();
     return;

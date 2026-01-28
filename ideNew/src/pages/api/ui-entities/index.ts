@@ -4,6 +4,7 @@ import { requireUser } from '@/lib/auth';
 import { CoreDataSource } from '@/lib/core-db';
 import { UIPackage } from '@/lib/entities/UIEntities';
 import { resolveTenant } from '@/lib/tenancy';
+import { generateVersion } from '@/lib/version';
 
 const normalizeName = (raw: unknown): string => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -66,6 +67,9 @@ const serialize = (pkg: UIPackage) => ({
   codeBlob: pkg.codeBlob,
   dependencies: pkg.dependencies ?? [],
   fileExtension: pkg.fileExtension,
+  draftVersion: pkg.draftVersion,
+  publishedVersion: pkg.publishedVersion ?? undefined,
+  publishedAt: pkg.publishedAt ?? undefined,
   createdAt: pkg.createdAt,
   updatedAt: pkg.updatedAt,
 });
@@ -110,6 +114,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       codeBlob: compiledCode,
       dependencies: normalizedDeps,
       fileExtension,
+      draftVersion: generateVersion(),
       tenant,
     });
     await repo.save(pkg);

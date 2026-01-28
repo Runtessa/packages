@@ -4,6 +4,7 @@ import { requireUser } from '@/lib/auth';
 import { CoreDataSource } from '@/lib/core-db';
 import { HttpMethod, ModuleEntity } from '@/lib/entities/Module';
 import { resolveTenant } from '@/lib/tenancy';
+import { generateVersion } from '@/lib/version';
 
 const normalizeMethod = (raw: unknown): HttpMethod => {
   if (typeof raw !== 'string') {
@@ -52,6 +53,9 @@ const serialize = (mod: ModuleEntity) => ({
   method: mod.method,
   code: mod.code,
   fileExtension: mod.fileExtension,
+  draftVersion: mod.draftVersion,
+  publishedVersion: mod.publishedVersion ?? undefined,
+  publishedAt: mod.publishedAt ?? undefined,
   createdAt: mod.createdAt,
   updatedAt: mod.updatedAt,
 });
@@ -92,6 +96,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       method: normalizedMethod,
       code: normalizedCode,
       fileExtension,
+      draftVersion: generateVersion(),
       tenant,
     });
     await repo.save(mod);

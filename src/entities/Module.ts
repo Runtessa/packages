@@ -35,6 +35,27 @@ export class ModuleEntity {
   @Column({ name: 'file_extension', default: 'js' })
   fileExtension!: string;
 
+  @Column({ name: 'draft_version', default: '' })
+  draftVersion!: string;
+
+  @Column({ name: 'published_version', type: 'varchar', nullable: true })
+  publishedVersion?: string | null;
+
+  @Column({ name: 'published_route_path', type: 'varchar', nullable: true })
+  publishedRoutePath?: string | null;
+
+  @Column({ name: 'published_method', type: 'enum', enum: HttpMethod, nullable: true })
+  publishedMethod?: HttpMethod | null;
+
+  @Column({ name: 'published_code', type: 'text', nullable: true })
+  publishedCode?: string | null;
+
+  @Column({ name: 'published_file_extension', type: 'varchar', nullable: true })
+  publishedFileExtension?: string | null;
+
+  @Column({ name: 'published_at', type: 'timestamptz', nullable: true })
+  publishedAt?: Date | null;
+
   @ManyToOne(() => Tenant, (tenant) => tenant.modules, { onDelete: 'CASCADE' })
   tenant!: Tenant;
 

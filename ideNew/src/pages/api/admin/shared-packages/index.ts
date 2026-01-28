@@ -4,6 +4,7 @@ import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
 import { GlobalUIPackage } from '@/lib/entities/GlobalUIPackage';
 import { GlobalUIPackageFile } from '@/lib/entities/GlobalUIPackageFile';
+import { generateVersion } from '@/lib/version';
 
 const normalizeName = (raw: unknown): string => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -69,6 +70,9 @@ const serialize = (pkg: GlobalUIPackage) => ({
   codeBlob: pkg.codeBlob,
   dependencies: pkg.dependencies ?? [],
   fileExtension: pkg.fileExtension,
+  draftVersion: pkg.draftVersion,
+  publishedVersion: pkg.publishedVersion ?? undefined,
+  publishedAt: pkg.publishedAt ?? undefined,
   createdAt: pkg.createdAt,
   updatedAt: pkg.updatedAt,
 });
@@ -120,6 +124,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       codeBlob: compiledCode,
       dependencies: normalizedDeps,
       fileExtension,
+      draftVersion: generateVersion(),
     });
     await repo.save(pkg);
 

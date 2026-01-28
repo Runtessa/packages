@@ -1,7 +1,6 @@
 import vm from 'vm';
 import { SandboxAdapters } from './AdapterFactory';
 import { AccountRole } from '../entities/Account';
-import { TenantStage } from '../entities/Tenant';
 import { AppError } from '../common/AppError';
 
 export interface SandboxRequestContext {
@@ -14,7 +13,6 @@ export interface SandboxRequestContext {
   tenant: {
     id: string;
     hostname: string;
-    stage: TenantStage;
     resourceConfig: {
       memory: number;
       timeout: number;
@@ -43,7 +41,7 @@ export class SandboxRunner {
 
   async run(code: string, context: SandboxContext): Promise<SandboxResult> {
     const safeRequest = this.sanitizeRequest(context.request);
-    const effectiveTimeout = this.resolveTimeout(safeRequest.tenant.stage, safeRequest.tenant.resourceConfig);
+    const effectiveTimeout = this.resolveTimeout(safeRequest.tenant.resourceConfig);
 
     const frozenAdapters: SandboxAdapters = context.adapters;
     const frozenRequest = Object.freeze({ ...safeRequest }) as SandboxRequestContext;
@@ -125,7 +123,6 @@ export class SandboxRunner {
       tenant: {
         id: request.tenant.id,
         hostname: request.tenant.hostname,
-        stage: request.tenant.stage,
         resourceConfig: { ...request.tenant.resourceConfig },
       },
       account: request.account
@@ -138,10 +135,8 @@ export class SandboxRunner {
     };
   }
 
-  private resolveTimeout(stage: TenantStage, resourceConfig: { memory: number; timeout: number }): number {
-    const stageCeiling =
-      stage === TenantStage.DEV ? 30_000 : stage === TenantStage.PROD ? 5_000 : 15_000;
-    const configured = resourceConfig?.timeout ?? stageCeiling;
-    return Math.min(configured, stageCeiling, this.maxTimeoutMs);
+  private resolveTimeout(resourceConfig: { memory: number; timeout: number }): number {
+    const configured = resourceConfig?.timeout ?? 5_000;
+    return Math.min(configured, this.maxTimeoutMs);
   }
 }

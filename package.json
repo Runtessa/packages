@@ -5,9 +5,7 @@
   "scripts": {
     "build": "tsc",
     "build:front": "cd kernel && npm run build && cd ..",
-    "start": "node dist/server.js",
-    "dev": "concurrently -k -n server,client -c cyan,magenta \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "nodemon --watch src --ext ts --exec ts-node src/server.ts",
+    "start": "npm run build && npm run build:front && node dist/server.js",
     "seed": "ts-node src/seed.ts",
     "seed-packages": "ts-node src/seed-packages.ts",
     "dump": "node dump-project.js"

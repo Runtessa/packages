@@ -86,6 +86,12 @@ export const ApiRouter = (
     moduleController.update
   );
   router.post(
+    "/modules/:id/publish",
+    contextMiddleware,
+    authGuard,
+    moduleController.publish
+  );
+  router.post(
     "/modules/:id/rollback/:revisionId",
     contextMiddleware,
     authGuard,
@@ -127,6 +133,12 @@ export const ApiRouter = (
     contextMiddleware,
     authGuard,
     uiEntityController.update
+  );
+  router.post(
+    "/ui-entities/:id/publish",
+    contextMiddleware,
+    authGuard,
+    uiEntityController.publish
   );
   router.post(
     "/ui-entities/:id/rollback/:revisionId",

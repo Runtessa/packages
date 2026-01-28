@@ -11,12 +11,6 @@ import { Account } from "./Account";
 import { Secret } from "./Secret";
 import { ModuleEntity } from "./Module";
 
-export enum TenantStage {
-  DEV = "DEV",
-  STAGING = "STAGING",
-  PROD = "PROD",
-}
-
 @Entity({ name: "tenants" })
 @Unique(["hostname"])
 export class Tenant {
@@ -25,9 +19,6 @@ export class Tenant {
 
   @Column()
   hostname!: string;
-
-  @Column({ type: "enum", enum: TenantStage, default: TenantStage.DEV })
-  stage!: TenantStage;
 
   @Column({ type: "jsonb", default: () => '\'{"memory":512,"timeout":5000}\'' })
   resourceConfig!: {

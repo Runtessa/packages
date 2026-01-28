@@ -46,12 +46,15 @@
           return;
         }
 
-        if (tenantHost) {
+        if (window.fetch) {
           var originalFetch = window.fetch.bind(window);
           window.fetch = function (input, init) {
             var nextInit = init || {};
             var headers = new Headers(nextInit.headers || {});
-            headers.set("X-Tenant-Host", tenantHost);
+            if (tenantHost) {
+              headers.set("X-Tenant-Host", tenantHost);
+            }
+            headers.set("X-Dev-Preview", "true");
             nextInit.headers = headers;
             return originalFetch(input, nextInit);
           };

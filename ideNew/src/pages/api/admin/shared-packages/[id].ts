@@ -3,6 +3,8 @@ import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
 import { GlobalUIPackage } from '@/lib/entities/GlobalUIPackage';
+import redis from '@/lib/redis';
+import { generateVersion } from '@/lib/version';
 
 const normalizeName = (raw: unknown): string => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -68,6 +70,9 @@ const serialize = (pkg: GlobalUIPackage) => ({
   codeBlob: pkg.codeBlob,
   dependencies: pkg.dependencies ?? [],
   fileExtension: pkg.fileExtension,
+  draftVersion: pkg.draftVersion,
+  publishedVersion: pkg.publishedVersion ?? undefined,
+  publishedAt: pkg.publishedAt ?? undefined,
   createdAt: pkg.createdAt,
   updatedAt: pkg.updatedAt,
 });
@@ -137,6 +142,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     pkg.codeBlob = nextCompiled;
     pkg.dependencies = nextDeps;
     pkg.fileExtension = nextExt;
+    pkg.draftVersion = generateVersion();
     await repo.save(pkg);
 
     res.status(200).json({ package: serialize(pkg) });
@@ -153,6 +159,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       res.status(404).json({ error: 'Shared package not found' });
       return;
     }
+    const encoded = encodeURIComponent(pkg.name);
+    await redis.del(`registry:global:${encoded}:latest`, `registry:global:${encoded}:${pkg.version}`);
     await repo.remove(pkg);
     res.status(204).end();
     return;

@@ -5,6 +5,7 @@ import { CoreDataSource } from '@/lib/core-db';
 import { ModuleEntity } from '@/lib/entities/Module';
 import { ModuleRevision } from '@/lib/entities/ModuleRevision';
 import { resolveTenant } from '@/lib/tenancy';
+import { generateVersion } from '@/lib/version';
 
 const serialize = (mod: ModuleEntity) => ({
   id: mod.id,
@@ -12,6 +13,9 @@ const serialize = (mod: ModuleEntity) => ({
   method: mod.method,
   code: mod.code,
   fileExtension: mod.fileExtension,
+  draftVersion: mod.draftVersion,
+  publishedVersion: mod.publishedVersion ?? undefined,
+  publishedAt: mod.publishedAt ?? undefined,
   createdAt: mod.createdAt,
   updatedAt: mod.updatedAt,
 });
@@ -88,6 +92,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   mod.method = revision.method;
   mod.code = revision.code;
   mod.fileExtension = revision.fileExtension;
+  mod.draftVersion = generateVersion();
   await repo.save(mod);
 
   res.status(200).json(serialize(mod));

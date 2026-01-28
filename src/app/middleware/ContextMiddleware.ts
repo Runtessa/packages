@@ -53,7 +53,6 @@ export const ContextMiddleware =
       const tenant = await resolveTenant(dataSource, req, res, { allowMissing: false });
       if (!tenant) return;
       req.tenant = tenant;
-      res.locals.tenantStage = tenant.stage;
       next();
     } catch (error) {
       next(error);
@@ -67,7 +66,6 @@ export const OptionalContextMiddleware =
       const tenant = await resolveTenant(dataSource, req, res, { allowMissing: true });
       if (tenant) {
         req.tenant = tenant;
-        res.locals.tenantStage = tenant.stage;
       }
       next();
     } catch (error) {

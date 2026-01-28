@@ -16,34 +16,38 @@ export const AuthGuard =
       if (!req.tenant) {
         throw new AppError("Tenant context missing", 400);
       }
-console.log(req.path,req.tenant.restrictRoutes)
-      if (!req.tenant.restrictRoutes?.includes(req.path)) {
-        return next();
-      }
-
+      const requiresAuth = Boolean(req.tenant.restrictRoutes?.includes(req.path));
       const header = req.headers["authorization"];
-      if (!header || !header.toLowerCase().startsWith("bearer ")) {
+      const hasBearer =
+        typeof header === "string" && header.toLowerCase().startsWith("bearer ");
+
+      let payload = null as ReturnType<typeof cryptoService.verifyToken> | null;
+      if (hasBearer) {
+        const token = header.substring(7);
+        payload = cryptoService.verifyToken(token);
+        if (payload && payload.tenantId === req.tenant.id) {
+          req.tokenPayload = payload;
+        } else if (requiresAuth) {
+          return res.status(401).json({ error: "Invalid token" });
+        }
+      } else if (requiresAuth) {
         return res.status(401).json({ error: "Authorization header missing" });
       }
 
-      const token = header.substring(7);
-      const payload = cryptoService.verifyToken(token);
-      if (!payload || payload.tenantId !== req.tenant.id) {
-        return res.status(401).json({ error: "Invalid token" });
+      if (requiresAuth && payload) {
+        const accountRepo = dataSource.getRepository(Account);
+        const account = await accountRepo.findOne({
+          where: { id: payload.sub },
+          relations: ["tenant"],
+        });
+
+        if (!account || account.tenant.id !== req.tenant.id) {
+          return res.status(403).json({ error: "Account not part of tenant" });
+        }
+
+        req.account = account;
       }
 
-      const accountRepo = dataSource.getRepository(Account);
-      const account = await accountRepo.findOne({
-        where: { id: payload.sub },
-        relations: ["tenant"],
-      });
-
-      if (!account || account.tenant.id !== req.tenant.id) {
-        return res.status(403).json({ error: "Account not part of tenant" });
-      }
-
-      req.account = account;
-      req.tokenPayload = payload;
       next();
     } catch (error) {
       next(error);

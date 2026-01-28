@@ -2,7 +2,7 @@ import 'dotenv/config';
 import 'reflect-metadata';
 import { AppDataSource, initializeDataSource } from './core/datasource';
 import { CryptoService } from './core/security/CryptoService';
-import { Tenant, TenantStage } from './entities/Tenant';
+import { Tenant } from './entities/Tenant';
 import { Account, AccountRole } from './entities/Account';
 import { Secret } from './entities/Secret';
 import { ModuleEntity, HttpMethod } from './entities/Module';
@@ -26,7 +26,6 @@ const cryptoService = new CryptoService(getKeyFromEnv('ENCRYPTION_KEY', 32), get
 const seedTenants = [
   {
     hostname: 'dev.internal.local',
-    stage: TenantStage.DEV,
     resourceConfig: { memory: 512, timeout: 30000 },
     adminEmail: 'admin@dev.internal.local',
     secrets: {
@@ -36,7 +35,6 @@ const seedTenants = [
   },
   {
     hostname: 'prod.internal.local',
-    stage: TenantStage.PROD,
     resourceConfig: { memory: 1024, timeout: 5000 },
     adminEmail: 'admin@prod.internal.local',
     secrets: {
@@ -67,14 +65,12 @@ const seedTenant = async (seed: (typeof seedTenants)[number]) => {
   if (!tenant) {
     tenant = tenantRepo.create({
       hostname: seed.hostname,
-      stage: seed.stage,
       resourceConfig: seed.resourceConfig,
       isSuspended: false,
     });
     await tenantRepo.save(tenant);
     console.log(`Created tenant ${seed.hostname}`);
   } else {
-    tenant.stage = seed.stage;
     tenant.resourceConfig = seed.resourceConfig;
     tenant.isSuspended = false;
     await tenantRepo.save(tenant);
@@ -121,7 +117,7 @@ const seedTenant = async (seed: (typeof seedTenants)[number]) => {
     module.exports = async function handler(req, adapters) {
       return {
         statusCode: 200,
-        body: { message: 'Hello from ${seed.hostname}', stage: '${seed.stage}' }
+        body: { message: 'Hello from ${seed.hostname}' }
       };
     };
   `;

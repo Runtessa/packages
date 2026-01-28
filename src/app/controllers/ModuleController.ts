@@ -1,6 +1,8 @@
 import { NextFunction, Response } from 'express';
 import { DataSource } from 'typeorm';
 import { AppError } from '../../common/AppError';
+import { generateVersion } from '../../common/version';
+import { publishedCache } from '../../core/publishedCache';
 import { HttpMethod, ModuleEntity } from '../../entities/Module';
 import { ModuleRevision } from '../../entities/ModuleRevision';
 import { TenantRequest } from '../../types/RequestContext';
@@ -64,6 +66,7 @@ export class ModuleController {
         method: normalizedMethod,
         code: codeBody,
         fileExtension,
+        draftVersion: generateVersion(),
         tenant: req.tenant!,
       });
       await repo.save(mod);
@@ -111,6 +114,7 @@ export class ModuleController {
       mod.method = nextMethod;
       mod.code = nextCode;
       mod.fileExtension = nextExt;
+      mod.draftVersion = generateVersion();
       await repo.save(mod);
 
       return res.json(this.serialize(mod));
@@ -130,6 +134,7 @@ export class ModuleController {
         return res.status(404).json({ error: 'Module not found' });
       }
       await this.createRevision(req, mod, 'delete');
+      await this.clearPublishedCache(mod, req.tenant!.id);
       await repo.remove(mod);
       return res.status(204).send();
     } catch (error) {
@@ -197,7 +202,39 @@ export class ModuleController {
       mod.method = revision.method;
       mod.code = revision.code;
       mod.fileExtension = revision.fileExtension;
+      mod.draftVersion = generateVersion();
       await repo.save(mod);
+
+      return res.json(this.serialize(mod));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  publish = async (req: TenantRequest, res: Response, next: NextFunction) => {
+    try {
+      this.ensureTenant(req);
+      const repo = this.dataSource.getRepository(ModuleEntity);
+      const mod = await repo.findOne({
+        where: { id: req.params.id, tenant: { id: req.tenant!.id } },
+      });
+      if (!mod) {
+        return res.status(404).json({ error: 'Module not found' });
+      }
+
+      const previousPublishedMethod = mod.publishedMethod ?? mod.method;
+      const nextPublishedMethod = mod.method;
+
+      mod.publishedVersion = generateVersion();
+      mod.publishedRoutePath = mod.routePath;
+      mod.publishedMethod = mod.method;
+      mod.publishedCode = mod.code;
+      mod.publishedFileExtension = mod.fileExtension;
+      mod.publishedAt = new Date();
+      await repo.save(mod);
+
+      await publishedCache.del(this.moduleCacheKey(req.tenant!.id, previousPublishedMethod));
+      await publishedCache.del(this.moduleCacheKey(req.tenant!.id, nextPublishedMethod));
 
       return res.json(this.serialize(mod));
     } catch (error) {
@@ -264,6 +301,15 @@ export class ModuleController {
     await revRepo.save(revision);
   }
 
+  private moduleCacheKey(tenantId: string, method: HttpMethod) {
+    return `module:published:${tenantId}:${method}`;
+  }
+
+  private async clearPublishedCache(mod: ModuleEntity, tenantId: string) {
+    const method = mod.publishedMethod ?? mod.method;
+    await publishedCache.del(this.moduleCacheKey(tenantId, method));
+  }
+
   private serialize(mod: ModuleEntity) {
     return {
       id: mod.id,
@@ -271,6 +317,9 @@ export class ModuleController {
       method: mod.method,
       code: mod.code,
       fileExtension: mod.fileExtension,
+      draftVersion: mod.draftVersion,
+      publishedVersion: mod.publishedVersion ?? undefined,
+      publishedAt: mod.publishedAt ?? undefined,
       createdAt: mod.createdAt,
       updatedAt: mod.updatedAt,
     };

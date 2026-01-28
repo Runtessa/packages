@@ -34,6 +34,27 @@ export class GlobalUIPackage {
   @Column({ name: 'file_extension', default: 'jsx' })
   fileExtension!: string;
 
+  @Column({ name: 'draft_version', default: '' })
+  draftVersion!: string;
+
+  @Column({ name: 'published_version', type: 'varchar', nullable: true })
+  publishedVersion?: string | null;
+
+  @Column({ name: 'published_code', type: 'text', nullable: true })
+  publishedCode?: string | null;
+
+  @Column({ name: 'published_code_blob', type: 'text', nullable: true })
+  publishedCodeBlob?: string | null;
+
+  @Column({ name: 'published_dependencies', type: 'jsonb', nullable: true })
+  publishedDependencies?: string[] | null;
+
+  @Column({ name: 'published_file_extension', type: 'varchar', nullable: true })
+  publishedFileExtension?: string | null;
+
+  @Column({ name: 'published_at', type: 'timestamptz', nullable: true })
+  publishedAt?: Date | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 

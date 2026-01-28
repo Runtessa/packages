@@ -5,6 +5,7 @@ import { CoreDataSource } from '@/lib/core-db';
 import { UIPackage } from '@/lib/entities/UIEntities';
 import { UIPackageRevision } from '@/lib/entities/UIPackageRevision';
 import { resolveTenant } from '@/lib/tenancy';
+import { generateVersion } from '@/lib/version';
 
 const serialize = (pkg: UIPackage) => ({
   id: pkg.id,
@@ -14,6 +15,9 @@ const serialize = (pkg: UIPackage) => ({
   codeBlob: pkg.codeBlob,
   dependencies: pkg.dependencies ?? [],
   fileExtension: pkg.fileExtension,
+  draftVersion: pkg.draftVersion,
+  publishedVersion: pkg.publishedVersion ?? undefined,
+  publishedAt: pkg.publishedAt ?? undefined,
   createdAt: pkg.createdAt,
   updatedAt: pkg.updatedAt,
 });
@@ -90,6 +94,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   pkg.codeBlob = revision.codeBlob;
   pkg.dependencies = revision.dependencies ?? [];
   pkg.fileExtension = revision.fileExtension;
+  pkg.draftVersion = generateVersion();
   await repo.save(pkg);
 
   res.status(200).json(serialize(pkg));
