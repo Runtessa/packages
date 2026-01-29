@@ -4,6 +4,12 @@ import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
 import { GlobalUIPackage } from '@/lib/entities/GlobalUIPackage';
 import { GlobalUIPackageFile } from '@/lib/entities/GlobalUIPackageFile';
+import {
+  getTailwindPackageName,
+  isTailwindPackageName,
+  shouldBuildTailwind,
+} from '@/lib/tailwindBuilder';
+import { buildTailwindCssFromFiles, upsertGlobalTailwindPackage } from '@/lib/shared-tailwind';
 
 const normalizePath = (raw: unknown) => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -82,6 +88,21 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       content,
     });
     await fileRepo.save(file);
+    if (
+      shouldBuildTailwind(project.fileExtension) &&
+      !isTailwindPackageName(project.name)
+    ) {
+      const files = await fileRepo.find({
+        where: { project: { id: project.id } },
+        order: { path: 'ASC' },
+      });
+      const css = await buildTailwindCssFromFiles(files);
+      await upsertGlobalTailwindPackage(
+        getTailwindPackageName(project.name),
+        project.version,
+        css
+      );
+    }
     res.status(201).json({ file: serialize(file) });
     return;
   }

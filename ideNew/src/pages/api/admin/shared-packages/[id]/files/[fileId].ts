@@ -3,6 +3,12 @@ import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
 import { GlobalUIPackageFile } from '@/lib/entities/GlobalUIPackageFile';
+import {
+  getTailwindPackageName,
+  isTailwindPackageName,
+  shouldBuildTailwind,
+} from '@/lib/tailwindBuilder';
+import { buildTailwindCssFromFiles, upsertGlobalTailwindPackage } from '@/lib/shared-tailwind';
 
 const normalizePath = (raw: unknown) => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -82,12 +88,44 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     file.fileExtension = nextExt;
     file.content = nextContent;
     await fileRepo.save(file);
+    if (
+      file.project &&
+      shouldBuildTailwind(file.project.fileExtension) &&
+      !isTailwindPackageName(file.project.name)
+    ) {
+      const files = await fileRepo.find({
+        where: { project: { id: file.project.id } },
+        order: { path: 'ASC' },
+      });
+      const css = await buildTailwindCssFromFiles(files);
+      await upsertGlobalTailwindPackage(
+        getTailwindPackageName(file.project.name),
+        file.project.version,
+        css
+      );
+    }
     res.status(200).json({ file: serialize(file) });
     return;
   }
 
   if (req.method === 'DELETE') {
     await fileRepo.remove(file);
+    if (
+      file.project &&
+      shouldBuildTailwind(file.project.fileExtension) &&
+      !isTailwindPackageName(file.project.name)
+    ) {
+      const files = await fileRepo.find({
+        where: { project: { id: file.project.id } },
+        order: { path: 'ASC' },
+      });
+      const css = await buildTailwindCssFromFiles(files);
+      await upsertGlobalTailwindPackage(
+        getTailwindPackageName(file.project.name),
+        file.project.version,
+        css
+      );
+    }
     res.status(204).end();
     return;
   }

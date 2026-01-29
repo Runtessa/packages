@@ -3,7 +3,14 @@ import { UIPackage } from '@/lib/entities/UIEntities';
 import redis from '@/lib/redis';
 import { generateVersion } from '@/lib/version';
 import { ILike, In } from 'typeorm';
-import { isTailwindConfigName, parseTailwindConfig } from '@/lib/tailwindBuilder';
+import {
+  buildTailwindCss,
+  getTailwindPackageName,
+  isTailwindConfigName,
+  isTailwindPackageName,
+  parseTailwindConfig,
+  shouldBuildTailwind,
+} from '@/lib/tailwindBuilder';
 
 export const registryCacheKey = (tenantId: string, name: string, version: string) =>
   `registry:tenant:${tenantId}:${encodeURIComponent(name)}:${version}`;
@@ -44,6 +51,7 @@ export const upsertTailwindPackage = async (
     pkg.draftVersion = generateVersion();
   }
   await repo.save(pkg);
+  await clearRegistryCache(tenantId, name, version);
   return pkg;
 };
 
@@ -109,4 +117,26 @@ export const loadTailwindConfigForTenant = async (tenantId: string) => {
   if (!configPkg) return null;
   const source = configPkg.code ?? configPkg.codeBlob ?? '';
   return parseTailwindConfig(source);
+};
+
+export const rebuildTailwindPackagesForTenant = async (tenantId: string) => {
+  const repo = CoreDataSource.getRepository(UIPackage);
+  const packages = await repo.find({ where: { tenant: { id: tenantId } } });
+  const config = await loadTailwindConfigForTenant(tenantId);
+  const buildTargets = packages.filter(
+    (pkg) =>
+      !isTailwindPackageName(pkg.name) &&
+      !isTailwindConfigName(pkg.name) &&
+      shouldBuildTailwind(pkg.fileExtension)
+  );
+  for (const pkg of buildTargets) {
+    const source = pkg.code ?? pkg.codeBlob ?? '';
+    const css = await buildTailwindCss(source, pkg.fileExtension, config ?? undefined);
+    await upsertTailwindPackage(
+      tenantId,
+      getTailwindPackageName(pkg.name),
+      pkg.version,
+      css
+    );
+  }
 };

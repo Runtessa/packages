@@ -14,7 +14,11 @@ import {
   shouldBuildTailwind,
   stripTailwindDependency,
 } from '@/lib/tailwindBuilder';
-import { loadTailwindConfigForTenant, upsertTailwindPackage } from '@/lib/ui-entity-tailwind';
+import {
+  loadTailwindConfigForTenant,
+  rebuildTailwindPackagesForTenant,
+  upsertTailwindPackage,
+} from '@/lib/ui-entity-tailwind';
 
 const normalizeName = (raw: unknown): string => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -142,6 +146,9 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     await repo.save(pkg);
     if (usesTailwind) {
       await upsertTailwindPackage(tenant.id, tailwindName, normalizedVersion, tailwindCss);
+    }
+    if (isTailwindConfigName(normalizedName)) {
+      await rebuildTailwindPackagesForTenant(tenant.id);
     }
     res.status(201).json(serialize(pkg));
     return;

@@ -1,85 +1,105 @@
 import '@/lib/monaco';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import dynamic from 'next/dynamic';
-import Image from 'next/image';
-import Link from 'next/link';
 import Script from 'next/script';
 import { useRouter } from 'next/router';
 import type * as monaco from 'monaco-editor';
-import {
-  FiChevronLeft,
-  FiChevronRight,
-  FiClock,
-  FiEye,
-  FiEyeOff,
-  FiFolder,
-  FiFlag,
-  FiCornerDownLeft,
-  FiChevronsRight,
-  FiRefreshCw,
-  FiRotateCcw,
-  FiSearch,
-} from 'react-icons/fi';
-import FileExplorer, { ExplorerNode } from '@/components/FileExplorer';
-import { Modal } from '@/components/ui/Modal';
-import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
-import { TextArea } from '@/components/ui/TextArea';
-import { Button } from '@/components/ui/Button';
-import { FormLayout } from '@/components/ui/FormLayout';
+import { ExplorerNode } from '@/components/FileExplorer';
 import { useToast } from '@/components/ui/Toast';
 import { useSessionToken } from '@/lib/client/session';
 import { getSelectedTenantHost } from '@/lib/client/tenant';
 import branding from '@/branding.json';
-
-const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
-const MonacoDiffEditor = dynamic(
-  () => import('@monaco-editor/react').then((mod) => mod.DiffEditor),
-  { ssr: false }
-);
+import { EditorHeader } from '@/components/editor/EditorHeader';
+import { EditorSidebar } from '@/components/editor/EditorSidebar';
+import { EditorExplorerPanel } from '@/components/editor/EditorExplorerPanel';
+import { EditorHistoryPanel } from '@/components/editor/EditorHistoryPanel';
+import { EditorSearchPanel } from '@/components/editor/EditorSearchPanel';
+import { EditorStagingPanel } from '@/components/editor/EditorStagingPanel';
+import { EditorBottomBar } from '@/components/editor/EditorBottomBar';
+import { EditorTabBar } from '@/components/editor/EditorTabBar';
+import { EditorTabContextMenu } from '@/components/editor/EditorTabContextMenu';
+import { EditorWorkspace } from '@/components/editor/EditorWorkspace';
+import { EditorModals } from '@/components/editor/EditorModals';
+import {
+  DEFAULT_CSS_CODE,
+  DEFAULT_LEFT_PANEL_WIDTH,
+  DEFAULT_MODULE_CODE,
+  DEFAULT_PREVIEW_PORT,
+  DEFAULT_SHARED_FILE,
+  DEFAULT_SPLIT_RATIO,
+  DEFAULT_UI_EXTENSION,
+  DEFAULT_UI_CODE,
+  EDITOR_NAV_ITEMS,
+  FOLDER_STORAGE_KEY,
+  HISTORY_PAGE_SIZE,
+  LANGUAGE_OPTIONS,
+  LEFT_PANEL_STORAGE_KEY,
+  MAX_LEFT_PANEL_WIDTH,
+  MIN_LEFT_PANEL_WIDTH,
+  MIN_SPLIT_PX,
+  MODULE_EXTENSION,
+  PREVIEW_PORT_STORAGE_KEY,
+  SHARED_FOLDER_STORAGE_KEY,
+  SPLIT_RATIO_STORAGE_KEY,
+} from '@/components/editor/constants';
+import {
+  buildExplorerTree,
+  buildPersistedContentMap,
+  buildRoutePath,
+  buildSearchPattern,
+  buildSearchResults,
+  buildSharedBundle,
+  buildSharedContentMap,
+  buildSharedTree,
+  buildUiName,
+  coerceModuleExtension,
+  coerceUiExtension,
+  compileWithBabel,
+  detectLanguage,
+  escapeRegExp,
+  extractFileExtension,
+  findPathById,
+  formatHistoryTimestamp,
+  getFileIdFromUriPath,
+  getRevisionContent,
+  getScopeInfo,
+  getSharedNodeId,
+  getSharedPathFromNodes,
+  normalizeSharedPath,
+  parseDependencies,
+  parseFilterRegex,
+  pathStartsWith,
+  resolveSharedExtension,
+  replaceAtRange,
+  splitRoutePath,
+  splitSharedPath,
+  splitUiName,
+} from '@/components/editor/utils';
+import type {
+  ActiveFile,
+  DeleteTarget,
+  EditorLanguage,
+  FolderOverride,
+  FolderFormState,
+  HistoryItem,
+  ModuleDto,
+  ModuleFormState,
+  NodeMeta,
+  PanelScope,
+  PreviewTarget,
+  SearchMatchRange,
+  SearchResult,
+  SharedFileDto,
+  SharedFileFormState,
+  SharedProjectDto,
+  StagingItem,
+  TabContextMenuState,
+  UiFormState,
+  UIPackageDto,
+  ModuleRevisionDto,
+  UiRevisionDto,
+} from '@/components/editor/types';
 
 const CORE_API_BASE = process.env.NEXT_PUBLIC_CORE_API_URL?.trim() || '';
-
-type EditorLanguage =
-  | 'javascript'
-  | 'jsx'
-  | 'css'
-  | 'html'
-  | 'json'
-  | 'markdown'
-  | 'plaintext';
-
-type ActiveFile = {
-  id: string;
-  name: string;
-  language: EditorLanguage;
-  meta: NodeMeta | null;
-};
-
-type TabContextMenuState = {
-  x: number;
-  y: number;
-  fileId: string;
-};
-
-type SearchMatchRange = monaco.IRange;
-
-type SearchResult = {
-  id: string;
-  fileId: string;
-  fileName: string;
-  line: number;
-  column: number;
-  preview: string;
-  range: SearchMatchRange;
-};
-
-type SearchPattern = {
-  source: string;
-  isRegex: boolean;
-  regex: RegExp | null;
-  error: string | null;
-};
 
 declare global {
   interface Window {
@@ -89,846 +109,11 @@ declare global {
   }
 }
 
-type NodeMeta =
-  | {
-      kind: 'module';
-      backendId: string;
-      method: string;
-      routePath: string;
-      fileExtension?: string;
-    }
-  | {
-      kind: 'ui';
-      backendId: string;
-      name: string;
-      version: string;
-      dependencies: string[];
-      fileExtension?: string;
-    }
-  | {
-      kind: 'shared';
-      projectId: string;
-      fileId: string;
-      path: string;
-      fileExtension?: string;
-    };
-
-type PreviewTarget = {
-  kind: 'ui' | 'shared';
-  name: string;
-  version: string;
-};
-
-type ModuleDto = {
-  id: string;
-  routePath: string;
-  method: string;
-  code: string;
-  fileExtension?: string;
-  draftVersion?: string;
-  publishedVersion?: string;
-  publishedAt?: string;
-};
-
-type UIPackageDto = {
-  id: string;
-  name: string;
-  version: string;
-  code?: string;
-  codeBlob: string;
-  dependencies: string[];
-  fileExtension?: string;
-  draftVersion?: string;
-  publishedVersion?: string;
-  publishedAt?: string;
-};
-
-type SharedProjectDto = {
-  id: string;
-  name: string;
-  version: string;
-  entryPath: string;
-  dependencies: string[];
-  fileExtension?: string;
-  draftVersion?: string;
-  publishedVersion?: string;
-  publishedAt?: string;
-  createdAt?: string;
-  updatedAt?: string;
-};
-
-type SharedFileDto = {
-  id: string;
-  path: string;
-  fileExtension?: string;
-  content: string;
-  createdAt?: string;
-  updatedAt?: string;
-};
-
-type ModuleRevisionDto = {
-  id: string;
-  revision: number;
-  routePath: string;
-  method: string;
-  code: string;
-  fileExtension?: string;
-  action?: string;
-  createdAt: string;
-  createdBy?: string;
-};
-
-type UiRevisionDto = {
-  id: string;
-  revision: number;
-  name: string;
-  version: string;
-  code: string;
-  codeBlob: string;
-  dependencies: string[];
-  fileExtension?: string;
-  action?: string;
-  createdAt: string;
-  createdBy?: string;
-};
-
-type HistoryItem =
-  | (ModuleRevisionDto & { kind: 'module' })
-  | (UiRevisionDto & { kind: 'ui' });
-
 type HistoryResponse<T> = {
   items: T[];
   total: number;
   page: number;
   pageSize: number;
-};
-
-type StagingItem = {
-  id: string;
-  kind: 'module' | 'ui' | 'shared';
-  title: string;
-  draftVersion?: string;
-  publishedVersion?: string;
-  publishedAt?: string;
-  backendId?: string;
-  projectId?: string;
-  fileId?: string;
-  dirty?: boolean;
-};
-
-type ExplorerScope = 'modules' | 'ui';
-type PanelScope = 'modules' | 'ui' | 'shared';
-
-type FolderOverride = {
-  scope: ExplorerScope;
-  path: string[];
-};
-
-type ModuleFormState = {
-  routePath: string;
-  method: string;
-  fileExtension: string;
-  code: string;
-};
-
-type UiFormState = {
-  name: string;
-  version: string;
-  fileExtension: string;
-  dependencies: string;
-  code: string;
-};
-
-type FolderFormState = {
-  name: string;
-};
-
-type SharedFileFormState = {
-  path: string;
-  content: string;
-};
-
-const LANGUAGE_OPTIONS: { value: EditorLanguage; label: string }[] = [
-  { value: 'javascript', label: 'JavaScript' },
-  { value: 'jsx', label: 'JSX' },
-  { value: 'css', label: 'CSS' },
-  { value: 'html', label: 'HTML' },
-  { value: 'json', label: 'JSON' },
-  { value: 'markdown', label: 'Markdown' },
-  { value: 'plaintext', label: 'Plain Text' },
-];
-
-const EDITOR_NAV_ITEMS = [
-  { label: 'Editor', href: '/editor', match: '/editor' },
-  { label: 'Dashboard', href: '/dashboard', match: '/dashboard' },
-  { label: 'Docs', href: '/docs', match: '/docs' },
-  { label: 'Shared Projects', href: '/admin/shared-packages', match: '/admin/shared-packages' },
-  { label: 'Tenants', href: '/admin/tenants', match: '/admin/tenants' },
-];
-
-
-const detectLanguage = (fileName: string): EditorLanguage => {
-  const lower = fileName.toLowerCase();
-  if (lower.endsWith('.tsx')) return 'jsx';
-  if (lower.endsWith('.jsx')) return 'jsx';
-  if (lower.endsWith('.ts')) return 'javascript';
-  if (lower.endsWith('.js')) return 'javascript';
-  if (lower.endsWith('.json')) return 'json';
-  if (lower.endsWith('.css')) return 'css';
-  if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'html';
-  if (lower.endsWith('.md') || lower.endsWith('.markdown')) return 'markdown';
-  return 'plaintext';
-};
-
-const sanitizeForFilename = (value: string) =>
-  value
-    .trim()
-    .replace(/^\/+/, '')
-    .replace(/[\/\\]+/g, '-')
-    .replace(/[:*?<>|"]/g, '')
-    .replace(/\s+/g, '-')
-    .toLowerCase();
-
-const splitRoutePath = (routePath: string) => {
-  const trimmed = routePath.trim().replace(/^\/+|\/+$/g, '');
-  if (!trimmed) return [];
-  return trimmed.split('/').filter(Boolean);
-};
-
-const buildRoutePath = (segments: string[]) =>
-  segments.length ? `/${segments.join('/')}` : '/';
-
-const splitUiName = (name: string) =>
-  name
-    .split(/[\\/]+/g)
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-
-const buildUiName = (segments: string[]) => segments.join('/');
-
-const MODULE_EXTENSION = 'js';
-const DEFAULT_UI_EXTENSION = 'jsx';
-const UI_EXTENSION_OPTIONS = [DEFAULT_UI_EXTENSION, 'js', 'css'];
-
-const coerceModuleExtension = (value?: string) =>
-  value && value.replace(/^\./, '').toLowerCase() === MODULE_EXTENSION
-    ? MODULE_EXTENSION
-    : MODULE_EXTENSION;
-
-const coerceUiExtension = (value?: string) => {
-  const normalized = value?.replace(/^\./, '').toLowerCase();
-  return normalized && UI_EXTENSION_OPTIONS.includes(normalized)
-    ? normalized
-    : DEFAULT_UI_EXTENSION;
-};
-
-const formatModuleFileName = (mod: ModuleDto) => {
-  return `${mod.method.toLowerCase()}.module.${coerceModuleExtension(mod.fileExtension)}`;
-};
-
-const formatUiFileName = (pkg: UIPackageDto) => {
-  const nameSegments = splitUiName(pkg.name || 'ui');
-  const baseName = nameSegments[nameSegments.length - 1] || 'ui';
-  return `${sanitizeForFilename(baseName)}.ui.${coerceUiExtension(pkg.fileExtension)}`;
-};
-
-const getScopeInfo = (pathNodes: ExplorerNode[]) => {
-  const moduleIndex = pathNodes.findIndex((node) => node.id === 'modules-root');
-  if (moduleIndex >= 0) {
-    return {
-      scope: 'modules' as ExplorerScope,
-      path: pathNodes.slice(moduleIndex + 1).map((node) => node.name),
-    };
-  }
-  const uiIndex = pathNodes.findIndex((node) => node.id === 'ui-root');
-  if (uiIndex >= 0) {
-    return {
-      scope: 'ui' as ExplorerScope,
-      path: pathNodes.slice(uiIndex + 1).map((node) => node.name),
-    };
-  }
-  return { scope: null, path: [] as string[] };
-};
-
-const getSharedPathFromNodes = (pathNodes: ExplorerNode[]) =>
-  pathNodes.filter((_, index) => index > 0).map((node) => node.name);
-
-const findPathById = (root: ExplorerNode, nodeId: string): ExplorerNode[] => {
-  const stack: { node: ExplorerNode; path: ExplorerNode[] }[] = [
-    { node: root, path: [] },
-  ];
-  while (stack.length) {
-    const { node, path } = stack.pop()!;
-    const nextPath = [...path, node];
-    if (node.id === nodeId) return nextPath;
-    if (node.type === 'folder' && node.children) {
-      node.children.forEach((child) => {
-        stack.push({ node: child, path: nextPath });
-      });
-    }
-  }
-  return [];
-};
-
-const MODULE_METHOD_OPTIONS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
-const FILE_EXTENSION_OPTIONS = [MODULE_EXTENSION];
-const FOLDER_STORAGE_KEY = 'editor-folder-overrides';
-const SHARED_FOLDER_STORAGE_KEY = 'editor-shared-folder-overrides';
-const PREVIEW_PORT_STORAGE_KEY = 'editor-preview-port';
-const DEFAULT_PREVIEW_PORT = process.env.NEXT_PUBLIC_KERNEL_PREVIEW_PORT?.trim() || '3000';
-
-const DEFAULT_MODULE_CODE = `module.exports = async function handler(req, adapters) {
-  return {
-    statusCode: 200,
-    body: { ok: true },
-  };
-};
-`;
-
-const DEFAULT_UI_CODE = `export default function NewComponent() {
-  return <div>New component</div>;
-}
-`;
-const DEFAULT_CSS_CODE = `/* Add styles for UI entities here */`;
-const DEFAULT_SHARED_FILE: SharedFileFormState = {
-  path: '',
-  content: '',
-};
-
-const makeFolderId = (scope: ExplorerScope, segments: string[]) =>
-  `${scope}-folder-${segments.join('/')}`;
-
-const ensureFolderPath = (
-  root: ExplorerNode,
-  scope: ExplorerScope,
-  segments: string[]
-) => {
-  let current = root;
-  segments.forEach((segment, idx) => {
-    const path = segments.slice(0, idx + 1);
-    const id = makeFolderId(scope, path);
-    const existing = current.children?.find(
-      (child) => child.type === 'folder' && child.id === id
-    );
-    if (existing) {
-      current = existing;
-      return;
-    }
-    const next: ExplorerNode = {
-      id,
-      name: segment,
-      type: 'folder',
-      children: [],
-    };
-    current.children = [...(current.children ?? []), next];
-    current = next;
-  });
-  return current;
-};
-
-const buildExplorerTree = (
-  modules: ModuleDto[],
-  uiPackages: UIPackageDto[],
-  overrides: FolderOverride[]
-): ExplorerNode => {
-  const modulesRoot: ExplorerNode = {
-    id: 'modules-root',
-    name: 'Modules',
-    type: 'folder',
-    children: [],
-  };
-  const uiRoot: ExplorerNode = {
-    id: 'ui-root',
-    name: 'UI Entities',
-    type: 'folder',
-    children: [],
-  };
-
-  modules.forEach((mod) => {
-    const segments = splitRoutePath(mod.routePath || '/');
-    const parent = ensureFolderPath(modulesRoot, 'modules', segments);
-    parent.children = [
-      ...(parent.children ?? []),
-      {
-        id: `module-${mod.id}`,
-        name: formatModuleFileName(mod),
-        type: 'file',
-        meta: {
-          kind: 'module',
-          backendId: mod.id,
-          method: mod.method,
-          routePath: mod.routePath,
-          fileExtension: coerceModuleExtension(mod.fileExtension),
-        },
-        content: mod.code,
-      },
-    ];
-  });
-
-  uiPackages.forEach((pkg) => {
-    const nameSegments = splitUiName(pkg.name || 'ui');
-    const folderSegments = nameSegments.slice(0, -1);
-    const parent = ensureFolderPath(uiRoot, 'ui', folderSegments);
-    parent.children = [
-      ...(parent.children ?? []),
-      {
-        id: `ui-${pkg.id}`,
-        name: formatUiFileName(pkg),
-        type: 'file',
-        meta: {
-          kind: 'ui',
-          backendId: pkg.id,
-          name: pkg.name,
-          version: pkg.version,
-          dependencies: pkg.dependencies ?? [],
-          fileExtension: coerceUiExtension(pkg.fileExtension),
-        },
-        content: pkg.code ?? pkg.codeBlob,
-      },
-    ];
-  });
-
-  overrides.forEach((override) => {
-    const root = override.scope === 'modules' ? modulesRoot : uiRoot;
-    ensureFolderPath(root, override.scope, override.path);
-  });
-
-  return {
-    id: 'root',
-    name: 'PROJECT',
-    type: 'folder',
-    children: [modulesRoot, uiRoot],
-  };
-};
-
-const buildPersistedContentMap = (
-  modules: ModuleDto[],
-  uiPackages: UIPackageDto[]
-): Record<string, string> => {
-  const next: Record<string, string> = {};
-  modules.forEach((mod) => {
-    next[`module-${mod.id}`] = mod.code ?? '';
-  });
-  uiPackages.forEach((pkg) => {
-    next[`ui-${pkg.id}`] = pkg.code ?? pkg.codeBlob ?? '';
-  });
-  return next;
-};
-
-const SHARED_NODE_PREFIX = 'shared-';
-
-const getSharedNodeId = (fileId: string) => `${SHARED_NODE_PREFIX}${fileId}`;
-
-const normalizeSharedPath = (value: string) =>
-  value.trim().replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/{2,}/g, '/');
-
-const splitSharedPath = (value: string) => {
-  const normalized = normalizeSharedPath(value);
-  return normalized ? normalized.split('/').filter(Boolean) : [];
-};
-
-const makeSharedFolderId = (segments: string[]) =>
-  `shared-folder-${segments.join('/')}`;
-
-const ensureSharedFolderPath = (root: ExplorerNode, segments: string[]) => {
-  let current = root;
-  segments.forEach((segment, idx) => {
-    const path = segments.slice(0, idx + 1);
-    const id = makeSharedFolderId(path);
-    const existing = current.children?.find(
-      (child) => child.type === 'folder' && child.id === id
-    );
-    if (existing) {
-      current = existing;
-      return;
-    }
-    const next: ExplorerNode = {
-      id,
-      name: segment,
-      type: 'folder',
-      children: [],
-    };
-    current.children = [...(current.children ?? []), next];
-    current = next;
-  });
-  return current;
-};
-
-const buildSharedTree = (
-  project: SharedProjectDto | null,
-  files: SharedFileDto[],
-  overrides: string[][]
-): ExplorerNode => {
-  const root: ExplorerNode = {
-    id: 'root',
-    name: project?.name || 'Shared Project',
-    type: 'folder',
-    children: [],
-  };
-
-  files.forEach((file) => {
-    const segments = splitSharedPath(file.path);
-    const fileName = segments.pop() || file.path || 'untitled';
-    const parent = ensureSharedFolderPath(root, segments);
-    parent.children = [
-      ...(parent.children ?? []),
-      {
-        id: getSharedNodeId(file.id),
-        name: fileName,
-        type: 'file',
-        meta: {
-          kind: 'shared',
-          projectId: project?.id ?? '',
-          fileId: file.id,
-          path: file.path,
-          fileExtension: file.fileExtension,
-        },
-        content: file.content,
-      },
-    ];
-  });
-
-  overrides.forEach((path) => {
-    ensureSharedFolderPath(root, path);
-  });
-
-  return root;
-};
-
-const buildSharedContentMap = (files: SharedFileDto[]) => {
-  const next: Record<string, string> = {};
-  files.forEach((file) => {
-    next[getSharedNodeId(file.id)] = file.content ?? '';
-  });
-  return next;
-};
-
-const parseDependencies = (value: string) =>
-  value
-    .split(/[\n,]+/g)
-    .map((item) => item.trim())
-    .filter(Boolean);
-
-const LEFT_PANEL_STORAGE_KEY = 'editor-left-panel-width';
-const MIN_LEFT_PANEL_WIDTH = 150;
-const MAX_LEFT_PANEL_WIDTH = 520;
-const DEFAULT_LEFT_PANEL_WIDTH = 320;
-const SPLIT_RATIO_STORAGE_KEY = 'editor-split-ratio';
-const DEFAULT_SPLIT_RATIO = 0.5;
-const MIN_SPLIT_PX = 240;
-const HISTORY_PAGE_SIZE = 20;
-
-const extractFileExtension = (fileName: string) => {
-  const idx = fileName.lastIndexOf('.');
-  if (idx === -1 || idx === fileName.length - 1) return '';
-  return fileName.slice(idx + 1);
-};
-
-const formatHistoryTimestamp = (value: string) => {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
-};
-
-const getRevisionContent = (item: HistoryItem) => {
-  if (item.kind === 'ui') {
-    return item.code || item.codeBlob || '';
-  }
-  return item.code || '';
-};
-
-const pathStartsWith = (path: string[], prefix: string[]) => {
-  if (prefix.length > path.length) return false;
-  return prefix.every((segment, idx) => path[idx] === segment);
-};
-
-const compileWithBabel = (code: string): string => {
-  const babel = typeof window !== 'undefined' ? window.Babel : undefined;
-  if (!babel || !babel.transform) return code;
-  try {
-    const result = babel.transform(code, {
-      presets: [
-        'es2015',
-        'react',
-        [
-          'env',
-          {
-            useBuiltIns: 'entry',
-            corejs: 3,
-          },
-        ],
-      ],
-    });
-    return result?.code ?? code;
-  } catch (er) {
-    console.log(er);
-    return code;
-  }
-};
-
-const resolveSharedExtension = (path: string, explicit?: string) => {
-  const normalized = explicit?.replace(/^\./, '').toLowerCase();
-  if (normalized) return normalized;
-  const idx = path.lastIndexOf('.');
-  if (idx !== -1 && idx < path.length - 1) {
-    return path.slice(idx + 1).toLowerCase();
-  }
-  return 'tsx';
-};
-
-const buildCssModuleSource = (path: string, cssText: string) => {
-  const safeText = JSON.stringify(cssText ?? '');
-  const id = JSON.stringify(`shared-style:${path}`);
-  return `
-const cssText = ${safeText};
-if (typeof document !== 'undefined') {
-  const attr = 'data-shared-style';
-  let style = document.querySelector('style[' + attr + '=' + ${id} + ']');
-  if (!style) {
-    style = document.createElement('style');
-    style.setAttribute(attr, ${id});
-    document.head.appendChild(style);
-  }
-  if (style.textContent !== cssText) {
-    style.textContent = cssText;
-  }
-}
-module.exports = cssText;
-`;
-};
-
-const buildSharedBundle = (project: SharedProjectDto, files: SharedFileDto[]) => {
-  const moduleEntries: string[] = [];
-  files.forEach((file) => {
-    const normalizedPath = normalizeSharedPath(file.path);
-    const source = file.content ?? '';
-    const ext = resolveSharedExtension(normalizedPath, file.fileExtension);
-    let compiled = '';
-    if (ext === 'css') {
-      compiled = buildCssModuleSource(normalizedPath, source);
-    } else if (ext === 'json') {
-      const jsonValue = source.trim() ? source : 'null';
-      compiled = `module.exports = ${jsonValue};`;
-    } else {
-      if (typeof window !== 'undefined' && !window.Babel) {
-        throw new Error('Babel runtime not loaded in browser; cannot build bundle.');
-      }
-      compiled = compileWithBabel(source);
-    }
-    moduleEntries.push(
-      `${JSON.stringify(normalizedPath)}: function(module, exports, require, __filename, __dirname) {\n${compiled}\n}`
-    );
-  });
-
-  const entryPath = normalizeSharedPath(project.entryPath || 'src/index.tsx');
-  const bundleLines = [
-    'const __modules = {',
-    moduleEntries.join(',\n'),
-    '};',
-    'const __cache = {};',
-    "const __extensions = ['.tsx', '.ts', '.jsx', '.js', '.json', '.css'];",
-    'const __externalRequire = require;',
-    'const __normalize = (value) => {',
-    "  const parts = String(value || '').split('/').filter(Boolean);",
-    '  const stack = [];',
-    '  for (const part of parts) {',
-    "    if (part === '.' || part === '') continue;",
-    "    if (part === '..') { stack.pop(); continue; }",
-    '    stack.push(part);',
-    '  }',
-    "  return stack.join('/');",
-    '};',
-    'const __resolve = (request, from) => {',
-    "  const raw = String(request || '');",
-    '  const normalizedBare = __normalize(raw);',
-    '  if (__modules[normalizedBare]) return normalizedBare;',
-    '  for (const ext of __extensions) {',
-    '    if (__modules[normalizedBare + ext]) return normalizedBare + ext;',
-    '  }',
-    "  if (!raw.startsWith('.') && !raw.startsWith('/')) return raw;",
-    '  const baseParts = from ? String(from).split(`/`).slice(0, -1) : [];',
-    "  const targetParts = raw.startsWith('/') ? raw.split('/') : baseParts.concat(raw.split('/'));",
-    '  const normalized = __normalize(targetParts.join(`/`));',
-    '  if (__modules[normalized]) return normalized;',
-    '  for (const ext of __extensions) {',
-    '    if (__modules[normalized + ext]) return normalized + ext;',
-    '  }',
-    '  return normalized;',
-    '};',
-    'const __require = (request, from) => {',
-    "  const raw = String(request || '');",
-    '  const resolved = __resolve(raw, from || "");',
-    '  const factory = __modules[resolved];',
-    '  if (!factory) {',
-    "    if (!raw.startsWith('.') && !raw.startsWith('/')) {",
-    '      return __externalRequire(raw);',
-    '    }',
-    "    throw new Error('Cannot find module ' + raw);",
-    '  }',
-    '  if (__cache[resolved]) return __cache[resolved].exports;',
-    '  const module = { exports: {} };',
-    '  __cache[resolved] = module;',
-    "  const dirname = resolved.split('/').slice(0, -1).join('/');",
-    '  factory(module, module.exports, (id) => __require(id, resolved), resolved, dirname);',
-    '  return module.exports;',
-    '};',
-    `module.exports = __require(${JSON.stringify(entryPath)});`,
-  ];
-  return bundleLines.join('\n');
-};
-
-const escapeRegExp = (value: string) =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const getFileIdFromUriPath = (path: string): string | null => {
-  const parts = path.split('/').filter(Boolean);
-  if (parts.length === 0) return null;
-  const last = parts[parts.length - 1];
-  if (last === 'side') {
-    return parts.length >= 2 ? parts[parts.length - 2] : null;
-  }
-  return last;
-};
-
-const buildSearchPattern = (
-  query: string,
-  matchCase: boolean,
-  wholeWord: boolean,
-  useRegex: boolean
-): SearchPattern => {
-  const trimmed = query.trim();
-  if (!trimmed) {
-    return { source: '', isRegex: false, regex: null, error: null };
-  }
-  let source = useRegex ? trimmed : escapeRegExp(trimmed);
-  let isRegex = useRegex;
-  if (wholeWord) {
-    source = `\\b${source}\\b`;
-    isRegex = true;
-  }
-  if (!isRegex) {
-    return { source: trimmed, isRegex: false, regex: null, error: null };
-  }
-  const flags = matchCase ? 'g' : 'gi';
-  try {
-    const regex = new RegExp(source, flags);
-    return { source, isRegex: true, regex, error: null };
-  } catch {
-    return { source, isRegex: true, regex: null, error: 'Invalid regular expression' };
-  }
-};
-
-const buildSearchResults = (
-  query: string,
-  files: Array<{ id: string; name: string; content: string }>,
-  pattern: SearchPattern,
-  matchCase: boolean
-): SearchResult[] => {
-  const trimmed = query.trim();
-  if (!trimmed || pattern.error) return [];
-  const needle = trimmed.toLowerCase();
-  const results: SearchResult[] = [];
-  files.forEach((file) => {
-    if (!file.content) return;
-    const lines = file.content.split('\n');
-    lines.forEach((line, lineIndex) => {
-      if (pattern.regex) {
-        const lineRegex = new RegExp(pattern.regex.source, pattern.regex.flags);
-        let match: RegExpExecArray | null;
-        while ((match = lineRegex.exec(line)) !== null) {
-          const matchIndex = match.index;
-          const matchText = match[0] ?? '';
-          const startColumn = matchIndex + 1;
-          const endColumn = matchIndex + matchText.length + 1;
-          const preview = line.trim();
-          results.push({
-            id: `${file.id}:${lineIndex}:${matchIndex}`,
-            fileId: file.id,
-            fileName: file.name,
-            line: lineIndex + 1,
-            column: startColumn,
-            preview: preview || line,
-            range: {
-              startLineNumber: lineIndex + 1,
-              startColumn,
-              endLineNumber: lineIndex + 1,
-              endColumn,
-            },
-          });
-          if (matchText.length === 0) {
-            lineRegex.lastIndex += 1;
-          }
-        }
-        return;
-      }
-      const source = matchCase ? line : line.toLowerCase();
-      const lookup = matchCase ? trimmed : needle;
-      let fromIndex = 0;
-      while (true) {
-        const matchIndex = source.indexOf(lookup, fromIndex);
-        if (matchIndex === -1) break;
-        const startColumn = matchIndex + 1;
-        const endColumn = matchIndex + trimmed.length + 1;
-        const preview = line.trim();
-        results.push({
-          id: `${file.id}:${lineIndex}:${matchIndex}`,
-          fileId: file.id,
-          fileName: file.name,
-          line: lineIndex + 1,
-          column: startColumn,
-          preview: preview || line,
-          range: {
-            startLineNumber: lineIndex + 1,
-            startColumn,
-            endLineNumber: lineIndex + 1,
-            endColumn,
-          },
-        });
-        fromIndex = matchIndex + Math.max(1, lookup.length);
-      }
-    });
-  });
-  return results;
-};
-
-const parseFilterRegex = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return { regex: null as RegExp | null, error: null as string | null };
-  }
-  try {
-    return { regex: new RegExp(trimmed, 'i'), error: null };
-  } catch {
-    return { regex: null, error: 'Invalid regex' };
-  }
-};
-
-const replaceAtRange = (
-  content: string,
-  range: SearchMatchRange,
-  replacement: string
-) => {
-  const lines = content.split('\n');
-  const startLineIndex = range.startLineNumber - 1;
-  const endLineIndex = range.endLineNumber - 1;
-  if (startLineIndex < 0 || endLineIndex >= lines.length) return content;
-  let startOffset = 0;
-  for (let i = 0; i < startLineIndex; i += 1) {
-    startOffset += lines[i].length + 1;
-  }
-  let endOffset = startOffset;
-  if (startLineIndex === endLineIndex) {
-    endOffset += range.endColumn - 1;
-  } else {
-    endOffset += lines[startLineIndex].length + 1;
-    for (let i = startLineIndex + 1; i < endLineIndex; i += 1) {
-      endOffset += lines[i].length + 1;
-    }
-    endOffset += range.endColumn - 1;
-  }
-  startOffset += range.startColumn - 1;
-  return content.slice(0, startOffset) + replacement + content.slice(endOffset);
 };
 
 export default function EditorPage() {
@@ -1000,11 +185,7 @@ export default function EditorPage() {
   const [renameFolderPath, setRenameFolderPath] = useState<string[]>([]);
   const [renameFolderName, setRenameFolderName] = useState('');
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<
-    | { type: 'file'; scope: PanelScope; meta: NodeMeta; label: string }
-    | { type: 'folder'; scope: PanelScope; path: string[]; label: string }
-    | null
-  >(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_LEFT_PANEL_WIDTH;
@@ -1121,6 +302,19 @@ export default function EditorPage() {
     [rightTabs, sideFileId]
   );
   const [tabMenu, setTabMenu] = useState<TabContextMenuState | null>(null);
+  const handleTabContextMenu = useCallback(
+    (file: ActiveFile, pane: 'left' | 'right', event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (pane === 'left') {
+        setActiveFile(file);
+      } else {
+        setSideFileId(file.id);
+      }
+      setTabMenu({ x: event.clientX, y: event.clientY, fileId: file.id });
+    },
+    []
+  );
 
   const resolveApiUrl = useCallback((url: string) => {
     if (/^https?:\/\//i.test(url)) return url;
@@ -1806,6 +1000,18 @@ export default function EditorPage() {
     [sideFileId]
   );
 
+  const handleToggleSide = useCallback(
+    (id: string) => {
+      setHistorySelectedId(null);
+      if (rightPaneSet.has(id)) {
+        moveTabToPane(id, 'left');
+      } else {
+        moveTabToPane(id, 'right');
+      }
+    },
+    [moveTabToPane, rightPaneSet]
+  );
+
   const removeFileEntries = useCallback((ids: Set<string>) => {
     if (ids.size === 0) return;
     setFileContents((prev) => {
@@ -2193,6 +1399,56 @@ export default function EditorPage() {
     saveFile,
     showError,
     success,
+  ]);
+
+  const handleCancelClosePrompt = useCallback(() => {
+    if (pendingCloseBusy) return;
+    setClosePromptOpen(false);
+    setPendingCloseIds([]);
+    setPendingCloseAction(null);
+  }, [pendingCloseBusy]);
+
+  const handleDiscardClosePrompt = useCallback(() => {
+    if (pendingCloseBusy) return;
+    if (pendingCloseAction === 'reload') {
+      setPendingCloseIds([]);
+      setPendingCloseAction(null);
+      setClosePromptOpen(false);
+      window.location.reload();
+      return;
+    }
+    closeTabsByIds(new Set(pendingCloseIds));
+    setPendingCloseIds([]);
+    setPendingCloseAction(null);
+    setClosePromptOpen(false);
+  }, [closeTabsByIds, pendingCloseAction, pendingCloseBusy, pendingCloseIds]);
+
+  const handleSaveClosePrompt = useCallback(async () => {
+    if (pendingCloseBusy) return;
+    setPendingCloseBusy(true);
+    for (const file of pendingDirtyFiles) {
+      await handleSaveFile(file);
+    }
+    if (pendingCloseAction === 'reload') {
+      setPendingCloseIds([]);
+      setPendingCloseAction(null);
+      setClosePromptOpen(false);
+      setPendingCloseBusy(false);
+      window.location.reload();
+      return;
+    }
+    closeTabsByIds(new Set(pendingCloseIds));
+    setPendingCloseIds([]);
+    setPendingCloseAction(null);
+    setClosePromptOpen(false);
+    setPendingCloseBusy(false);
+  }, [
+    closeTabsByIds,
+    handleSaveFile,
+    pendingCloseAction,
+    pendingCloseBusy,
+    pendingCloseIds,
+    pendingDirtyFiles,
   ]);
 
   const publishTarget = useCallback(
@@ -3561,10 +2817,14 @@ export default function EditorPage() {
   const showSplitEditor = rightTabs.length > 0;
   const showDiff = Boolean(selectedRevision);
   const diffOriginal = selectedRevision ? getRevisionContent(selectedRevision) : '';
-  const mainEditorPath = activeFile ? editorModelPath : 'inmemory://model/empty-main';
+  const mainEditorPath = activeFile
+    ? editorModelPath ?? 'inmemory://model/empty-main'
+    : 'inmemory://model/empty-main';
   const mainEditorValue = activeFile ? activeContent : '';
   const mainEditorLanguage = activeFile ? monacoLanguage : 'plaintext';
-  const sideEditorPath = sideFile ? sideEditorModelPath : 'inmemory://model/side-empty';
+  const sideEditorPath = sideFile
+    ? sideEditorModelPath ?? 'inmemory://model/side-empty'
+    : 'inmemory://model/side-empty';
   const sideEditorValue = sideFile ? sideContent : '';
   const sideEditorLanguage = sideFile ? sideLanguage : 'plaintext';
 
@@ -3652,307 +2912,42 @@ export default function EditorPage() {
     setEditorView('preview');
   }, [isSharedMode, previewTarget, sharedProject, uiData]);
 
-  const renderTabContextMenu = () => {
-    if (!tabMenu) return null;
-    const file = openFiles.find((item) => item.id === tabMenu.fileId);
-    if (!file) return null;
-    const index = openFiles.findIndex((item) => item.id === file.id);
-    const leftIds = new Set(openFiles.slice(0, index).map((item) => item.id));
-    const rightIds = new Set(openFiles.slice(index + 1).map((item) => item.id));
-    const dirtyIds = new Set(
-      openFiles.filter((item) => isFileDirty(item)).map((item) => item.id)
-    );
-    const savedIds = new Set(
-      openFiles.filter((item) => !isFileDirty(item)).map((item) => item.id)
-    );
-    const allIds = new Set(openFiles.map((item) => item.id));
-    const itemClass =
-      'flex w-full items-center px-3 py-2 text-left text-sm hover:bg-[#2e2e2e]';
-    const disabledClass = 'opacity-50 cursor-not-allowed hover:bg-transparent';
-
-    return (
-      <div
-        className="fixed z-50 min-w-[220px] rounded border border-[#2a2d2e] bg-[#252526] text-gray-200 shadow-lg"
-        style={{ top: tabMenu.y, left: tabMenu.x }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <button
-          className={itemClass}
-          onClick={() => {
-            requestCloseTabs(new Set([file.id]));
-            setTabMenu(null);
-          }}
-        >
-          Close
-        </button>
-        <button
-          className={`${itemClass} ${allIds.size === 0 ? disabledClass : ''}`}
-          onClick={() => {
-            requestCloseTabs(allIds);
-            setTabMenu(null);
-          }}
-          disabled={allIds.size === 0}
-        >
-          Close All
-        </button>
-        <button
-          className={`${itemClass} ${rightIds.size === 0 ? disabledClass : ''}`}
-          onClick={() => {
-            requestCloseTabs(rightIds);
-            setTabMenu(null);
-          }}
-          disabled={rightIds.size === 0}
-        >
-          Close to the Right
-        </button>
-        <button
-          className={`${itemClass} ${leftIds.size === 0 ? disabledClass : ''}`}
-          onClick={() => {
-            requestCloseTabs(leftIds);
-            setTabMenu(null);
-          }}
-          disabled={leftIds.size === 0}
-        >
-          Close to the Left
-        </button>
-        <button
-          className={`${itemClass} ${savedIds.size === 0 ? disabledClass : ''}`}
-          onClick={() => {
-            requestCloseTabs(savedIds);
-            setTabMenu(null);
-          }}
-          disabled={savedIds.size === 0}
-        >
-          Close Saved
-        </button>
-        <div className="border-t border-[#2a2d2e]" />
-        <button
-          className={itemClass}
-          onClick={() => {
-            void handleSaveFile(file);
-            setTabMenu(null);
-          }}
-        >
-          Save
-        </button>
-        <button
-          className={itemClass}
-          onClick={() => {
-            void handleSaveAll();
-            setTabMenu(null);
-          }}
-        >
-          Save All
-        </button>
-        <div className="border-t border-[#2a2d2e]" />
-        <button
-          className={itemClass}
-          onClick={() => {
-            setHistorySelectedId(null);
-            if (rightPaneSet.has(file.id)) {
-              moveTabToPane(file.id, 'left');
-            } else {
-              moveTabToPane(file.id, 'right');
-            }
-            setTabMenu(null);
-          }}
-        >
-          {rightPaneSet.has(file.id) ? 'Close Side' : 'Open in Side'}
-        </button>
-      </div>
-    );
-  };
+  
 
   return (
     <>
       <Script src="/babel/bable.js" strategy="afterInteractive" />
       <div className="flex h-screen flex-col bg-[#1e1e1e] text-gray-100">
-        <header className="relative flex h-[34px] items-center border-b border-[#2a2d2e] bg-[#252526] px-2">
-          <div className="flex items-center gap-4">
-            <Link href="/dashboard" className="flex items-center gap-3">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#2a2d2e] bg-[#1e1e1e]">
-                <Image
-                  src={branding.logo_lm}
-                  alt={branding.brand_name}
-                  width={18}
-                  height={18}
-                />
-              </span>
-              <div className="leading-tight">
-                <div className="text-[8px] font-semibold uppercase tracking-[0.2em] text-gray-400">
-                  {branding.brand_name} Idp
-                </div>
-                <div className="text-[12px] font-semibold text-gray-100">Editor Studio</div>
-              </div>
-            </Link>
-
-            <nav className="hidden lg:flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-400">
-              {EDITOR_NAV_ITEMS.map((item) => {
-                const isActive =
-                  router.pathname === item.match ||
-                  router.pathname.startsWith(`${item.match}/`);
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`rounded-full border px-3 py-1 transition ${
-                      isActive
-                        ? 'border-[#0f72be] bg-[#0b5b96] text-white'
-                        : 'border-transparent text-gray-400 hover:border-[#2a2d2e] hover:bg-[#1f1f1f] hover:text-gray-200'
-                    }`}
-                  >
-                    {item.label}
-                  </Link>
-                );
-              })}
-            </nav>
-          </div>
-
-          <div className="ml-auto flex items-center gap-2 text-[11px]">
-            <div className="flex items-center gap-3 rounded-full border border-[#2a2d2e] bg-[#1f1f1f] p-0.5 text-[10px] uppercase tracking-wide text-gray-300">
-              <button
-                type="button"
-                onClick={() => setEditorView('code')}
-                className={`rounded-full px-3 py-0.5 transition ${
-                  editorView === 'code'
-                    ? 'bg-[#0b5b96] text-white'
-                    : 'text-gray-400 hover:text-gray-200'
-                }`}
-              >
-                Code
-              </button>
-              <button
-                type="button"
-                onClick={handleSwitchToPreview}
-                className={`rounded-full px-3 py-0.5 transition ${
-                  editorView === 'preview'
-                    ? 'bg-[#0b5b96] text-white'
-                    : 'text-gray-400 hover:text-gray-200'
-                }`}
-              >
-                Preview
-              </button>
-              {editorView === 'preview' && (
-                <div className="flex items-center gap-2 border-l border-[#2a2d2e] pl-2 text-[10px] text-gray-400">
-                  <span className="uppercase tracking-[0.2em]">Port</span>
-                  <input
-                    value={previewPort}
-                    onChange={(event) =>
-                      setPreviewPort(event.target.value.replace(/[^0-9]/g, ''))
-                    }
-                    placeholder={DEFAULT_PREVIEW_PORT}
-                    className="h-5 w-16 rounded border border-[#2a2d2e] bg-[#1b1b1b] px-2 text-[10px] text-gray-200 placeholder:text-gray-500 focus:border-[#0b5b96] focus:outline-none"
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-        </header>
+        <EditorHeader
+          branding={branding}
+          navItems={EDITOR_NAV_ITEMS}
+          pathname={router.pathname}
+          editorView={editorView}
+          previewPort={previewPort}
+          defaultPreviewPort={DEFAULT_PREVIEW_PORT}
+          onPreviewPortChange={setPreviewPort}
+          onSwitchToCode={() => setEditorView('code')}
+          onSwitchToPreview={handleSwitchToPreview}
+        />
 
         <div className="flex flex-1 min-h-0">
-          <div className="flex h-full w-12 flex-col items-center border-r border-[#2a2d2e] bg-[#1b1b1b] py-2">
-            <button
-              title="Explorer"
-              className={`mb-2 flex h-8 w-8 items-center justify-center rounded-lg text-base transition ${
-                leftPanel === 'explorer'
-                  ? 'bg-[#094771] text-white'
-                  : 'text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200'
-              }`}
-              onClick={() => {
-                setLeftPanel('explorer');
+          <EditorSidebar
+            leftPanel={leftPanel}
+            onSelectPanel={(panel) => {
+              setLeftPanel(panel);
+              setLeftPanelOpen(true);
+            }}
+            onTogglePanel={(panel) => {
+              if (leftPanelOpen && leftPanel === panel) {
+                setLeftPanelOpen(false);
+              } else {
+                setLeftPanel(panel);
                 setLeftPanelOpen(true);
-              }}
-              onDoubleClick={() => {
-                if (leftPanelOpen && leftPanel === 'explorer') {
-                  setLeftPanelOpen(false);
-                } else {
-                  setLeftPanel('explorer');
-                  setLeftPanelOpen(true);
-                }
-              }}
-            >
-              <FiFolder />
-            </button>
-            <button
-              title="Search"
-              className={`mb-2 flex h-8 w-8 items-center justify-center rounded-lg text-base transition ${
-                leftPanel === 'search'
-                  ? 'bg-[#094771] text-white'
-                  : 'text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200'
-              }`}
-              onClick={() => {
-                setLeftPanel('search');
-                setLeftPanelOpen(true);
-              }}
-              onDoubleClick={() => {
-                if (leftPanelOpen && leftPanel === 'search') {
-                  setLeftPanelOpen(false);
-                } else {
-                  setLeftPanel('search');
-                  setLeftPanelOpen(true);
-                }
-              }}
-            >
-              <FiSearch />
-            </button>
-            <button
-              title="History"
-              className={`flex h-8 w-8 items-center justify-center rounded-lg text-base transition ${
-                leftPanel === 'history'
-                  ? 'bg-[#094771] text-white'
-                  : 'text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200'
-              }`}
-              onClick={() => {
-                setLeftPanel('history');
-                setLeftPanelOpen(true);
-              }}
-              onDoubleClick={() => {
-                if (leftPanelOpen && leftPanel === 'history') {
-                  setLeftPanelOpen(false);
-                } else {
-                  setLeftPanel('history');
-                  setLeftPanelOpen(true);
-                }
-              }}
-            >
-              <FiClock />
-            </button>
-            <button
-              title="Staging"
-              className={`mb-2 flex h-8 w-8 items-center justify-center rounded-lg text-base transition ${
-                leftPanel === 'staging'
-                  ? 'bg-[#094771] text-white'
-                  : 'text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200'
-              }`}
-              onClick={() => {
-                setLeftPanel('staging');
-                setLeftPanelOpen(true);
-              }}
-              onDoubleClick={() => {
-                if (leftPanelOpen && leftPanel === 'staging') {
-                  setLeftPanelOpen(false);
-                } else {
-                  setLeftPanel('staging');
-                  setLeftPanelOpen(true);
-                }
-              }}
-            >
-              <FiFlag />
-            </button>
-            <div className="mt-auto flex w-full flex-col items-center px-1 pb-2">
-              <div
-                className={`flex w-full flex-col items-center gap-2 px-1 py-2 text-[10px] ${sidebarLabelTone}`}
-                title={sidebarLabel}
-              >
-                <span
-                  className="font-semibold"
-                  style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
-                >
-                  {sidebarLabel}
-                </span>
-              </div>
-            </div>
-          </div>
+              }
+            }}
+            sidebarLabel={sidebarLabel}
+            sidebarLabelTone={sidebarLabelTone}
+          />
 
           {leftPanelOpen && (
             <div
@@ -3960,419 +2955,71 @@ export default function EditorPage() {
               style={{ width: leftPanelWidth }}
             >
               {leftPanel === 'explorer' ? (
-                treeError ? (
-                  <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-sm text-red-300">
-                    <p>{treeError}</p>
-                    <button
-                      className="rounded bg-[#094771] px-3 py-1 text-white hover:bg-[#0b5b96]"
-                      onClick={() => reloadTree()}
-                    >
-                      Retry
-                    </button>
-                  </div>
-                ) : !treeData || loadingTree ? (
-                  <div className="flex h-full items-center justify-center text-sm text-gray-400">
-                    Loading explorer...
-                  </div>
-                ) : (
-                  <FileExplorer
-                    key={treeData.id}
-                    onOpenFile={handleOpenFile}
-                    initialTree={treeData}
-                    onCreateNode={({ type, parentPath }) =>
-                      handleCreateRequest({ type, parentPath })
-                    }
-                    onRenameNode={({ node, parentPath }) =>
-                      handleRenameRequest({ node, parentPath })
-                    }
-                    onDeleteNode={({ node, parentPath }) =>
-                      handleDeleteRequest({ node, parentPath })
-                    }
-                    onMoveNode={({ node, targetId, position, parentPath }) =>
-                      handleMoveRequest({ node, targetId, position, parentPath })
-                    }
-                  />
-                )
+                <EditorExplorerPanel
+                  treeError={treeError}
+                  loadingTree={loadingTree}
+                  treeData={treeData}
+                  onReload={reloadTree}
+                  onOpenFile={handleOpenFile}
+                  onCreateNode={handleCreateRequest}
+                  onRenameNode={handleRenameRequest}
+                  onDeleteNode={handleDeleteRequest}
+                  onMoveNode={handleMoveRequest}
+                />
               ) : leftPanel === 'history' ? (
-                <div className="flex h-full min-h-0 flex-col">
-                  <div className="flex h-[34px] items-center justify-between border-b border-[#2a2d2e] px-3 text-[11px] uppercase text-gray-400">
-                    <div>History</div>
-                    <button
-                      className="rounded p-1 text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200 disabled:opacity-60"
-                      onClick={() => loadHistory(historyPage)}
-                      disabled={
-                        historyLoading ||
-                        !activeFile?.meta ||
-                        activeFile.meta.kind === 'shared'
-                      }
-                      aria-label="Refresh history"
-                      title="Refresh history"
-                      type="button"
-                    >
-                      <FiRefreshCw className="h-4 w-4" />
-                    </button>
-                  </div>
-
-                  {!activeFile?.meta ? (
-                    <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
-                      Select a file to view history.
-                    </div>
-                  ) : activeFile.meta.kind === 'shared' ? (
-                    <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
-                      History is not available for shared projects yet.
-                    </div>
-                  ) : historyLoading ? (
-                    <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
-                      Loading history...
-                    </div>
-                  ) : historyError ? (
-                    <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-sm text-red-300">
-                      <p>{historyError}</p>
-                      <button
-                        className="rounded bg-[#094771] px-3 py-1 text-white hover:bg-[#0b5b96]"
-                        onClick={() => loadHistory(historyPage)}
-                      >
-                        Retry
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex min-h-0 flex-1 flex-col">
-                      <div
-                        ref={historyListRef}
-                        className="flex min-h-0 flex-1 flex-col overflow-hidden"
-                      >
-                        {historyItems.length === 0 ? (
-                          <div className="flex h-full items-center justify-center px-4 text-sm text-gray-400">
-                            No revisions yet.
-                          </div>
-                        ) : (
-                          historyItems.map((item, index) => {
-                            const selected = item.id === historySelectedId;
-                            return (
-                              <div
-                                key={item.id}
-                                ref={index === 0 ? historyRowRef : undefined}
-                                className={`border-b border-[#2a2d2e] px-2 py-1.5 text-[11px] ${
-                                  selected ? 'bg-[#1f1f1f]' : 'bg-transparent'
-                                }`}
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="flex flex-col">
-                                    <div className="flex items-center gap-2 text-[10px] font-semibold text-gray-100">
-                                      <span>r{item.revision}</span>
-                                      <span className="text-[9px] uppercase tracking-wide text-gray-500">
-                                        {(item.action ?? 'update').toUpperCase()}
-                                      </span>
-                                    </div>
-                                    <div className="mt-0.5 text-[9px] text-gray-500">
-                                      {formatHistoryTimestamp(item.createdAt)}
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-1.5">
-                                    <button
-                                      className="rounded p-1 text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200"
-                                      onClick={() =>
-                                        setHistorySelectedId((prev) =>
-                                          prev === item.id ? null : item.id
-                                        )
-                                      }
-                                      aria-label={selected ? 'Close compare' : 'Compare revision'}
-                                      title={selected ? 'Close compare' : 'Compare revision'}
-                                    >
-                                      {selected ? (
-                                        <FiEyeOff className="h-4 w-4" />
-                                      ) : (
-                                        <FiEye className="h-4 w-4" />
-                                      )}
-                                    </button>
-                                    <button
-                                      className="rounded p-1 text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200"
-                                      onClick={() => handleRollback(item.id)}
-                                      aria-label="Rollback revision"
-                                      title="Rollback revision"
-                                    >
-                                      <FiRotateCcw className="h-4 w-4" />
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })
-                        )}
-                      </div>
-                      <div className="flex h-7 items-center justify-between border-t border-[#2a2d2e] px-2 text-[10px] text-gray-400">
-                        <button
-                          className="rounded p-1 text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200 disabled:opacity-50"
-                          onClick={() => setHistoryPage((prev) => Math.max(1, prev - 1))}
-                          disabled={historyLoading || historyPage <= 1}
-                          aria-label="Previous page"
-                          title="Previous page"
-                        >
-                          <FiChevronLeft className="h-4 w-4" />
-                        </button>
-                        <div>
-                          Page {historyPage} / {historyTotalPages}
-                        </div>
-                        <button
-                          className="rounded p-1 text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200 disabled:opacity-50"
-                          onClick={() =>
-                            setHistoryPage((prev) =>
-                              Math.min(historyTotalPages, prev + 1)
-                            )
-                          }
-                          disabled={historyLoading || historyPage >= historyTotalPages}
-                          aria-label="Next page"
-                          title="Next page"
-                        >
-                          <FiChevronRight className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <EditorHistoryPanel
+                  activeFile={activeFile}
+                  historyItems={historyItems}
+                  historySelectedId={historySelectedId}
+                  historyLoading={historyLoading}
+                  historyError={historyError}
+                  historyPage={historyPage}
+                  historyTotalPages={historyTotalPages}
+                  historyListRef={historyListRef}
+                  historyRowRef={historyRowRef}
+                  onRefresh={loadHistory}
+                  onSelectRevision={setHistorySelectedId}
+                  onRollback={handleRollback}
+                  onPrevPage={() => setHistoryPage((prev) => Math.max(1, prev - 1))}
+                  onNextPage={() =>
+                    setHistoryPage((prev) => Math.min(historyTotalPages, prev + 1))
+                  }
+                  formatTimestamp={formatHistoryTimestamp}
+                />
               ) : leftPanel === 'staging' ? (
-                <div className="flex h-full min-h-0 flex-col">
-                  <div className="flex h-[34px] items-center justify-between border-b border-[#2a2d2e] px-3 text-[11px] uppercase text-gray-400">
-                    <div>Staging</div>
-                    <div className="text-[10px] text-gray-500">
-                      {stagingCounts.published}/{stagingCounts.total} published
-                    </div>
-                  </div>
-                  <div className="flex flex-1 flex-col gap-2 overflow-auto p-2 text-[11px] text-gray-300">
-                    {stagingItems.length === 0 ? (
-                      <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
-                        No files available for staging.
-                      </div>
-                    ) : (
-                      stagingItems.map((item) => {
-                        const isPublished = Boolean(item.publishedVersion);
-                        const isDirty = Boolean(item.dirty);
-                        const isPublishing = stagingBusy && stagingBusyId === item.id;
-                        const kindLabel =
-                          item.kind === 'module'
-                            ? 'Module'
-                            : item.kind === 'ui'
-                              ? 'UI'
-                              : 'Shared';
-                        return (
-                          <div
-                            key={item.id}
-                            className="rounded border border-[#2a2d2e] bg-[#1f1f1f] p-2"
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <span className="truncate text-[12px] font-semibold text-gray-100">
-                                    {item.title}
-                                  </span>
-                                  <span className="rounded border border-[#2a2d2e] px-1.5 py-0.5 text-[9px] uppercase text-gray-400">
-                                    {kindLabel}
-                                  </span>
-                                </div>
-                                <div className="mt-1 text-[10px] text-gray-400">
-                                  <span className="mr-2">
-                                    Draft: {item.draftVersion || '—'}
-                                  </span>
-                                  <span>Published: {item.publishedVersion || '—'}</span>
-                                </div>
-                              </div>
-                              <div className="flex shrink-0 items-center gap-2">
-                                {isDirty && (
-                                  <span className="rounded bg-[#3b1f1f] px-1.5 py-0.5 text-[9px] text-red-200">
-                                    Unsaved
-                                  </span>
-                                )}
-                                <span
-                                  className={`rounded px-1.5 py-0.5 text-[9px] ${
-                                    isPublished
-                                      ? 'bg-emerald-900/40 text-emerald-300'
-                                      : 'bg-[#2a2d2e] text-gray-400'
-                                  }`}
-                                >
-                                  {isPublished ? 'Published' : 'Draft'}
-                                </span>
-                                <button
-                                  type="button"
-                                  className="rounded bg-[#0b5b96] px-2 py-1 text-[10px] font-semibold text-white hover:bg-[#0f72be] disabled:opacity-60"
-                                  onClick={() => publishTarget(item)}
-                                  disabled={stagingBusy || isDirty}
-                                >
-                                  {isPublishing ? 'Publishing…' : isPublished ? 'Republish' : 'Publish'}
-                                </button>
-                              </div>
-                            </div>
-                            <div className="mt-1 text-[9px] text-gray-500">
-                              {item.publishedAt
-                                ? `Published ${formatHistoryTimestamp(item.publishedAt)}`
-                                : 'Not published yet'}
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
+                <EditorStagingPanel
+                  stagingItems={stagingItems}
+                  stagingCounts={stagingCounts}
+                  stagingBusy={stagingBusy}
+                  stagingBusyId={stagingBusyId}
+                  onPublish={publishTarget}
+                  formatTimestamp={formatHistoryTimestamp}
+                />
               ) : (
-                <div className="flex h-full min-h-0 flex-col">
-                  <div className="flex h-[34px] items-center justify-between border-b border-[#2a2d2e] px-3 text-[11px] uppercase text-gray-400">
-                    <div>Search</div>
-                    <div className="text-[10px] text-gray-500">
-                      {searchResults.length} result
-                      {searchResults.length === 1 ? '' : 's'}
-                    </div>
-                  </div>
-                  <div className="border-b border-[#2a2d2e] p-3">
-                    <input
-                      value={searchQuery}
-                      onChange={(event) => setSearchQuery(event.target.value)}
-                      placeholder="Search files"
-                      className="w-full rounded border border-[#2a2d2e] bg-[#1b1b1b] px-2 py-1 text-[12px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-[#0b5b96]"
-                    />
-                    <div className="mt-2 flex items-center gap-2 text-[10px] text-gray-400">
-                      <button
-                        type="button"
-                        className={`rounded border px-2 py-0.5 ${
-                          searchMatchCase
-                            ? 'border-[#0b5b96] bg-[#0b5b96] text-white'
-                            : 'border-[#2a2d2e] text-gray-400 hover:bg-[#1f1f1f]'
-                        }`}
-                        onClick={() => setSearchMatchCase((prev) => !prev)}
-                        title="Match case"
-                      >
-                        Aa
-                      </button>
-                      <button
-                        type="button"
-                        className={`rounded border px-2 py-0.5 ${
-                          searchWholeWord
-                            ? 'border-[#0b5b96] bg-[#0b5b96] text-white'
-                            : 'border-[#2a2d2e] text-gray-400 hover:bg-[#1f1f1f]'
-                        }`}
-                        onClick={() => setSearchWholeWord((prev) => !prev)}
-                        title="Match whole word"
-                      >
-                        W
-                      </button>
-                      <button
-                        type="button"
-                        className={`rounded border px-2 py-0.5 ${
-                          searchUseRegex
-                            ? 'border-[#0b5b96] bg-[#0b5b96] text-white'
-                            : 'border-[#2a2d2e] text-gray-400 hover:bg-[#1f1f1f]'
-                        }`}
-                        onClick={() => setSearchUseRegex((prev) => !prev)}
-                        title="Use regular expression"
-                      >
-                        .*
-                      </button>
-                      <span className="ml-auto text-[10px] text-red-300">
-                        {searchPattern.error}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="border-b border-[#2a2d2e] p-3">
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={searchReplace}
-                        onChange={(event) => setSearchReplace(event.target.value)}
-                        placeholder="Replace"
-                        className="flex-1 rounded border border-[#2a2d2e] bg-[#1b1b1b] px-2 py-1 text-[12px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-[#0b5b96]"
-                      />
-                      <button
-                        type="button"
-                        className="rounded border border-[#2a2d2e] p-1.5 text-gray-200 hover:bg-[#1f1f1f] disabled:opacity-50"
-                        onClick={replaceSelectedResult}
-                        disabled={!searchSelected}
-                        title="Replace"
-                        aria-label="Replace"
-                      >
-                        <FiCornerDownLeft className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded border border-[#2a2d2e] p-1.5 text-gray-200 hover:bg-[#1f1f1f] disabled:opacity-50"
-                        onClick={replaceAllResults}
-                        disabled={searchResults.length === 0}
-                        title="Replace all"
-                        aria-label="Replace all"
-                      >
-                        <FiChevronsRight className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="border-b border-[#2a2d2e] p-3">
-                    <div className="flex flex-col gap-2 text-[10px] text-gray-400">
-                      <div className="flex items-center gap-2">
-                        <span className="w-16">Include</span>
-                        <input
-                          value={searchIncludePattern}
-                          onChange={(event) => setSearchIncludePattern(event.target.value)}
-                          placeholder="e.g. \\.tsx$"
-                          className="flex-1 rounded border border-[#2a2d2e] bg-[#1b1b1b] px-2 py-1 text-[11px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-[#0b5b96]"
-                        />
-                        <span className="text-[10px] text-red-300">
-                          {searchIncludeFilter.error}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="w-16">Exclude</span>
-                        <input
-                          value={searchExcludePattern}
-                          onChange={(event) => setSearchExcludePattern(event.target.value)}
-                          placeholder="e.g. \\.spec\\."
-                          className="flex-1 rounded border border-[#2a2d2e] bg-[#1b1b1b] px-2 py-1 text-[11px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-[#0b5b96]"
-                        />
-                        <span className="text-[10px] text-red-300">
-                          {searchExcludeFilter.error}
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-gray-500">
-                        Regex filters match against file names.
-                      </span>
-                    </div>
-                  </div>
-                  {searchQuery.trim().length === 0 ? (
-                    <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
-                      Type to search across files.
-                    </div>
-                  ) : searchResults.length === 0 ? (
-                    <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
-                      No matches found.
-                    </div>
-                  ) : (
-                    <div className="flex-1 overflow-auto">
-                      <div className="space-y-1 p-2">
-                        {searchResults.map((result) => {
-                          const isActive = searchSelected?.id === result.id;
-                          return (
-                            <button
-                              key={result.id}
-                              type="button"
-                              onClick={() => openSearchResult(result)}
-                              className={`flex w-full flex-col gap-1 rounded border px-2 py-1.5 text-left text-[11px] transition ${
-                                isActive
-                                  ? 'border-[#0b5b96] bg-[#1f2f3a] text-white'
-                                  : 'border-transparent text-gray-300 hover:border-[#2a2d2e] hover:bg-[#1f1f1f]'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="truncate text-[11px] text-gray-200">
-                                  {result.fileName}
-                                </span>
-                                <span className="text-[10px] text-gray-500">
-                                  {result.line}:{result.column}
-                                </span>
-                              </div>
-                              <div className="truncate text-[10px] text-gray-400">
-                                {result.preview}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <EditorSearchPanel
+                  searchQuery={searchQuery}
+                  onSearchQueryChange={setSearchQuery}
+                  searchMatchCase={searchMatchCase}
+                  onToggleMatchCase={() => setSearchMatchCase((prev) => !prev)}
+                  searchWholeWord={searchWholeWord}
+                  onToggleWholeWord={() => setSearchWholeWord((prev) => !prev)}
+                  searchUseRegex={searchUseRegex}
+                  onToggleUseRegex={() => setSearchUseRegex((prev) => !prev)}
+                  searchPattern={searchPattern}
+                  searchReplace={searchReplace}
+                  onSearchReplaceChange={setSearchReplace}
+                  onReplaceSelected={replaceSelectedResult}
+                  onReplaceAll={replaceAllResults}
+                  searchIncludePattern={searchIncludePattern}
+                  onSearchIncludeChange={setSearchIncludePattern}
+                  searchIncludeFilter={searchIncludeFilter}
+                  searchExcludePattern={searchExcludePattern}
+                  onSearchExcludeChange={setSearchExcludePattern}
+                  searchExcludeFilter={searchExcludeFilter}
+                  searchResults={searchResults}
+                  searchSelected={searchSelected}
+                  onOpenResult={openSearchResult}
+                />
               )}
               <div
                 className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-[#2a2d2e]"
@@ -4385,833 +3032,127 @@ export default function EditorPage() {
           )}
 
           <main className="flex flex-1 flex-col min-w-0 min-h-0">
-            <div
-              className={`relative flex h-[34px] items-stretch border-b border-[#2a2d2e] bg-[#252526] ${
-                editorView === 'preview' ? 'hidden' : ''
-              }`}
-            >
-              <div className="flex min-w-0 flex-1 items-stretch">
-                <div
-                  className="flex min-w-0 items-end overflow-x-auto overflow-y-hidden"
-                  style={
-                    showSplitEditor
-                      ? {
-                          flexBasis: `${splitRatio * 100}%`,
-                          flexGrow: 0,
-                          flexShrink: 0,
-                        }
-                      : { flexGrow: 1 }
-                  }
-                  onDragOver={handleTabDragOver}
-                  onDrop={(event) => handleTabBarDrop(event, 'left')}
-                >
-                  <div className="flex min-w-max items-end gap-1 px-2">
-                    {leftTabs.map((file) => {
-                      const isActive = activeFile?.id === file.id;
-                      return (
-                        <div
-                          key={file.id}
-                          role="tab"
-                          aria-selected={isActive}
-                          tabIndex={0}
-                          draggable
-                          onDragStart={(event) => handleTabDragStart(event, file.id)}
-                          onDragOver={handleTabDragOver}
-                          onDrop={(event) => handleTabDrop(event, file.id, 'left')}
-                          onDragEnd={handleTabDragEnd}
-                          onClick={() => setActiveFile(file)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              setActiveFile(file);
-                            }
-                          }}
-                          onContextMenu={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            setActiveFile(file);
-                            setTabMenu({
-                              x: event.clientX,
-                              y: event.clientY,
-                              fileId: file.id,
-                            });
-                          }}
-                          className={`group relative flex h-[30px] cursor-grab select-none items-center gap-1.5 rounded-t-md border pl-2 pr-[0.225rem] py-0.5 text-[11px] active:cursor-grabbing ${
-                            isActive
-                              ? 'border-[#2a2d2e] border-b-[#1e1e1e] bg-[#1e1e1e] text-white shadow-[inset_0_1px_0_#2f2f2f]'
-                              : 'border-transparent text-gray-300 hover:bg-[#2a2d2e] hover:text-white'
-                          }`}
-                          title={file.name}
-                        >
-                          <span className="flex min-w-0 items-center gap-2">
-                            {isFileDirty(file) && (
-                              <span className="h-1.5 w-1.5 rounded-full bg-[#d7ba7d]" />
-                            )}
-                            <span className="max-w-[180px] truncate">{file.name}</span>
-                          </span>
-                          <button
-                            type="button"
-                            aria-label={`Close ${file.name}`}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              handleCloseFile(file.id);
-                            }}
-                            onMouseDown={(event) => event.stopPropagation()}
-                            onDragStart={(event) => event.stopPropagation()}
-                            className={`flex h-5 w-5 items-center justify-center rounded text-[12px] transition ${
-                              isActive
-                                ? 'text-gray-300 hover:bg-[#3a3d41] hover:text-white'
-                                : 'text-gray-400 hover:bg-[#3a3d41] hover:text-white'
-                            } ${
-                              isFileDirty(file)
-                                ? 'opacity-0 group-hover:opacity-100'
-                                : isActive
-                                  ? 'opacity-100'
-                                  : 'opacity-0 group-hover:opacity-100'
-                            }`}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-                {rightTabs.length > 0 && (
-                  <>
-                    <div
-                      className="w-1.5 cursor-col-resize bg-[#2a2d2e] opacity-60 hover:opacity-100"
-                      onMouseDown={handleSplitResizeStart}
-                      role="separator"
-                      aria-orientation="vertical"
-                      aria-label="Resize editor split"
-                    />
-                    <div
-                      className="flex min-w-0 items-end overflow-x-auto overflow-y-hidden"
-                      style={{
-                        flexBasis: `${(1 - splitRatio) * 100}%`,
-                        flexGrow: 0,
-                        flexShrink: 0,
-                      }}
-                      onDragOver={handleTabDragOver}
-                      onDrop={(event) => handleTabBarDrop(event, 'right')}
-                    >
-                      <div className="flex min-w-max items-end gap-1 px-2">
-                        {rightTabs.map((file) => {
-                          const isActive = sideFile?.id === file.id;
-                          return (
-                            <div
-                              key={file.id}
-                              role="tab"
-                              aria-selected={isActive}
-                              tabIndex={0}
-                              draggable
-                              onDragStart={(event) => handleTabDragStart(event, file.id)}
-                              onDragOver={handleTabDragOver}
-                              onDrop={(event) => handleTabDrop(event, file.id, 'right')}
-                              onDragEnd={handleTabDragEnd}
-                              onClick={() => setSideFileId(file.id)}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter' || event.key === ' ') {
-                                  event.preventDefault();
-                                  setSideFileId(file.id);
-                                }
-                              }}
-                              onContextMenu={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                setSideFileId(file.id);
-                                setTabMenu({
-                                  x: event.clientX,
-                                  y: event.clientY,
-                                  fileId: file.id,
-                                });
-                              }}
-                              className={`group relative flex h-[30px] cursor-grab select-none items-center gap-1.5 rounded-t-md border pl-2 pr-[0.225rem] py-0.5 text-[11px] active:cursor-grabbing ${
-                                isActive
-                                  ? 'border-[#2a2d2e] border-b-[#1e1e1e] bg-[#1e1e1e] text-white shadow-[inset_0_1px_0_#2f2f2f]'
-                                  : 'border-transparent text-gray-300 hover:bg-[#2a2d2e] hover:text-white'
-                              }`}
-                              title={file.name}
-                            >
-                              <span className="flex min-w-0 items-center gap-2">
-                                {isFileDirty(file) && (
-                                  <span className="h-1.5 w-1.5 rounded-full bg-[#d7ba7d]" />
-                                )}
-                                <span className="max-w-[180px] truncate">{file.name}</span>
-                              </span>
-                              <button
-                                type="button"
-                                aria-label={`Close ${file.name}`}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  handleCloseFile(file.id);
-                                }}
-                                onMouseDown={(event) => event.stopPropagation()}
-                                onDragStart={(event) => event.stopPropagation()}
-                                className={`flex h-5 w-5 items-center justify-center rounded text-[12px] transition ${
-                                  isActive
-                                    ? 'text-gray-300 hover:bg-[#3a3d41] hover:text-white'
-                                    : 'text-gray-400 hover:bg-[#3a3d41] hover:text-white'
-                                } ${
-                                  isFileDirty(file)
-                                    ? 'opacity-0 group-hover:opacity-100'
-                                    : isActive
-                                      ? 'opacity-100'
-                                      : 'opacity-0 group-hover:opacity-100'
-                                }`}
-                              >
-                                ×
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-              <div className="flex items-center gap-2 px-2 text-[11px] text-gray-300">
-                {selectedRevision && (
-                  <button
-                    className="rounded border border-[#3c3c3c] px-3 py-1 text-gray-200 hover:bg-[#2a2d2e]"
-                    onClick={() => setHistorySelectedId(null)}
-                  >
-                    Exit compare
-                  </button>
-                )}
-              </div>
-            </div>
+            <EditorTabBar
+              editorView={editorView}
+              leftTabs={leftTabs}
+              rightTabs={rightTabs}
+              activeFileId={activeFile?.id ?? null}
+              sideFileId={sideFile?.id ?? null}
+              splitRatio={splitRatio}
+              showExitCompare={Boolean(selectedRevision)}
+              isFileDirty={isFileDirty}
+              onSelectTab={setActiveFile}
+              onSelectSideTab={(file) => setSideFileId(file.id)}
+              onCloseTab={handleCloseFile}
+              onTabDragStart={handleTabDragStart}
+              onTabDragOver={handleTabDragOver}
+              onTabDrop={handleTabDrop}
+              onTabDragEnd={handleTabDragEnd}
+              onTabBarDrop={handleTabBarDrop}
+              onSplitResizeStart={handleSplitResizeStart}
+              onTabContextMenu={handleTabContextMenu}
+              onExitCompare={() => setHistorySelectedId(null)}
+            />
 
-          <div
-            ref={editorAreaRef}
-            className="relative flex flex-1 min-h-0 min-w-0 overflow-hidden bg-[#1e1e1e]"
-            onDragOverCapture={handleTabDragOver}
-            onDropCapture={handleEditorDrop}
-            onDragOver={handleTabDragOver}
-            onDrop={handleEditorDrop}
-          >
-            <div
-              className={`flex flex-1 min-h-0 min-w-0 ${
-                editorView === 'preview' ? 'hidden' : ''
-              }`}
-            >
-              <div className={`flex min-h-0 min-w-0 flex-1 ${showDiff ? 'hidden' : ''}`}>
-                <div
-                  className="flex min-w-0 flex-col"
-                  style={
-                    showSplitEditor
-                      ? {
-                          flexBasis: `${splitRatio * 100}%`,
-                          flexGrow: 0,
-                          flexShrink: 0,
-                        }
-                      : { flexGrow: 1, flexShrink: 1 }
-                  }
-                >
-                  <div className="flex-1 min-h-0">
-                    <MonacoEditor
-                      height="100%"
-                      language={mainEditorLanguage}
-                      theme="vs-dark"
-                      value={mainEditorValue}
-                      path={mainEditorPath}
-                      keepCurrentModel
-                      onMount={(editor) => {
-                        mainEditorRef.current = editor;
-                      }}
-                      onChange={handleEditorChange}
-                      options={{
-                        fontSize: 14,
-                        minimap: { enabled: false },
-                        scrollBeyondLastLine: false,
-                        automaticLayout: true,
-                        readOnly: !activeFile,
-                      }}
-                    />
-                  </div>
-                </div>
-                {showSplitEditor && (
-                  <div
-                    className="flex w-1.5 cursor-col-resize items-stretch bg-[#2a2d2e] opacity-60 hover:opacity-100"
-                    onMouseDown={handleSplitResizeStart}
-                    role="separator"
-                    aria-orientation="vertical"
-                    aria-label="Resize editor split"
-                  />
-                )}
-                <div
-                  className={`flex min-w-0 flex-col overflow-hidden ${
-                    showSplitEditor ? '' : 'hidden'
-                  }`}
-                  style={
-                    showSplitEditor
-                      ? {
-                          flexBasis: `${(1 - splitRatio) * 100}%`,
-                          flexGrow: 0,
-                          flexShrink: 0,
-                          borderLeft: '1px solid #2a2d2e',
-                        }
-                      : undefined
-                  }
-                >
-                  <div className="flex-1 min-h-0">
-                      <MonacoEditor
-                        height="100%"
-                        language={sideEditorLanguage}
-                        theme="vs-dark"
-                        value={sideEditorValue}
-                        path={sideEditorPath}
-                        keepCurrentModel
-                        onMount={(editor) => {
-                          sideEditorRef.current = editor;
-                        }}
-                        onChange={handleSideEditorChange}
-                      options={{
-                        fontSize: 14,
-                        minimap: { enabled: false },
-                        scrollBeyondLastLine: false,
-                        automaticLayout: true,
-                        readOnly: !sideFile,
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-              <div className={`flex min-h-0 flex-1 ${showDiff ? '' : 'hidden'}`}>
-                <MonacoDiffEditor
-                  height="100%"
-                  language={mainEditorLanguage}
-                  theme="vs-dark"
-                  original={diffOriginal}
-                  modified={mainEditorValue}
-                  originalModelPath={diffModelPaths.original}
-                  modifiedModelPath={diffModelPaths.modified}
-                  keepCurrentOriginalModel
-                  keepCurrentModifiedModel
-                  options={{
-                    fontSize: 14,
-                    minimap: { enabled: false },
-                    scrollBeyondLastLine: false,
-                    automaticLayout: true,
-                    readOnly: true,
-                    renderSideBySide: true,
-                  }}
-                />
-              </div>
-            </div>
-            <div
-              className={`flex min-h-0 flex-1 ${
-                editorView === 'preview' ? '' : 'hidden'
-              }`}
-            >
-              {!previewTarget ? (
-                <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
-                  {isSharedMode
-                    ? 'Switch to preview to load the shared project.'
-                    : uiData.length === 0
-                      ? 'No UI entities available for preview.'
-                      : 'Preview is loading...'}
-                </div>
-              ) : !tenantHost ? (
-                <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
-                  Select a tenant to load preview.
-                </div>
-              ) : (
-                <iframe
-                  key={previewSrc}
-                  title="UI preview"
-                  className="h-full w-full border-0 bg-white"
-                  src={previewSrc}
-                  sandbox="allow-scripts allow-same-origin allow-forms"
-                />
-              )}
-            </div>
-            {!activeFile && editorView === 'code' && (
-              <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">
-                {isSharedMode
-                  ? 'Select a file from the shared project to start editing.'
-                  : 'Select a module or UI entity from the explorer to start editing.'}
-              </div>
-            )}
-          </div>
+            <EditorWorkspace
+              editorView={editorView}
+              showDiff={showDiff}
+              showSplitEditor={showSplitEditor}
+              splitRatio={splitRatio}
+              activeFile={activeFile}
+              sideFile={sideFile}
+              mainEditorLanguage={mainEditorLanguage}
+              mainEditorValue={mainEditorValue}
+              mainEditorPath={mainEditorPath}
+              sideEditorLanguage={sideEditorLanguage}
+              sideEditorValue={sideEditorValue}
+              sideEditorPath={sideEditorPath}
+              diffOriginal={diffOriginal}
+              diffModelPaths={diffModelPaths}
+              onMainEditorChange={handleEditorChange}
+              onSideEditorChange={handleSideEditorChange}
+              onMainEditorMount={(editor) => {
+                mainEditorRef.current = editor;
+              }}
+              onSideEditorMount={(editor) => {
+                sideEditorRef.current = editor;
+              }}
+              onSplitResizeStart={handleSplitResizeStart}
+              onTabDragOver={handleTabDragOver}
+              onEditorDrop={handleEditorDrop}
+              previewTarget={previewTarget}
+              previewSrc={previewSrc}
+              tenantHost={tenantHost}
+              isSharedMode={isSharedMode}
+              uiCount={uiData.length}
+              editorAreaRef={editorAreaRef}
+            />
           </main>
         </div>
 
-        <div className="flex h-7 items-center justify-between border-t border-[#2a2d2e] bg-[#252526] px-3 text-[11px] text-gray-300">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="truncate text-gray-200 leading-none">
-              {activeFile ? activeFile.name : 'No file selected'}
-            </span>
-            {activeFile && (
-              <span className="flex h-5 items-center rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 text-[10px] uppercase tracking-wide text-gray-300">
-                {activeFileType}
-              </span>
-            )}
-            {activeFile?.meta?.kind === 'ui' && (
-              <div className="flex items-center gap-2">
-                <span className="flex h-5 items-center rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 text-[10px] uppercase tracking-wide">
-                  UI Entity
-                </span>
-                <span className="text-gray-200 leading-none">{activeFile.meta.name}</span>
-              </div>
-            )}
-            {activeFile?.meta?.kind === 'module' && (
-              <div className="flex items-center gap-2">
-                <span className="flex h-5 items-center rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 text-[10px] uppercase tracking-wide">
-                  {activeFile.meta.method}
-                </span>
-                <span className="text-gray-200 leading-none">{activeFile.meta.routePath}</span>
-              </div>
-            )}
-            {activeFile?.meta?.kind === 'shared' && (
-              <div className="flex items-center gap-2">
-                <span className="flex h-5 items-center rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 text-[10px] uppercase tracking-wide">
-                  Shared
-                </span>
-                <span className="text-gray-200 leading-none">{activeFile.meta.path}</span>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {activeFile && (
-              <>
-                <span className="text-gray-400 leading-none">Language</span>
-                <select
-                  value={
-                    LANGUAGE_OPTIONS.some((option) => option.value === activeFile.language)
-                      ? activeFile.language
-                      : 'javascript'
-                  }
-                  onChange={(e) => handleLanguageChange(e.target.value as EditorLanguage)}
-                  className="h-5 rounded border border-[#3c3c3c] bg-[#1e1e1e] px-2 text-[11px] text-gray-200 focus:border-sky-500 focus:outline-none"
-                >
-                  {LANGUAGE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </>
-            )}
-          </div>
-        </div>
-        {renderTabContextMenu()}
+        <EditorBottomBar
+          activeFile={activeFile}
+          activeFileType={activeFileType}
+          languageOptions={LANGUAGE_OPTIONS}
+          onLanguageChange={handleLanguageChange}
+        />
+        <EditorTabContextMenu
+          menu={tabMenu}
+          openFiles={openFiles}
+          isFileDirty={isFileDirty}
+          rightPaneSet={rightPaneSet}
+          onRequestCloseTabs={requestCloseTabs}
+          onSaveFile={(file) => {
+            void handleSaveFile(file);
+          }}
+          onSaveAll={() => {
+            void handleSaveAll();
+          }}
+          onToggleSide={handleToggleSide}
+          onDismiss={() => setTabMenu(null)}
+        />
       </div>
-
-      <Modal
-        open={createModalOpen}
-        onClose={closeCreateModal}
-        title={
-          createType === 'folder'
-            ? `Create folder (${
-                createScope === 'shared'
-                  ? 'Shared Project'
-                  : createScope === 'modules'
-                  ? 'Modules'
-                  : 'UI Entities'
-              })`
-            : createScope === 'modules'
-            ? 'Create module'
-            : createScope === 'shared'
-            ? 'Create shared file'
-            : 'Create UI entity'
-        }
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={closeCreateModal}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={handleCreateSubmit}>
-              Create
-            </Button>
-          </div>
-        }
-      >
-        {createType === 'folder' ? (
-          <FormLayout>
-            <Input
-              label="Folder name"
-              value={folderForm.name}
-              onChange={(e) => setFolderForm({ name: e.target.value })}
-              placeholder="New folder"
-            />
-          </FormLayout>
-        ) : createScope === 'modules' ? (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleCreateSubmit();
-            }}
-            className="space-y-4"
-          >
-            <FormLayout
-              gridClassName="grid gap-4 md:grid-cols-2"
-            >
-              <Input
-                label="Route path"
-                value={moduleForm.routePath}
-                onChange={(e) => setModuleForm({ ...moduleForm, routePath: e.target.value })}
-                placeholder="/api/example"
-              />
-              <Select
-                label="Method"
-                value={moduleForm.method}
-                onChange={(e) => setModuleForm({ ...moduleForm, method: e.target.value })}
-                options={MODULE_METHOD_OPTIONS.map((method) => ({
-                  label: method,
-                  value: method,
-                }))}
-              />
-              <Select
-                label="File extension"
-                value={moduleForm.fileExtension}
-                onChange={(e) =>
-                  setModuleForm({ ...moduleForm, fileExtension: e.target.value })
-                }
-                options={FILE_EXTENSION_OPTIONS.map((ext) => ({
-                  label: ext,
-                  value: ext,
-                }))}
-              />
-              <div className="md:col-span-2">
-                <TextArea
-                  label="Module code"
-                  value={moduleForm.code}
-                  onChange={(e) => setModuleForm({ ...moduleForm, code: e.target.value })}
-                />
-              </div>
-            </FormLayout>
-          </form>
-        ) : createScope === 'shared' ? (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleCreateSubmit();
-            }}
-            className="space-y-4"
-          >
-            <FormLayout>
-              <Input
-                label="File path"
-                value={sharedFileForm.path}
-                onChange={(e) =>
-                  setSharedFileForm((prev) => ({ ...prev, path: e.target.value }))
-                }
-                placeholder="src/new-file.tsx"
-              />
-              <TextArea
-                label="Initial content (optional)"
-                value={sharedFileForm.content}
-                onChange={(e) =>
-                  setSharedFileForm((prev) => ({ ...prev, content: e.target.value }))
-                }
-                rows={6}
-              />
-            </FormLayout>
-          </form>
-        ) : (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleCreateSubmit();
-            }}
-            className="space-y-4"
-          >
-            <FormLayout
-              gridClassName="grid gap-4 md:grid-cols-2"
-            >
-              <Input
-                label="Name"
-                value={uiForm.name}
-                onChange={(e) => setUiForm({ ...uiForm, name: e.target.value })}
-                placeholder="components/Button"
-              />
-              <Input
-                label="Version"
-                value={uiForm.version}
-                onChange={(e) => setUiForm({ ...uiForm, version: e.target.value })}
-                placeholder="1.0.0"
-              />
-              <Select
-                label="File extension"
-                value={uiForm.fileExtension}
-                onChange={(e) => {
-                  const nextExtension = e.target.value;
-                  setUiForm((prev) => {
-                    const next = { ...prev, fileExtension: nextExtension };
-                    if (nextExtension === 'css' && prev.code === DEFAULT_UI_CODE) {
-                      next.code = DEFAULT_CSS_CODE;
-                    } else if (nextExtension !== 'css' && prev.code === DEFAULT_CSS_CODE) {
-                      next.code = DEFAULT_UI_CODE;
-                    }
-                    return next;
-                  });
-                }}
-                options={UI_EXTENSION_OPTIONS.map((ext) => ({
-                  label: ext,
-                  value: ext,
-                }))}
-              />
-              <div className="md:col-span-2">
-                <TextArea
-                  label="Dependencies (comma or newline separated)"
-                  value={uiForm.dependencies}
-                  onChange={(e) => setUiForm({ ...uiForm, dependencies: e.target.value })}
-                  placeholder="react, react-dom"
-                />
-              </div>
-              <div className="md:col-span-2">
-                <TextArea
-                  label="Source code"
-                  value={uiForm.code}
-                  onChange={(e) => setUiForm({ ...uiForm, code: e.target.value })}
-                />
-              </div>
-            </FormLayout>
-          </form>
-        )}
-      </Modal>
-
-      <Modal
-        open={closePromptOpen}
-        onClose={() => {
-          if (pendingCloseBusy) return;
-          setClosePromptOpen(false);
-          setPendingCloseIds([]);
-          setPendingCloseAction(null);
-        }}
-        title="Unsaved changes"
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                if (pendingCloseBusy) return;
-                setClosePromptOpen(false);
-                setPendingCloseIds([]);
-                setPendingCloseAction(null);
-              }}
-              disabled={pendingCloseBusy}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                if (pendingCloseBusy) return;
-                if (pendingCloseAction === 'reload') {
-                  setPendingCloseIds([]);
-                  setPendingCloseAction(null);
-                  setClosePromptOpen(false);
-                  window.location.reload();
-                  return;
-                }
-                closeTabsByIds(new Set(pendingCloseIds));
-                setPendingCloseIds([]);
-                setPendingCloseAction(null);
-                setClosePromptOpen(false);
-              }}
-              disabled={pendingCloseBusy}
-            >
-              Discard
-            </Button>
-            <Button
-              variant="primary"
-              onClick={async () => {
-                if (pendingCloseBusy) return;
-                setPendingCloseBusy(true);
-                for (const file of pendingDirtyFiles) {
-                  await handleSaveFile(file);
-                }
-                if (pendingCloseAction === 'reload') {
-                  setPendingCloseIds([]);
-                  setPendingCloseAction(null);
-                  setClosePromptOpen(false);
-                  setPendingCloseBusy(false);
-                  window.location.reload();
-                  return;
-                }
-                closeTabsByIds(new Set(pendingCloseIds));
-                setPendingCloseIds([]);
-                setPendingCloseAction(null);
-                setClosePromptOpen(false);
-                setPendingCloseBusy(false);
-              }}
-              disabled={pendingCloseBusy}
-            >
-              Save
-            </Button>
-          </div>
-        }
-      >
-        <div className="space-y-2 text-sm text-gray-300">
-          <p>
-            You have {pendingDirtyFiles.length} unsaved file
-            {pendingDirtyFiles.length === 1 ? '' : 's'}.
-          </p>
-          {pendingDirtyFiles.length > 0 && (
-            <div className="max-h-32 overflow-auto rounded border border-[#2a2d2e] bg-[#1f1f1f] px-3 py-2 text-[11px] text-gray-200">
-              {pendingDirtyFiles.map((file) => (
-                <div key={file.id} className="truncate">
-                  {file.name}
-                </div>
-              ))}
-            </div>
-          )}
-          <p>
-            Do you want to save your changes before{' '}
-            {pendingCloseAction === 'reload' ? 'reloading' : 'closing'}?
-          </p>
-        </div>
-      </Modal>
-
-      <Modal
-        open={editModalOpen}
-        onClose={closeEditModal}
-        title={
-          editMeta?.kind === 'module'
-            ? 'Edit module'
-            : editMeta?.kind === 'shared'
-            ? 'Edit shared file'
-            : 'Edit UI entity'
-        }
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={closeEditModal}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={handleEditSubmit}>
-              Save
-            </Button>
-          </div>
-        }
-      >
-        {editMeta?.kind === 'module' ? (
-          <FormLayout gridClassName="grid gap-4 md:grid-cols-2">
-            <Input
-              label="Route path"
-              value={editModuleForm.routePath}
-              onChange={(e) =>
-                setEditModuleForm({ ...editModuleForm, routePath: e.target.value })
-              }
-              placeholder="/api/example"
-            />
-            <Select
-              label="Method"
-              value={editModuleForm.method}
-              onChange={(e) =>
-                setEditModuleForm({ ...editModuleForm, method: e.target.value })
-              }
-              options={MODULE_METHOD_OPTIONS.map((method) => ({
-                label: method,
-                value: method,
-              }))}
-            />
-            <Select
-              label="File extension"
-              value={editModuleForm.fileExtension}
-              onChange={(e) =>
-                setEditModuleForm({ ...editModuleForm, fileExtension: e.target.value })
-              }
-              options={FILE_EXTENSION_OPTIONS.map((ext) => ({
-                label: ext,
-                value: ext,
-              }))}
-            />
-          </FormLayout>
-        ) : editMeta?.kind === 'shared' ? (
-          <FormLayout>
-            <Input
-              label="File path"
-              value={editSharedPath}
-              onChange={(e) => setEditSharedPath(e.target.value)}
-              placeholder="src/file.tsx"
-            />
-          </FormLayout>
-        ) : (
-          <FormLayout gridClassName="grid gap-4 md:grid-cols-2">
-            <Input
-              label="Name"
-              value={editUiForm.name}
-              onChange={(e) => setEditUiForm({ ...editUiForm, name: e.target.value })}
-              placeholder="components/Button"
-            />
-            <Input
-              label="Version"
-              value={editUiForm.version}
-              onChange={(e) => setEditUiForm({ ...editUiForm, version: e.target.value })}
-              placeholder="1.0.0"
-            />
-            <Select
-              label="File extension"
-              value={editUiForm.fileExtension}
-              onChange={(e) =>
-                setEditUiForm({ ...editUiForm, fileExtension: e.target.value })
-              }
-              options={UI_EXTENSION_OPTIONS.map((ext) => ({
-                label: ext,
-                value: ext,
-              }))}
-            />
-            <div className="md:col-span-2">
-              <TextArea
-                label="Dependencies (comma or newline separated)"
-                value={editUiForm.dependencies}
-                onChange={(e) =>
-                  setEditUiForm({ ...editUiForm, dependencies: e.target.value })
-                }
-              />
-            </div>
-          </FormLayout>
-        )}
-      </Modal>
-
-      <Modal
-        open={renameFolderOpen}
-        onClose={closeRenameFolderModal}
-        title="Rename folder"
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={closeRenameFolderModal}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={handleRenameFolderSubmit}>
-              Rename
-            </Button>
-          </div>
-        }
-      >
-        <FormLayout>
-          <Input
-            label="Folder name"
-            value={renameFolderName}
-            onChange={(e) => setRenameFolderName(e.target.value)}
-          />
-        </FormLayout>
-      </Modal>
-
-      <Modal
-        open={deleteModalOpen}
-        onClose={closeDeleteModal}
-        title="Delete"
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={closeDeleteModal}>
-              Cancel
-            </Button>
-            <Button variant="danger" onClick={handleDeleteSubmit}>
-              Delete
-            </Button>
-          </div>
-        }
-      >
-        <p className="text-sm text-textMuted">
-          {deleteTarget?.type === 'folder'
-            ? `Delete folder "${deleteTarget.label}" and everything inside it?`
-            : `Delete "${deleteTarget?.label}"?`}
-        </p>
-      </Modal>
+      <EditorModals
+        createModalOpen={createModalOpen}
+        createType={createType}
+        createScope={createScope}
+        folderForm={folderForm}
+        setFolderForm={setFolderForm}
+        moduleForm={moduleForm}
+        setModuleForm={setModuleForm}
+        sharedFileForm={sharedFileForm}
+        setSharedFileForm={setSharedFileForm}
+        uiForm={uiForm}
+        setUiForm={setUiForm}
+        onCloseCreate={closeCreateModal}
+        onCreateSubmit={handleCreateSubmit}
+        closePromptOpen={closePromptOpen}
+        pendingDirtyFiles={pendingDirtyFiles}
+        pendingCloseBusy={pendingCloseBusy}
+        pendingCloseAction={pendingCloseAction}
+        onCancelClosePrompt={handleCancelClosePrompt}
+        onDiscardClosePrompt={handleDiscardClosePrompt}
+        onSaveClosePrompt={handleSaveClosePrompt}
+        editModalOpen={editModalOpen}
+        editMeta={editMeta}
+        editModuleForm={editModuleForm}
+        setEditModuleForm={setEditModuleForm}
+        editUiForm={editUiForm}
+        setEditUiForm={setEditUiForm}
+        editSharedPath={editSharedPath}
+        setEditSharedPath={setEditSharedPath}
+        onCloseEdit={closeEditModal}
+        onEditSubmit={handleEditSubmit}
+        renameFolderOpen={renameFolderOpen}
+        renameFolderName={renameFolderName}
+        setRenameFolderName={setRenameFolderName}
+        onCloseRename={closeRenameFolderModal}
+        onRenameSubmit={handleRenameFolderSubmit}
+        deleteModalOpen={deleteModalOpen}
+        deleteTarget={deleteTarget}
+        onCloseDelete={closeDeleteModal}
+        onDeleteSubmit={handleDeleteSubmit}
+      />
 
       <style jsx global>{`
         .monaco-editor .monaco-search-match {

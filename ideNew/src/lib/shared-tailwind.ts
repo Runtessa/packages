@@ -80,6 +80,7 @@ export const upsertGlobalTailwindPackage = async (
     pkg.draftVersion = generateVersion();
   }
   await repo.save(pkg);
+  await clearRegistryCache(name, version);
   return pkg;
 };
 

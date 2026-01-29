@@ -16,6 +16,7 @@ import {
 } from '@/lib/tailwindBuilder';
 import {
   loadTailwindConfigForTenant,
+  rebuildTailwindPackagesForTenant,
   removeTailwindPackage,
   upsertTailwindPackage,
 } from '@/lib/ui-entity-tailwind';
@@ -142,6 +143,9 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       await removeTailwindPackage(tenant.id, previousTailwindName, previousVersion);
     }
     await upsertTailwindPackage(tenant.id, nextTailwindName, revision.version, tailwindCss);
+  }
+  if (isTailwindConfigName(revision.name) || isTailwindConfigName(previousName)) {
+    await rebuildTailwindPackagesForTenant(tenant.id);
   }
 
   res.status(200).json(serialize(pkg));
