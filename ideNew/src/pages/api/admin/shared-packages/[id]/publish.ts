@@ -5,6 +5,12 @@ import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
 import { GlobalUIPackage } from '@/lib/entities/GlobalUIPackage';
 import redis from '@/lib/redis';
 import { generateVersion } from '@/lib/version';
+import {
+  getTailwindPackageName,
+  isTailwindPackageName,
+  stripTailwindDependency,
+} from '@/lib/tailwindBuilder';
+import { publishGlobalTailwindPackage } from '@/lib/shared-tailwind';
 
 const serialize = (pkg: GlobalUIPackage) => ({
   id: pkg.id,
@@ -13,7 +19,7 @@ const serialize = (pkg: GlobalUIPackage) => ({
   entryPath: pkg.entryPath,
   code: pkg.code,
   codeBlob: pkg.codeBlob,
-  dependencies: pkg.dependencies ?? [],
+  dependencies: stripTailwindDependency(pkg.dependencies ?? [], getTailwindPackageName(pkg.name)),
   fileExtension: pkg.fileExtension,
   draftVersion: pkg.draftVersion,
   publishedVersion: pkg.publishedVersion ?? undefined,
@@ -46,6 +52,10 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   pkg.publishedFileExtension = pkg.fileExtension;
   pkg.publishedAt = new Date();
   await repo.save(pkg);
+
+  if (!isTailwindPackageName(pkg.name)) {
+    await publishGlobalTailwindPackage(getTailwindPackageName(pkg.name), pkg.version);
+  }
 
   const encoded = encodeURIComponent(pkg.name);
   await redis.del(`registry:global:${encoded}:latest`, `registry:global:${encoded}:${pkg.version}`);

@@ -5,6 +5,14 @@ import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
 import { GlobalUIPackage } from '@/lib/entities/GlobalUIPackage';
 import { GlobalUIPackageFile } from '@/lib/entities/GlobalUIPackageFile';
 import { generateVersion } from '@/lib/version';
+import {
+  ensureTailwindDependency,
+  getTailwindPackageName,
+  isTailwindPackageName,
+  shouldBuildTailwind,
+  stripTailwindDependency,
+} from '@/lib/tailwindBuilder';
+import { buildTailwindCssFromFiles, upsertGlobalTailwindPackage } from '@/lib/shared-tailwind';
 
 const normalizeName = (raw: unknown): string => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -68,7 +76,7 @@ const serialize = (pkg: GlobalUIPackage) => ({
   entryPath: pkg.entryPath,
   code: pkg.code,
   codeBlob: pkg.codeBlob,
-  dependencies: pkg.dependencies ?? [],
+  dependencies: stripTailwindDependency(pkg.dependencies ?? [], getTailwindPackageName(pkg.name)),
   fileExtension: pkg.fileExtension,
   draftVersion: pkg.draftVersion,
   publishedVersion: pkg.publishedVersion ?? undefined,
@@ -84,7 +92,9 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
 
     const repo = CoreDataSource.getRepository(GlobalUIPackage);
     const packages = await repo.find({ order: { name: 'ASC', version: 'DESC' } });
-    res.status(200).json({ packages: packages.map(serialize) });
+    res
+      .status(200)
+      .json({ packages: packages.filter((pkg) => !isTailwindPackageName(pkg.name)).map(serialize) });
     return;
   }
 
@@ -105,6 +115,12 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       typeof entryPath === 'string' && entryPath.trim()
         ? entryPath.trim()
         : 'src/index.tsx';
+    const isTwPackage = isTailwindPackageName(normalizedName);
+    const usesTailwind = shouldBuildTailwind(fileExtension) && !isTwPackage;
+    const tailwindName = getTailwindPackageName(normalizedName);
+    const depsWithTailwind = usesTailwind
+      ? ensureTailwindDependency(normalizedDeps, tailwindName)
+      : stripTailwindDependency(normalizedDeps, tailwindName);
 
     const repo = CoreDataSource.getRepository(GlobalUIPackage);
     const fileRepo = CoreDataSource.getRepository(GlobalUIPackageFile);
@@ -122,7 +138,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       entryPath: normalizedEntry,
       code: normalizedCode,
       codeBlob: compiledCode,
-      dependencies: normalizedDeps,
+      dependencies: depsWithTailwind,
       fileExtension,
       draftVersion: generateVersion(),
     });
@@ -135,6 +151,14 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       content: normalizedCode,
     });
     await fileRepo.save(entryFile);
+    if (usesTailwind) {
+      const files = await fileRepo.find({
+        where: { project: { id: pkg.id } },
+        order: { path: 'ASC' },
+      });
+      const css = await buildTailwindCssFromFiles(files);
+      await upsertGlobalTailwindPackage(tailwindName, normalizedVersion, css);
+    }
     res.status(201).json({ package: serialize(pkg) });
     return;
   }

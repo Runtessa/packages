@@ -12,18 +12,22 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "autoprefixer": "latest",
     "bcryptjs": "latest",
+    "cssnano": "^7.1.2",
     "ioredis": "^5.8.2",
     "monaco-editor": "latest",
     "mysql2": "^3.16.0",
     "next": "latest",
     "pg": "latest",
+    "postcss": "^8.4.32",
     "react": "latest",
     "react-dom": "latest",
     "react-icons": "^5.5.0",
     "reflect-metadata": "^0.2.2",
     "source-map-support": "^0.5.21",
     "sqlite3": "^5.1.7",
+    "tailwindcss": "3.4.14",
     "tedious": "^19.2.0",
     "typeorm": "^0.3.28"
   },
@@ -37,11 +41,8 @@
     "@types/react-dom": "latest",
     "@types/react-icons": "latest",
     "@types/source-map-support": "^0.5.10",
-    "autoprefixer": "latest",
     "cross-env": "^10.1.0",
     "lightningcss": "^1.30.2",
-    "postcss": "latest",
-    "tailwindcss": "3.4.14",
     "typescript": "5.9.3"
   }
 }

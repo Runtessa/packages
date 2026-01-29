@@ -3,8 +3,21 @@ import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
 import { GlobalUIPackage } from '@/lib/entities/GlobalUIPackage';
+import { GlobalUIPackageFile } from '@/lib/entities/GlobalUIPackageFile';
 import redis from '@/lib/redis';
 import { generateVersion } from '@/lib/version';
+import {
+  ensureTailwindDependency,
+  getTailwindPackageName,
+  isTailwindPackageName,
+  shouldBuildTailwind,
+  stripTailwindDependency,
+} from '@/lib/tailwindBuilder';
+import {
+  buildTailwindCssFromFiles,
+  removeGlobalTailwindPackage,
+  upsertGlobalTailwindPackage,
+} from '@/lib/shared-tailwind';
 
 const normalizeName = (raw: unknown): string => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -68,7 +81,7 @@ const serialize = (pkg: GlobalUIPackage) => ({
   entryPath: pkg.entryPath,
   code: pkg.code,
   codeBlob: pkg.codeBlob,
-  dependencies: pkg.dependencies ?? [],
+  dependencies: stripTailwindDependency(pkg.dependencies ?? [], getTailwindPackageName(pkg.name)),
   fileExtension: pkg.fileExtension,
   draftVersion: pkg.draftVersion,
   publishedVersion: pkg.publishedVersion ?? undefined,
@@ -83,11 +96,14 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     await ensureCoreSchema();
 
     const repo = CoreDataSource.getRepository(GlobalUIPackage);
+    const fileRepo = CoreDataSource.getRepository(GlobalUIPackageFile);
     const pkg = await repo.findOne({ where: { id: req.query.id as string } });
     if (!pkg) {
       res.status(404).json({ error: 'Shared package not found' });
       return;
     }
+    const previousName = pkg.name;
+    const previousVersion = pkg.version;
 
     res.status(200).json({ package: serialize(pkg) });
     return;
@@ -116,7 +132,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       req.body?.codeBlob !== undefined
         ? normalizeCompiledCode(req.body.codeBlob)
         : pkg.codeBlob;
-    const nextDeps =
+    const nextDepsRaw =
       req.body?.dependencies !== undefined
         ? normalizeDependencies(req.body.dependencies)
         : pkg.dependencies ?? [];
@@ -135,6 +151,18 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       }
     }
 
+    const usesTailwind =
+      shouldBuildTailwind(nextExt) && !isTailwindPackageName(nextName);
+    const nextTailwindName = getTailwindPackageName(nextName);
+    const previousTailwindName = getTailwindPackageName(previousName);
+    const depsSansTailwind = stripTailwindDependency(
+      stripTailwindDependency(nextDepsRaw, previousTailwindName),
+      nextTailwindName
+    );
+    const nextDeps = usesTailwind
+      ? ensureTailwindDependency(depsSansTailwind, nextTailwindName)
+      : depsSansTailwind;
+
     pkg.name = nextName;
     pkg.version = nextVersion;
     pkg.entryPath = nextEntry;
@@ -144,6 +172,20 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     pkg.fileExtension = nextExt;
     pkg.draftVersion = generateVersion();
     await repo.save(pkg);
+
+    if (!usesTailwind) {
+      await removeGlobalTailwindPackage(previousTailwindName, previousVersion);
+    } else {
+      if (previousTailwindName !== nextTailwindName || previousVersion !== nextVersion) {
+        await removeGlobalTailwindPackage(previousTailwindName, previousVersion);
+      }
+      const files = await fileRepo.find({
+        where: { project: { id: pkg.id } },
+        order: { path: 'ASC' },
+      });
+      const css = await buildTailwindCssFromFiles(files);
+      await upsertGlobalTailwindPackage(nextTailwindName, nextVersion, css);
+    }
 
     res.status(200).json({ package: serialize(pkg) });
     return;
@@ -161,6 +203,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     }
     const encoded = encodeURIComponent(pkg.name);
     await redis.del(`registry:global:${encoded}:latest`, `registry:global:${encoded}:${pkg.version}`);
+    await removeGlobalTailwindPackage(getTailwindPackageName(pkg.name), pkg.version);
     await repo.remove(pkg);
     res.status(204).end();
     return;

@@ -7,6 +7,19 @@ import { UIPackageRevision } from '@/lib/entities/UIPackageRevision';
 import { resolveTenant } from '@/lib/tenancy';
 import redis from '@/lib/redis';
 import { generateVersion } from '@/lib/version';
+import {
+  buildTailwindCss,
+  ensureTailwindDependency,
+  getTailwindPackageName,
+  isTailwindConfigName,
+  shouldBuildTailwind,
+  stripTailwindDependency,
+} from '@/lib/tailwindBuilder';
+import {
+  loadTailwindConfigForTenant,
+  removeTailwindPackage,
+  upsertTailwindPackage,
+} from '@/lib/ui-entity-tailwind';
 
 const normalizeName = (raw: unknown): string => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -67,7 +80,7 @@ const serialize = (pkg: UIPackage) => ({
   version: pkg.version,
   code: pkg.code,
   codeBlob: pkg.codeBlob,
-  dependencies: pkg.dependencies ?? [],
+  dependencies: stripTailwindDependency(pkg.dependencies ?? [], getTailwindPackageName(pkg.name)),
   fileExtension: pkg.fileExtension,
   draftVersion: pkg.draftVersion,
   publishedVersion: pkg.publishedVersion ?? undefined,
@@ -136,7 +149,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       req.body?.code !== undefined ? normalizeSourceCode(req.body.code) : pkg.code;
     const nextCompiled =
       req.body?.codeBlob !== undefined ? normalizeCompiledCode(req.body.codeBlob) : pkg.codeBlob;
-    const nextDeps =
+    const nextDepsRaw =
       req.body?.dependencies !== undefined
         ? normalizeDependencies(req.body.dependencies)
         : pkg.dependencies ?? [];
@@ -144,6 +157,25 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       req.body?.fileExtension !== undefined
         ? normalizeFileExtension(req.body.fileExtension)
         : pkg.fileExtension;
+    const previousName = pkg.name;
+    const previousVersion = pkg.version;
+    const usesTailwind =
+      shouldBuildTailwind(nextExt) && !isTailwindConfigName(nextName);
+    const nextTailwindName = getTailwindPackageName(nextName);
+    const previousTailwindName = getTailwindPackageName(previousName);
+    const depsSansTailwind = stripTailwindDependency(
+      stripTailwindDependency(nextDepsRaw, previousTailwindName),
+      nextTailwindName
+    );
+    const nextDeps = usesTailwind
+      ? ensureTailwindDependency(depsSansTailwind, nextTailwindName)
+      : depsSansTailwind;
+    const tailwindConfig = usesTailwind
+      ? await loadTailwindConfigForTenant(tenant.id)
+      : null;
+    const tailwindCss = usesTailwind
+      ? await buildTailwindCss(nextSource, nextExt, tailwindConfig ?? undefined)
+      : '';
 
     if (nextName !== pkg.name || nextVersion !== pkg.version) {
       const duplicate = await repo.findOne({
@@ -166,6 +198,15 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     pkg.draftVersion = generateVersion();
     await repo.save(pkg);
 
+    if (!usesTailwind) {
+      await removeTailwindPackage(tenant.id, previousTailwindName, previousVersion);
+    } else {
+      if (previousTailwindName !== nextTailwindName || previousVersion !== nextVersion) {
+        await removeTailwindPackage(tenant.id, previousTailwindName, previousVersion);
+      }
+      await upsertTailwindPackage(tenant.id, nextTailwindName, nextVersion, tailwindCss);
+    }
+
     res.status(200).json(serialize(pkg));
     return;
   }
@@ -184,6 +225,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       `registry:tenant:${tenant.id}:${encoded}:latest`,
       `registry:tenant:${tenant.id}:${encoded}:${pkg.version}`
     );
+    await removeTailwindPackage(tenant.id, getTailwindPackageName(pkg.name), pkg.version);
     await repo.remove(pkg);
     res.status(204).end();
     return;

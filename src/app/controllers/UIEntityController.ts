@@ -90,7 +90,6 @@ export class UIEntityController {
       if (!pkg) {
         return res.status(404).json({ error: 'UI entity not found' });
       }
-
       const nextName = req.body?.name ? this.normalizeName(req.body.name) : pkg.name;
       const nextVersion = req.body?.version ? this.normalizeVersion(req.body.version) : pkg.version;
       const nextSource =
@@ -109,7 +108,6 @@ export class UIEntityController {
         req.body?.fileExtension !== undefined
           ? this.normalizeFileExtension(req.body.fileExtension)
           : pkg.fileExtension;
-
       if (nextName !== pkg.name || nextVersion !== pkg.version) {
         const duplicate = await repo.findOne({
           where: {
@@ -169,7 +167,6 @@ export class UIEntityController {
       if (!pkg) {
         return res.status(404).json({ error: 'UI entity not found' });
       }
-
       const revRepo = this.dataSource.getRepository(UIPackageRevision);
       const revisions = await revRepo.find({
         where: { uiPackage: { id: pkg.id } },
@@ -191,7 +188,6 @@ export class UIEntityController {
       if (!pkg) {
         return res.status(404).json({ error: 'UI entity not found' });
       }
-
       const revRepo = this.dataSource.getRepository(UIPackageRevision);
       const revision = await revRepo.findOne({
         where: { id: req.params.revisionId, uiPackage: { id: pkg.id } },

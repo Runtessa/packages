@@ -6,6 +6,19 @@ import { UIPackage } from '@/lib/entities/UIEntities';
 import { UIPackageRevision } from '@/lib/entities/UIPackageRevision';
 import { resolveTenant } from '@/lib/tenancy';
 import { generateVersion } from '@/lib/version';
+import {
+  buildTailwindCss,
+  ensureTailwindDependency,
+  getTailwindPackageName,
+  isTailwindConfigName,
+  shouldBuildTailwind,
+  stripTailwindDependency,
+} from '@/lib/tailwindBuilder';
+import {
+  loadTailwindConfigForTenant,
+  removeTailwindPackage,
+  upsertTailwindPackage,
+} from '@/lib/ui-entity-tailwind';
 
 const serialize = (pkg: UIPackage) => ({
   id: pkg.id,
@@ -13,7 +26,7 @@ const serialize = (pkg: UIPackage) => ({
   version: pkg.version,
   code: pkg.code,
   codeBlob: pkg.codeBlob,
-  dependencies: pkg.dependencies ?? [],
+  dependencies: stripTailwindDependency(pkg.dependencies ?? [], getTailwindPackageName(pkg.name)),
   fileExtension: pkg.fileExtension,
   draftVersion: pkg.draftVersion,
   publishedVersion: pkg.publishedVersion ?? undefined,
@@ -66,6 +79,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     res.status(404).json({ error: 'UI entity not found' });
     return;
   }
+  const previousName = pkg.name;
+  const previousVersion = pkg.version;
 
   const revRepo = CoreDataSource.getRepository(UIPackageRevision);
   const revision = await revRepo.findOne({
@@ -92,10 +107,42 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   pkg.version = revision.version;
   pkg.code = revision.code;
   pkg.codeBlob = revision.codeBlob;
-  pkg.dependencies = revision.dependencies ?? [];
+  const usesTailwind =
+    shouldBuildTailwind(revision.fileExtension) &&
+    !isTailwindConfigName(revision.name);
+  const nextTailwindName = getTailwindPackageName(revision.name);
+  const previousTailwindName = getTailwindPackageName(previousName);
+  const depsSansTailwind = stripTailwindDependency(
+    stripTailwindDependency(revision.dependencies ?? [], previousTailwindName),
+    nextTailwindName
+  );
+  const nextDeps = usesTailwind
+    ? ensureTailwindDependency(depsSansTailwind, nextTailwindName)
+    : depsSansTailwind;
+  const tailwindConfig = usesTailwind
+    ? await loadTailwindConfigForTenant(tenant.id)
+    : null;
+  const tailwindCss = usesTailwind
+    ? await buildTailwindCss(
+        revision.code,
+        revision.fileExtension,
+        tailwindConfig ?? undefined
+      )
+    : '';
+
+  pkg.dependencies = nextDeps;
   pkg.fileExtension = revision.fileExtension;
   pkg.draftVersion = generateVersion();
   await repo.save(pkg);
+
+  if (!usesTailwind) {
+    await removeTailwindPackage(tenant.id, previousTailwindName, previousVersion);
+  } else {
+    if (previousTailwindName !== nextTailwindName || previousVersion !== revision.version) {
+      await removeTailwindPackage(tenant.id, previousTailwindName, previousVersion);
+    }
+    await upsertTailwindPackage(tenant.id, nextTailwindName, revision.version, tailwindCss);
+  }
 
   res.status(200).json(serialize(pkg));
 });

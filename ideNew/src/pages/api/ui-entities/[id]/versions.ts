@@ -5,6 +5,7 @@ import { CoreDataSource } from '@/lib/core-db';
 import { UIPackage } from '@/lib/entities/UIEntities';
 import { UIPackageRevision } from '@/lib/entities/UIPackageRevision';
 import { resolveTenant } from '@/lib/tenancy';
+import { getTailwindPackageName, stripTailwindDependency } from '@/lib/tailwindBuilder';
 
 const serializeRevision = (rev: UIPackageRevision) => ({
   id: rev.id,
@@ -13,7 +14,7 @@ const serializeRevision = (rev: UIPackageRevision) => ({
   version: rev.version,
   code: rev.code,
   codeBlob: rev.codeBlob,
-  dependencies: rev.dependencies ?? [],
+  dependencies: stripTailwindDependency(rev.dependencies ?? [], getTailwindPackageName(rev.name)),
   fileExtension: rev.fileExtension,
   action: rev.action,
   createdAt: rev.createdAt,

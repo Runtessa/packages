@@ -6,6 +6,12 @@ import { UIPackage } from '@/lib/entities/UIEntities';
 import { resolveTenant } from '@/lib/tenancy';
 import redis from '@/lib/redis';
 import { generateVersion } from '@/lib/version';
+import {
+  getTailwindPackageName,
+  isTailwindPackageName,
+  stripTailwindDependency,
+} from '@/lib/tailwindBuilder';
+import { publishTailwindPackage } from '@/lib/ui-entity-tailwind';
 
 const serialize = (pkg: UIPackage) => ({
   id: pkg.id,
@@ -13,7 +19,7 @@ const serialize = (pkg: UIPackage) => ({
   version: pkg.version,
   code: pkg.code,
   codeBlob: pkg.codeBlob,
-  dependencies: pkg.dependencies ?? [],
+  dependencies: stripTailwindDependency(pkg.dependencies ?? [], getTailwindPackageName(pkg.name)),
   fileExtension: pkg.fileExtension,
   draftVersion: pkg.draftVersion,
   publishedVersion: pkg.publishedVersion ?? undefined,
@@ -47,6 +53,10 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   pkg.publishedFileExtension = pkg.fileExtension;
   pkg.publishedAt = new Date();
   await repo.save(pkg);
+
+  if (!isTailwindPackageName(pkg.name)) {
+    await publishTailwindPackage(tenant.id, getTailwindPackageName(pkg.name), pkg.version);
+  }
 
   const encoded = encodeURIComponent(pkg.name);
   await redis.del(
