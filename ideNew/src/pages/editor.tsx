@@ -2066,21 +2066,22 @@ export default function EditorPage() {
 
   const saveFile = useCallback(
     async (file: ActiveFile) => {
-      if (!file.meta) return;
+      const meta = file.meta;
+      if (!meta) return;
       const content = fileContents[file.id] ?? savedContents[file.id] ?? '';
-      if (file.meta.kind === 'shared') {
+      if (meta.kind === 'shared') {
         if (!sharedProject) {
           throw new Error('Shared project is not loaded.');
         }
-        const projectId = file.meta.projectId || sharedProject.id;
+        const projectId = meta.projectId || sharedProject.id;
         await adminFetch(
-          `/api/admin/shared-packages/${projectId}/files/${file.meta.fileId}`,
+          `/api/admin/shared-packages/${projectId}/files/${meta.fileId}`,
           {
             method: 'PUT',
             body: {
-              path: file.meta.path,
+              path: meta.path,
               content,
-              fileExtension: file.meta.fileExtension,
+              fileExtension: meta.fileExtension,
             },
           }
         );
@@ -2088,7 +2089,7 @@ export default function EditorPage() {
         const currentFiles = sharedFilesRef.current;
         const nextSaved = { ...currentSaved, [file.id]: content };
         const nextFiles = currentFiles.map((item) =>
-          item.id === file.meta.fileId ? { ...item, content } : item
+          item.id === meta.fileId ? { ...item, content } : item
         );
         const nextProject = await syncSharedPackage(sharedProject, nextFiles);
         savedContentsRef.current = nextSaved;
@@ -2098,30 +2099,30 @@ export default function EditorPage() {
         setSavedContents(nextSaved);
         return;
       }
-      if (file.meta.kind === 'module') {
-        await apiFetch(`/api/modules/${file.meta.backendId}`, {
+      if (meta.kind === 'module') {
+        await apiFetch(`/api/modules/${meta.backendId}`, {
           method: 'PUT',
           body: {
-            routePath: file.meta.routePath,
-            method: file.meta.method,
+            routePath: meta.routePath,
+            method: meta.method,
             code: content,
-            fileExtension: coerceModuleExtension(file.meta.fileExtension),
+            fileExtension: coerceModuleExtension(meta.fileExtension),
           },
         });
       } else {
-        const uiExtension = coerceUiExtension(file.meta.fileExtension);
+        const uiExtension = coerceUiExtension(meta.fileExtension);
         if (uiExtension !== 'css' && !window.Babel) {
           throw new Error('Babel runtime not loaded in browser; cannot build code_blob');
         }
         const compiled = uiExtension === 'css' ? content : compileWithBabel(content);
-        await apiFetch(`/api/ui-entities/${file.meta.backendId}`, {
+        await apiFetch(`/api/ui-entities/${meta.backendId}`, {
           method: 'PUT',
           body: {
-            name: file.meta.name,
-            version: file.meta.version,
+            name: meta.name,
+            version: meta.version,
             code: content,
             codeBlob: compiled,
-            dependencies: file.meta.dependencies ?? [],
+            dependencies: meta.dependencies ?? [],
             fileExtension: uiExtension,
           },
         });
@@ -3218,9 +3219,10 @@ export default function EditorPage() {
             .catch((err) => {
               const message = (err as Error).message || 'Failed to move module';
               showError(message);
-            });
+          });
           return true;
         }
+        if (meta.kind !== 'ui') return true;
         const nameSegments = splitUiName(meta.name || 'ui');
         const baseName = nameSegments[nameSegments.length - 1] || 'ui';
         const nextName = buildUiName([...targetScopeInfo.path, baseName]);
