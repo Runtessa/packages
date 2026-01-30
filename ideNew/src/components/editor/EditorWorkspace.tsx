@@ -32,8 +32,14 @@ type EditorWorkspaceProps = {
     value?: string,
     event?: monaco.editor.IModelContentChangedEvent
   ) => void;
-  onMainEditorMount: (editor: monaco.editor.IStandaloneCodeEditor) => void;
-  onSideEditorMount: (editor: monaco.editor.IStandaloneCodeEditor) => void;
+  onMainEditorMount: (
+    editor: monaco.editor.IStandaloneCodeEditor,
+    monacoInstance: typeof monaco
+  ) => void;
+  onSideEditorMount: (
+    editor: monaco.editor.IStandaloneCodeEditor,
+    monacoInstance: typeof monaco
+  ) => void;
   onSplitResizeStart: (event: React.MouseEvent<HTMLDivElement>) => void;
   onTabDragOver: (event: React.DragEvent<HTMLDivElement>) => void;
   onEditorDrop: (event: React.DragEvent<HTMLDivElement>) => void;
@@ -107,7 +113,7 @@ export function EditorWorkspace({
                 value={mainEditorValue}
                 path={mainEditorPath}
                 keepCurrentModel
-                onMount={onMainEditorMount}
+                onMount={(editor, monacoInstance) => onMainEditorMount(editor, monacoInstance)}
                 onChange={onMainEditorChange}
                 options={{
                   fontSize: 14,
@@ -149,7 +155,7 @@ export function EditorWorkspace({
                 value={sideEditorValue}
                 path={sideEditorPath}
                 keepCurrentModel
-                onMount={onSideEditorMount}
+                onMount={(editor, monacoInstance) => onSideEditorMount(editor, monacoInstance)}
                 onChange={onSideEditorChange}
                 options={{
                   fontSize: 14,

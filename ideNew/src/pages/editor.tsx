@@ -234,6 +234,7 @@ export default function EditorPage() {
   const editorAreaRef = useRef<HTMLDivElement | null>(null);
   const mainEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const sideEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const handleSaveRef = useRef<() => void>(() => {});
   const searchDecorationsRef = useRef<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchSelected, setSearchSelected] = useState<SearchResult | null>(null);
@@ -1521,6 +1522,10 @@ export default function EditorPage() {
     if (!activeFile) return;
     void handleSaveFile(activeFile);
   }, [activeFile, handleSaveFile]);
+
+  useEffect(() => {
+    handleSaveRef.current = handleSave;
+  }, [handleSave]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -3071,11 +3076,15 @@ export default function EditorPage() {
               diffModelPaths={diffModelPaths}
               onMainEditorChange={handleEditorChange}
               onSideEditorChange={handleSideEditorChange}
-              onMainEditorMount={(editor) => {
+              onMainEditorMount={(editor, monacoInstance) => {
                 mainEditorRef.current = editor;
+                const command = monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyS;
+                editor.addCommand(command, () => handleSaveRef.current());
               }}
-              onSideEditorMount={(editor) => {
+              onSideEditorMount={(editor, monacoInstance) => {
                 sideEditorRef.current = editor;
+                const command = monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyS;
+                editor.addCommand(command, () => handleSaveRef.current());
               }}
               onSplitResizeStart={handleSplitResizeStart}
               onTabDragOver={handleTabDragOver}
