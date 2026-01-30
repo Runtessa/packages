@@ -51,6 +51,39 @@ export const DEFAULT_SHARED_FILE: SharedFileFormState = {
   content: '',
 };
 
+export const ACL_FOLDER_NAME = 'acl';
+export const ACL_FILE_NAMES = {
+  permissions: 'permissions.json',
+  roles: 'roles.json',
+  endpoints: 'endpoints.json',
+} as const;
+
+export const DEFAULT_ACL_PERMISSIONS = `{
+  "permissions": [
+    { "key": "example.read", "label": "Read Example" }
+  ]
+}
+`;
+
+export const DEFAULT_ACL_ROLES = `{
+  "roles": {
+    "admin": ["example.read"],
+    "viewer": ["example.read"]
+  },
+  "groups": {
+    "devs": ["admin"],
+    "guests": ["viewer"]
+  }
+}
+`;
+
+export const DEFAULT_ACL_ENDPOINTS = `{
+  "/api/example": {
+    "read": ["example.read"]
+  }
+}
+`;
+
 export const LEFT_PANEL_STORAGE_KEY = 'editor-left-panel-width';
 export const MIN_LEFT_PANEL_WIDTH = 150;
 export const MAX_LEFT_PANEL_WIDTH = 520;

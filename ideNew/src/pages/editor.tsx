@@ -97,6 +97,7 @@ import type {
   UIPackageDto,
   ModuleRevisionDto,
   UiRevisionDto,
+  AclConfigDto,
 } from '@/components/editor/types';
 
 const CORE_API_BASE = process.env.NEXT_PUBLIC_CORE_API_URL?.trim() || '';
@@ -134,8 +135,10 @@ export default function EditorPage() {
   const [treeData, setTreeData] = useState<ExplorerNode | null>(null);
   const [loadingTree, setLoadingTree] = useState(false);
   const [treeError, setTreeError] = useState<string>('');
+  const loadTreeInFlightRef = useRef(false);
   const [modulesData, setModulesData] = useState<ModuleDto[]>([]);
   const [uiData, setUiData] = useState<UIPackageDto[]>([]);
+  const [aclConfig, setAclConfig] = useState<AclConfigDto | null>(null);
   const [sharedProject, setSharedProject] = useState<SharedProjectDto | null>(null);
   const [sharedFiles, setSharedFiles] = useState<SharedFileDto[]>([]);
   const sharedFilesRef = useRef<SharedFileDto[]>([]);
@@ -526,9 +529,8 @@ export default function EditorPage() {
 
   useEffect(() => {
     if (isSharedMode) return;
-    if (!treeData) return;
-    setTreeData(buildExplorerTree(modulesData, uiData, folderOverrides));
-  }, [folderOverrides, isSharedMode, modulesData, uiData]);
+    setTreeData(buildExplorerTree(modulesData, uiData, folderOverrides, aclConfig));
+  }, [aclConfig, folderOverrides, isSharedMode, modulesData, uiData]);
 
 
   const loadSharedProject = useCallback(async () => {
@@ -546,6 +548,7 @@ export default function EditorPage() {
       setSharedFiles(files);
       setModulesData([]);
       setUiData([]);
+      setAclConfig(null);
       setTreeData(buildSharedTree(project, files, sharedFolderOverrides));
       setSavedContents(buildSharedContentMap(files));
     } catch (err) {
@@ -555,26 +558,39 @@ export default function EditorPage() {
     }
   }, [adminFetch, sharedFolderOverrides, sharedProjectId]);
 
-  const loadTree = useCallback(async (overrides: FolderOverride[] = folderOverrides) => {
-    setLoadingTree(true);
-    setTreeError('');
-    try {
-      const [modules, uiPackages] = await Promise.all([
-        apiFetch('/api/modules'),
-        apiFetch('/api/ui-entities'),
-      ]);
-      const moduleItems = modules as ModuleDto[];
-      const uiItems = uiPackages as UIPackageDto[];
-      setModulesData(moduleItems);
-      setUiData(uiItems);
-      setTreeData(buildExplorerTree(moduleItems, uiItems, overrides));
-      setSavedContents(buildPersistedContentMap(moduleItems, uiItems));
-    } catch (err) {
-      setTreeError((err as Error).message || 'Failed to load explorer');
-    } finally {
-      setLoadingTree(false);
-    }
-  }, [apiFetch, folderOverrides]);
+  const loadTree = useCallback(
+    async (overrides: FolderOverride[] = folderOverrides) => {
+      if (loadTreeInFlightRef.current) return;
+      loadTreeInFlightRef.current = true;
+      setLoadingTree(true);
+      setTreeError('');
+      try {
+        const [modules, uiPackages, acl] = await Promise.all([
+          apiFetch('/api/modules'),
+          apiFetch('/api/ui-entities'),
+          apiFetch('/api/acl/config'),
+        ]);
+        const moduleItems = modules as ModuleDto[];
+        const uiItems = uiPackages as UIPackageDto[];
+        const normalizedAcl: AclConfigDto = {
+          permissions: (acl as any)?.permissions ?? { permissions: [] },
+          roles: (acl as any)?.roles ?? { roles: {} },
+          endpoints: (acl as any)?.endpoints ?? {},
+        };
+        setModulesData(moduleItems);
+        setUiData(uiItems);
+        setAclConfig(normalizedAcl);
+        setTreeData(buildExplorerTree(moduleItems, uiItems, overrides, normalizedAcl));
+        setSavedContents(buildPersistedContentMap(moduleItems, uiItems, normalizedAcl));
+      } catch (err) {
+        setTreeError((err as Error).message || 'Failed to load explorer');
+      } finally {
+        setLoadingTree(false);
+        loadTreeInFlightRef.current = false;
+      }
+    },
+    [apiFetch, folderOverrides]
+  );
 
   useEffect(() => {
     if (!router.isReady) return;
@@ -737,27 +753,19 @@ export default function EditorPage() {
     if (typeof window === 'undefined') return;
     const container = historyListRef.current;
     if (!container) return;
-    let raf = 0;
     const measure = () => {
       const height = container.getBoundingClientRect().height;
       if (height < 1) return;
-      const rowHeight =
-        historyRowRef.current?.getBoundingClientRect().height ?? 36;
-      if (rowHeight < 1) return;
+      const rowHeight = 36;
       const nextSize = Math.max(1, Math.floor(height / rowHeight));
       setHistoryPageSize((prev) => (prev === nextSize ? prev : nextSize));
     };
     measure();
-    const observer = new ResizeObserver(() => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(measure);
-    });
-    observer.observe(container);
+    window.addEventListener('resize', measure);
     return () => {
-      cancelAnimationFrame(raf);
-      observer.disconnect();
+      window.removeEventListener('resize', measure);
     };
-  }, [leftPanel, leftPanelOpen, historyItems.length]);
+  }, [leftPanel, leftPanelOpen]);
 
   const loadHistory = useCallback(
     async (page = historyPage) => {
@@ -767,9 +775,9 @@ export default function EditorPage() {
       setHistoryTotal(0);
       return;
     }
-    if (activeFile.meta.kind === 'shared') {
+    if (activeFile.meta.kind === 'shared' || activeFile.meta.kind === 'acl') {
       setHistoryItems([]);
-      setHistoryError('History is not available for shared projects yet.');
+      setHistoryError('History is not available for this file.');
       setHistoryTotal(0);
       setHistoryLoading(false);
       return;
@@ -890,7 +898,8 @@ export default function EditorPage() {
       if (
         !candidate.startsWith('module-') &&
         !candidate.startsWith('ui-') &&
-        !candidate.startsWith('shared-')
+        !candidate.startsWith('shared-') &&
+        !candidate.startsWith('acl-')
       )
         return null;
       return candidate;
@@ -1306,6 +1315,33 @@ export default function EditorPage() {
         setSavedContents(nextSaved);
         return;
       }
+      if (meta.kind === 'acl') {
+        let parsed: any;
+        try {
+          parsed = content.trim() ? JSON.parse(content) : {};
+        } catch {
+          throw new Error('ACL file must be valid JSON.');
+        }
+        const response = await apiFetch('/api/acl/config', {
+          method: 'PUT',
+          body: { file: meta.file, content: parsed },
+        });
+        const nextAcl: AclConfigDto = {
+          permissions: (response as any)?.permissions ?? aclConfig?.permissions ?? { permissions: [] },
+          roles: (response as any)?.roles ?? aclConfig?.roles ?? { roles: {} },
+          endpoints: (response as any)?.endpoints ?? aclConfig?.endpoints ?? {},
+        };
+        setAclConfig(nextAcl);
+        const normalizedContent =
+          meta.file === 'permissions'
+            ? JSON.stringify(nextAcl.permissions ?? {}, null, 2) + '\n'
+            : meta.file === 'roles'
+            ? JSON.stringify(nextAcl.roles ?? {}, null, 2) + '\n'
+            : JSON.stringify(nextAcl.endpoints ?? {}, null, 2) + '\n';
+        setFileContents((prev) => ({ ...prev, [file.id]: normalizedContent }));
+        setSavedContents((prev) => ({ ...prev, [file.id]: normalizedContent }));
+        return;
+      }
       if (meta.kind === 'module') {
         await apiFetch(`/api/modules/${meta.backendId}`, {
           method: 'PUT',
@@ -1339,6 +1375,7 @@ export default function EditorPage() {
     [
       adminFetch,
       apiFetch,
+      aclConfig,
       fileContents,
       sharedProject,
       syncSharedPackage,
@@ -1352,7 +1389,7 @@ export default function EditorPage() {
         await saveFile(file);
         success('Saved');
         await reloadTree();
-        if (activeFile?.id === file.id && file.meta.kind !== 'shared') {
+        if (activeFile?.id === file.id && file.meta.kind !== 'shared' && file.meta.kind !== 'acl') {
           loadHistory();
         }
       } catch (err) {
@@ -1387,7 +1424,7 @@ export default function EditorPage() {
       success('Saved all');
     }
     await reloadTree();
-    if (savedActive && activeFile?.meta?.kind !== 'shared') {
+    if (savedActive && activeFile?.meta?.kind !== 'shared' && activeFile?.meta?.kind !== 'acl') {
       loadHistory();
     }
   }, [
@@ -1586,6 +1623,10 @@ export default function EditorPage() {
     parentPath: string[]
   ) => {
     resetActionFeedback();
+    if (scope === 'modules' && parentPath[0] === 'acl') {
+      showError('ACL folder is read-only.');
+      return;
+    }
     setCreateScope(scope);
     setCreateType(type);
     setCreateParentPath(parentPath);
@@ -1712,7 +1753,7 @@ export default function EditorPage() {
         ? folderOverrides
         : [...folderOverrides, { scope: createScope, path: nextPath }];
       setFolderOverrides(nextOverrides);
-      setTreeData(buildExplorerTree(modulesData, uiData, nextOverrides));
+      setTreeData(buildExplorerTree(modulesData, uiData, nextOverrides, aclConfig));
       success('Folder created');
       closeCreateModal();
       return;
@@ -1782,6 +1823,10 @@ export default function EditorPage() {
 
   const openEditModal = (meta: NodeMeta) => {
     resetActionFeedback();
+    if (meta.kind === 'acl') {
+      showError('ACL files cannot be edited from metadata.');
+      return;
+    }
     setEditMeta(meta);
     if (meta.kind === 'shared') {
       setEditSharedPath(meta.path);
@@ -1937,6 +1982,10 @@ export default function EditorPage() {
 
   const handleRenameFolderSubmit = async () => {
     if (!renameFolderScope || !renameFolderPath.length) return;
+    if (renameFolderScope === 'modules' && renameFolderPath[0] === 'acl') {
+      showError('ACL folder cannot be renamed.');
+      return;
+    }
     const newName = renameFolderName.trim();
     if (!newName || /[\\/]/.test(newName)) {
       showError('Folder name cannot be empty or contain slashes.');
@@ -2071,6 +2120,10 @@ export default function EditorPage() {
     try {
       if (deleteTarget.type === 'file') {
         const meta = deleteTarget.meta;
+        if (meta.kind === 'acl') {
+          showError('ACL files cannot be deleted.');
+          return;
+        }
         if (meta.kind === 'shared') {
           if (!sharedProject) {
             showError('Shared project is not loaded.');
@@ -2161,6 +2214,10 @@ export default function EditorPage() {
           return;
         }
         if (deleteTarget.scope === 'modules') {
+          if (deleteTarget.path[0] === 'acl') {
+            showError('ACL folder cannot be deleted.');
+            return;
+          }
           const removals = modulesData.filter((mod) =>
             pathStartsWith(splitRoutePath(mod.routePath || '/'), deleteTarget.path)
           );
@@ -2459,6 +2516,14 @@ export default function EditorPage() {
       if (!targetScopeInfo.scope || targetScopeInfo.scope !== nodeScopeInfo.scope) {
         const message = 'Cannot move between Modules and UI Entities.';
         showError(message);
+        return true;
+      }
+      if (targetScopeInfo.scope === 'modules' && targetScopeInfo.path[0] === 'acl') {
+        showError('ACL folder is read-only.');
+        return true;
+      }
+      if (nodeScopeInfo.scope === 'modules' && nodeScopeInfo.path[0] === 'acl') {
+        showError('ACL files cannot be moved.');
         return true;
       }
 

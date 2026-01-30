@@ -32,6 +32,23 @@ export class Tenant {
   @Column({ type: "jsonb", default: () => "'{}'" })
   adapterConfig!: Record<string, unknown>;
 
+  @Column({ type: "jsonb", default: () => "'{}'" })
+  aclPermissions!: { permissions?: Array<{ key: string; label?: string }> };
+
+  @Column({ type: "jsonb", default: () => "'{}'" })
+  aclRoles!: { roles?: Record<string, string[]>; groups?: Record<string, string[]> };
+
+  @Column({ type: "jsonb", default: () => "'{}'" })
+  aclEndpoints!: Record<
+    string,
+    {
+      read?: string[];
+      write?: string[];
+      edit?: string[];
+      delete?: string[];
+    }
+  >;
+
   @Column({ default: false })
   isSuspended!: boolean;
 
@@ -61,6 +78,9 @@ export type TenantDTO = Pick<
   | 'resourceConfig'
   | 'adapterAccess'
   | 'adapterConfig'
+  | 'aclPermissions'
+  | 'aclRoles'
+  | 'aclEndpoints'
   | 'isSuspended'
   | 'restrictRoutes'
   | 'createdAt'

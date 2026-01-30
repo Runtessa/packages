@@ -12,8 +12,18 @@ import type {
   SharedFileDto,
   SharedProjectDto,
   UIPackageDto,
+  AclConfigDto,
 } from '@/components/editor/types';
-import { DEFAULT_UI_EXTENSION, MODULE_EXTENSION, UI_EXTENSION_OPTIONS } from '@/components/editor/constants';
+import {
+  ACL_FILE_NAMES,
+  ACL_FOLDER_NAME,
+  DEFAULT_ACL_ENDPOINTS,
+  DEFAULT_ACL_PERMISSIONS,
+  DEFAULT_ACL_ROLES,
+  DEFAULT_UI_EXTENSION,
+  MODULE_EXTENSION,
+  UI_EXTENSION_OPTIONS,
+} from '@/components/editor/constants';
 
 export const detectLanguage = (fileName: string): EditorLanguage => {
   const lower = fileName.toLowerCase();
@@ -202,7 +212,8 @@ export const buildSharedContentMap = (files: SharedFileDto[]) => {
 export const buildExplorerTree = (
   modules: ModuleDto[],
   uiPackages: UIPackageDto[],
-  overrides: FolderOverride[]
+  overrides: FolderOverride[],
+  aclConfig?: AclConfigDto | null
 ): ExplorerNode => {
   const modulesRoot: ExplorerNode = {
     id: 'modules-root',
@@ -243,6 +254,41 @@ export const buildExplorerTree = (
       current = next;
     });
     return current;
+  };
+
+  const addAclFiles = () => {
+    const aclFolder = ensureFolderPath(modulesRoot, 'modules', [ACL_FOLDER_NAME]);
+    const permissionsContent =
+      JSON.stringify(aclConfig?.permissions ?? JSON.parse(DEFAULT_ACL_PERMISSIONS), null, 2) + '\n';
+    const rolesContent =
+      JSON.stringify(aclConfig?.roles ?? JSON.parse(DEFAULT_ACL_ROLES), null, 2) + '\n';
+    const endpointsContent =
+      JSON.stringify(aclConfig?.endpoints ?? JSON.parse(DEFAULT_ACL_ENDPOINTS), null, 2) + '\n';
+
+    aclFolder.children = [
+      ...(aclFolder.children ?? []),
+      {
+        id: 'acl-permissions',
+        name: ACL_FILE_NAMES.permissions,
+        type: 'file',
+        meta: { kind: 'acl', file: 'permissions' } as NodeMeta,
+        content: permissionsContent,
+      },
+      {
+        id: 'acl-roles',
+        name: ACL_FILE_NAMES.roles,
+        type: 'file',
+        meta: { kind: 'acl', file: 'roles' } as NodeMeta,
+        content: rolesContent,
+      },
+      {
+        id: 'acl-endpoints',
+        name: ACL_FILE_NAMES.endpoints,
+        type: 'file',
+        meta: { kind: 'acl', file: 'endpoints' } as NodeMeta,
+        content: endpointsContent,
+      },
+    ];
   };
 
   modules.forEach((mod) => {
@@ -294,6 +340,8 @@ export const buildExplorerTree = (
     ensureFolderPath(root, override.scope, override.path);
   });
 
+  addAclFiles();
+
   return {
     id: 'root',
     name: 'PROJECT',
@@ -304,7 +352,8 @@ export const buildExplorerTree = (
 
 export const buildPersistedContentMap = (
   modules: ModuleDto[],
-  uiPackages: UIPackageDto[]
+  uiPackages: UIPackageDto[],
+  aclConfig?: AclConfigDto | null
 ): Record<string, string> => {
   const next: Record<string, string> = {};
   modules.forEach((mod) => {
@@ -313,6 +362,11 @@ export const buildPersistedContentMap = (
   uiPackages.forEach((pkg) => {
     next[`ui-${pkg.id}`] = pkg.code ?? pkg.codeBlob ?? '';
   });
+  if (aclConfig) {
+    next['acl-permissions'] = JSON.stringify(aclConfig.permissions ?? {}, null, 2) + '\n';
+    next['acl-roles'] = JSON.stringify(aclConfig.roles ?? {}, null, 2) + '\n';
+    next['acl-endpoints'] = JSON.stringify(aclConfig.endpoints ?? {}, null, 2) + '\n';
+  }
   return next;
 };
 

@@ -55,9 +55,9 @@ export const CoreDataSource = new DataSource(baseOptions);
 
 let initialized = false;
 let initPromise: Promise<void> | null = null;
+let schemaChecked = false;
 
 export const ensureCoreSchema = async () => {
-  if (initialized) return;
   if (initPromise) return initPromise;
 
   initPromise = (async () => {
@@ -66,7 +66,7 @@ export const ensureCoreSchema = async () => {
     }
     const allowSync =
       process.env.CORE_DB_SYNC === 'true' || process.env.NODE_ENV !== 'production';
-    if (allowSync) {
+    if (allowSync && !schemaChecked) {
       const queryRunner = CoreDataSource.createQueryRunner();
       try {
         const hasGlobalTable = await queryRunner.hasTable('global_ui_packages');
@@ -78,18 +78,31 @@ export const ensureCoreSchema = async () => {
           hasTenantTable && (await queryRunner.hasColumn('tenants', 'adapterAccess'));
         const hasAdapterConfig =
           hasTenantTable && (await queryRunner.hasColumn('tenants', 'adapterConfig'));
+        const hasAclPermissions =
+          hasTenantTable && (await queryRunner.hasColumn('tenants', 'aclPermissions'));
+        const hasAclRoles = hasTenantTable && (await queryRunner.hasColumn('tenants', 'aclRoles'));
+        const hasAclEndpoints =
+          hasTenantTable && (await queryRunner.hasColumn('tenants', 'aclEndpoints'));
+        const hasAccountsTable = await queryRunner.hasTable('accounts');
+        const hasAccountGroups =
+          hasAccountsTable && (await queryRunner.hasColumn('accounts', 'groups'));
         if (
           !hasGlobalTable ||
           !hasFileTable ||
           !hasDraftVersion ||
           !hasAdapterAccess ||
-          !hasAdapterConfig
+          !hasAdapterConfig ||
+          !hasAclPermissions ||
+          !hasAclRoles ||
+          !hasAclEndpoints ||
+          !hasAccountGroups
         ) {
           await CoreDataSource.synchronize();
         }
       } finally {
         await queryRunner.release();
       }
+      schemaChecked = true;
     }
     initialized = true;
     console.log(`Core Data Source has been initialized (${dbType})!`);

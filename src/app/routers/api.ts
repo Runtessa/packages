@@ -2,6 +2,7 @@ import { Router } from "express";
 import { RegistryController } from "../controllers/RegistryController";
 import { ModuleController } from "../controllers/ModuleController";
 import { UIEntityController } from "../controllers/UIEntityController";
+import { TenantAclController } from "../controllers/TenantAclController";
 
 export const ApiRouter = (
   contextMiddleware: any,
@@ -9,7 +10,8 @@ export const ApiRouter = (
   authGuard: any,
   registryController: RegistryController,
   moduleController: ModuleController,
-  uiEntityController: UIEntityController
+  uiEntityController: UIEntityController,
+  tenantAclController: TenantAclController
 ) => {
   const router = Router();
 
@@ -151,6 +153,19 @@ export const ApiRouter = (
     contextMiddleware,
     authGuard,
     uiEntityController.remove
+  );
+
+  router.get(
+    "/acl/config",
+    contextMiddleware,
+    authGuard,
+    tenantAclController.getConfig
+  );
+  router.put(
+    "/acl/config",
+    contextMiddleware,
+    authGuard,
+    tenantAclController.updateConfig
   );
   return router;
 };

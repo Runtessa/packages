@@ -30,6 +30,9 @@ export class Account {
   @Column({ type: 'enum', enum: AccountRole, default: AccountRole.DEVELOPER })
   role!: AccountRole;
 
+  @Column({ type: 'jsonb', nullable: true })
+  groups?: string[];
+
   @ManyToOne('Tenant', 'accounts', { onDelete: 'CASCADE' })
   tenant!: Tenant;
 

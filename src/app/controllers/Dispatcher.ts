@@ -5,7 +5,7 @@ import { isDeveloperAccess } from '../../common/devAccess';
 import { publishedCache } from '../../core/publishedCache';
 import { AdapterFactory } from '../../engine/AdapterFactory';
 import { SandboxRunner, SandboxRequestContext } from '../../engine/SandboxRunner';
-import { ModuleEntity, HttpMethod } from '@idp/shared';
+import { AccountRole, ModuleEntity, HttpMethod, Tenant } from '@idp/shared';
 import { TenantRequest } from '../../types/RequestContext';
 
 type ModuleLike = {
@@ -75,6 +75,20 @@ export class Dispatcher {
       }
 
       const { module, params } = matchResult;
+
+      if (!req.account) {
+        throw new AppError('Authentication required', 401);
+      }
+
+      const aclAllowed = this.checkEndpointAccess(
+        req.tenant as Tenant,
+        req.account.role,
+        module,
+        req.account.groups ?? [],
+      );
+      if (!aclAllowed) {
+        throw new AppError('Access denied', 403);
+      }
 
       const adapters = await this.adapterFactory.build(req.tenant);
       const requestContext: SandboxRequestContext = {
@@ -163,5 +177,67 @@ export class Dispatcher {
 
   private publishedModulesCacheKey(tenantId: string, method: HttpMethod) {
     return `module:published:${tenantId}:${method}`;
+  }
+
+  private checkEndpointAccess(
+    tenant: Tenant,
+    accountRole: AccountRole | string,
+    module: ModuleLike,
+    accountGroups: string[],
+  ) {
+    const action =
+      module.method === HttpMethod.GET
+        ? 'read'
+        : module.method === HttpMethod.POST
+        ? 'write'
+        : module.method === HttpMethod.PUT || module.method === HttpMethod.PATCH
+        ? 'edit'
+        : 'delete';
+
+    const endpoints = (tenant.aclEndpoints || {}) as Record<
+      string,
+      { read?: string[]; write?: string[]; edit?: string[]; delete?: string[] }
+    >;
+    const rolesConfig = (tenant.aclRoles || {}) as {
+      roles?: Record<string, string[]>;
+      groups?: Record<string, string[]>;
+    };
+    const roles = rolesConfig.roles || {};
+    const groups = rolesConfig.groups || {};
+
+    const roleKey = String(accountRole || '').toLowerCase();
+    const directRoles = [
+      roles[roleKey],
+      roles[String(accountRole || '')],
+    ].filter(Boolean) as string[][];
+
+    const groupRoles = (accountGroups || [])
+      .flatMap((group) => [
+        groups[String(group || '').toLowerCase()],
+        groups[String(group || '')],
+      ])
+      .filter(Boolean) as string[][];
+
+    const effectiveRoles = new Set<string>();
+    for (const roleList of [...directRoles, ...groupRoles]) {
+      for (const roleName of roleList) {
+        if (roleName) effectiveRoles.add(roleName);
+      }
+    }
+
+    const endpointConfig = endpoints[module.routePath];
+    if (!endpointConfig) return false;
+    const requiredPermissions = endpointConfig[action] || [];
+    if (!Array.isArray(requiredPermissions) || requiredPermissions.length === 0) return false;
+
+    const permissions = new Set<string>();
+    for (const roleName of effectiveRoles) {
+      const rolePermissions = roles[roleName] || roles[String(roleName).toLowerCase()] || [];
+      for (const perm of rolePermissions) {
+        if (perm) permissions.add(perm);
+      }
+    }
+
+    return requiredPermissions.some((perm) => permissions.has(perm));
   }
 }

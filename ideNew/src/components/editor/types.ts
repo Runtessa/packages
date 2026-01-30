@@ -140,6 +140,15 @@ export type FolderOverride = {
   path: string[];
 };
 
+export type AclConfigDto = {
+  permissions: { permissions?: Array<{ key: string; label?: string }> };
+  roles: { roles?: Record<string, string[]>; groups?: Record<string, string[]> };
+  endpoints: Record<
+    string,
+    { read?: string[]; write?: string[]; edit?: string[]; delete?: string[] }
+  >;
+};
+
 export type ModuleFormState = {
   routePath: string;
   method: string;
@@ -186,6 +195,10 @@ export type NodeMeta =
       fileId: string;
       path: string;
       fileExtension?: string;
+    }
+  | {
+      kind: 'acl';
+      file: 'permissions' | 'roles' | 'endpoints';
     };
 
 export type PreviewTarget = {

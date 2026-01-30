@@ -38,7 +38,7 @@ export function EditorHistoryPanel({
   formatTimestamp,
 }: EditorHistoryPanelProps) {
   const disableRefresh =
-    historyLoading || !activeFile?.meta || activeFile.meta.kind === 'shared';
+    historyLoading || !activeFile?.meta || activeFile.meta.kind === 'shared' || activeFile.meta.kind === 'acl';
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -63,6 +63,10 @@ export function EditorHistoryPanel({
       ) : activeFile.meta.kind === 'shared' ? (
         <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
           History is not available for shared projects yet.
+        </div>
+      ) : activeFile.meta.kind === 'acl' ? (
+        <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
+          History is not available for ACL files.
         </div>
       ) : historyLoading ? (
         <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">

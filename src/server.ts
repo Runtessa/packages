@@ -17,6 +17,7 @@ import { RegistryController } from "./app/controllers/RegistryController";
 import { ModuleController } from "./app/controllers/ModuleController";
 import { UIEntityController } from "./app/controllers/UIEntityController";
 import { ApiRouter } from "./app/routers/api";
+import { TenantAclController } from "./app/controllers/TenantAclController";
 
 const app = express();
 
@@ -76,6 +77,7 @@ const bootstrap = async () => {
   const registryController = new RegistryController(AppDataSource);
   const moduleController = new ModuleController(AppDataSource);
   const uiEntityController = new UIEntityController(AppDataSource);
+  const tenantAclController = new TenantAclController(AppDataSource);
 
   const contextMiddleware = ContextMiddleware(AppDataSource);
   const optionalContextMiddleware = OptionalContextMiddleware(AppDataSource);
@@ -92,7 +94,8 @@ const bootstrap = async () => {
       authGuard,
       registryController,
       moduleController,
-      uiEntityController
+      uiEntityController,
+      tenantAclController
     )
   );
   // Serve frontend (IDE) for non-API routes
