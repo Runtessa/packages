@@ -1,6 +1,6 @@
 import { CoreDataSource } from '@/lib/core-db';
-import { GlobalUIPackage } from '@/lib/entities/GlobalUIPackage';
-import { GlobalUIPackageFile } from '@/lib/entities/GlobalUIPackageFile';
+import { GlobalUIPackage } from '@idp/shared';
+import { GlobalUIPackageFile } from '@idp/shared';
 import redis from '@/lib/redis';
 import { generateVersion } from '@/lib/version';
 import {

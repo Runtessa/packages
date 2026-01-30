@@ -2,8 +2,8 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
-import { GlobalUIPackage } from '@/lib/entities/GlobalUIPackage';
-import { GlobalUIPackageFile } from '@/lib/entities/GlobalUIPackageFile';
+import { GlobalUIPackage } from '@idp/shared';
+import { GlobalUIPackageFile } from '@idp/shared';
 import { generateVersion } from '@/lib/version';
 import {
   ensureTailwindDependency,

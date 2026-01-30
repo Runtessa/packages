@@ -1,7 +1,7 @@
 import { NextFunction, Response } from 'express';
 import { DataSource } from 'typeorm';
 import { AppError } from '../../common/AppError';
-import { Tenant } from '../../entities/Tenant';
+import { Tenant } from '@idp/shared';
 import { TenantRequest } from '../../types/RequestContext';
 
 const resolveTenant = async (

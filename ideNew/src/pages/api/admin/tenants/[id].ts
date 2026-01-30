@@ -2,11 +2,11 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
-import { Secret } from '@/lib/entities/Secret';
+import { Secret } from '@idp/shared';
 import { encryptSecret } from '@/lib/crypto';
 import { maskPasswordFields, resolveMaskedPasswords } from '@/lib/adapter-config-passwords';
 import { parseAdapterConfig } from '@/lib/tenant-adapter-config';
-import { Tenant } from '@/lib/entities/Tenant';
+import { Tenant } from '@idp/shared';
 
 const DEFAULT_RESOURCE_CONFIG = { memory: 512, timeout: 5000 };
 

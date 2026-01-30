@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '../../../lib/api-helpers';
 import { requireUser } from '../../../lib/auth';
 import { AppDataSource, ensureSchema } from '../../../lib/db';
-import { LoginSession } from '../../../lib/entities/LoginSession';
+import { LoginSession } from '@idp/shared';
 import redis from '../../../lib/redis';
 
 const extractSessionToken = (req: NextApiRequest) => {

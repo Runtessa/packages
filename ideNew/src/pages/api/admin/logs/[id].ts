@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { AppDataSource, ensureSchema } from '@/lib/db';
-import { SystemLog } from '@/lib/entities/SystemLog';
+import { SystemLog } from '@idp/shared';
 
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method !== 'GET') {

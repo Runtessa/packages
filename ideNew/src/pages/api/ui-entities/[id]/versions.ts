@@ -2,8 +2,8 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireUser } from '@/lib/auth';
 import { CoreDataSource } from '@/lib/core-db';
-import { UIPackage } from '@/lib/entities/UIEntities';
-import { UIPackageRevision } from '@/lib/entities/UIPackageRevision';
+import { UIPackage } from '@idp/shared';
+import { UIPackageRevision } from '@idp/shared';
 import { resolveTenant } from '@/lib/tenancy';
 import { getTailwindPackageName, stripTailwindDependency } from '@/lib/tailwindBuilder';
 

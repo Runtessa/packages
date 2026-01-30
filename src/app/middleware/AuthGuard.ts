@@ -2,7 +2,7 @@ import { NextFunction, Response } from "express";
 import { DataSource } from "typeorm";
 import { AppError } from "../../common/AppError";
 import { CryptoService } from "../../core/security/CryptoService";
-import { Account } from "../../entities/Account";
+import { Account } from '@idp/shared';
 import { TenantRequest } from "../../types/RequestContext";
 
 export interface AuthGuardOptions {

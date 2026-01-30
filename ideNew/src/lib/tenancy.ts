@@ -1,6 +1,6 @@
 import { NextApiRequest } from 'next';
 import { ensureCoreSchema, CoreDataSource } from './core-db';
-import { Tenant } from './entities/Tenant';
+import { Tenant } from '@idp/shared';
 
 const normalizeHost = (value: string | undefined | null) => {
   if (!value) return '';

@@ -1,6 +1,6 @@
 import { install, mapSourcePosition } from "source-map-support";
 import { AppDataSource, ensureSchema } from "./db";
-import { SystemLog } from "./entities/SystemLog";
+import { SystemLog } from '@idp/shared';
 
 const globalAny = globalThis as typeof globalThis & { __WBOT_LOGGER_INIT?: boolean };
 

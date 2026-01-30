@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireUser } from '@/lib/auth';
 import { CoreDataSource } from '@/lib/core-db';
-import { HttpMethod, ModuleEntity } from '@/lib/entities/Module';
+import { HttpMethod, ModuleEntity } from '@idp/shared';
 import { resolveTenant } from '@/lib/tenancy';
 import redis from '@/lib/redis';
 import { generateVersion } from '@/lib/version';

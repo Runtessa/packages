@@ -5,7 +5,7 @@ import { isDeveloperAccess } from '../../common/devAccess';
 import { publishedCache } from '../../core/publishedCache';
 import { AdapterFactory } from '../../engine/AdapterFactory';
 import { SandboxRunner, SandboxRequestContext } from '../../engine/SandboxRunner';
-import { ModuleEntity, HttpMethod } from '../../entities/Module';
+import { ModuleEntity, HttpMethod } from '@idp/shared';
 import { TenantRequest } from '../../types/RequestContext';
 
 type ModuleLike = {

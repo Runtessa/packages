@@ -15,9 +15,9 @@
     "moduleResolution": "Node",
     "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "src/*"
-      ]
+      "@/*": ["src/*"],
+      "@idp/shared": ["../packages/shared/src/index.ts"],
+      "@idp/shared/*": ["../packages/shared/src/*"]
     },
     "resolveJsonModule": true,
     "isolatedModules": true,

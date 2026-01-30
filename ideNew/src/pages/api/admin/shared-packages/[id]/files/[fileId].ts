@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
-import { GlobalUIPackageFile } from '@/lib/entities/GlobalUIPackageFile';
+import { GlobalUIPackageFile } from '@idp/shared';
 import {
   getTailwindPackageName,
   isTailwindPackageName,

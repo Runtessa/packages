@@ -3,8 +3,8 @@ import { DataSource } from 'typeorm';
 import { AppError } from '../../common/AppError';
 import { generateVersion } from '../../common/version';
 import { publishedCache } from '../../core/publishedCache';
-import { HttpMethod, ModuleEntity } from '../../entities/Module';
-import { ModuleRevision } from '../../entities/ModuleRevision';
+import { HttpMethod, ModuleEntity } from '@idp/shared';
+import { ModuleRevision } from '@idp/shared';
 import { TenantRequest } from '../../types/RequestContext';
 
 export class ModuleController {

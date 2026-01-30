@@ -1,8 +1,8 @@
 import "reflect-metadata";
 import { DataSource, DataSourceOptions } from "typeorm";
-import { User } from "./entities/User";
-import { LoginSession } from "./entities/LoginSession";
-import { SystemLog } from "./entities/SystemLog";
+import { User } from '@idp/shared';
+import { LoginSession } from '@idp/shared';
+import { SystemLog } from '@idp/shared';
 import { hashPassword } from "./password";
 
 const dbType = (process.env.DB_TYPE || "postgres") as DataSourceOptions["type"];

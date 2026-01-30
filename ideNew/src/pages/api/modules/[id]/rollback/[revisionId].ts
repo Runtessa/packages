@@ -2,8 +2,8 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireUser } from '@/lib/auth';
 import { CoreDataSource } from '@/lib/core-db';
-import { ModuleEntity } from '@/lib/entities/Module';
-import { ModuleRevision } from '@/lib/entities/ModuleRevision';
+import { ModuleEntity } from '@idp/shared';
+import { ModuleRevision } from '@idp/shared';
 import { resolveTenant } from '@/lib/tenancy';
 import { generateVersion } from '@/lib/version';
 

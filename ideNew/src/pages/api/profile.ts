@@ -3,7 +3,7 @@ import { withApiHandler } from '@/lib/api-helpers';
 import { requireUser } from '@/lib/auth';
 import { AppDataSource, ensureSchema } from '@/lib/db';
 import { hashPassword } from '@/lib/password';
-import { User } from '@/lib/entities/User';
+import { User } from '@idp/shared';
 
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method === 'GET') {

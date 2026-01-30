@@ -53,3 +53,16 @@ export class Tenant {
   @Column({ type: "jsonb", default: () => "'[]'" })
   restrictRoutes?: string[];
 }
+
+export type TenantDTO = Pick<
+  Tenant,
+  | 'id'
+  | 'hostname'
+  | 'resourceConfig'
+  | 'adapterAccess'
+  | 'adapterConfig'
+  | 'isSuspended'
+  | 'restrictRoutes'
+  | 'createdAt'
+  | 'updatedAt'
+>;

@@ -1,4 +1,4 @@
-import { AccountRole } from '../entities/Account';
+import { AccountRole } from '@idp/shared';
 import { TenantRequest } from '../types/RequestContext';
 
 const isTruthy = (value: unknown) => {

@@ -1,5 +1,5 @@
 import { CoreDataSource } from '@/lib/core-db';
-import { UIPackage } from '@/lib/entities/UIEntities';
+import { UIPackage } from '@idp/shared';
 import redis from '@/lib/redis';
 import { generateVersion } from '@/lib/version';
 import { ILike, In } from 'typeorm';

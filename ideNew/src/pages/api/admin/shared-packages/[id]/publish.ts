@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
-import { GlobalUIPackage } from '@/lib/entities/GlobalUIPackage';
+import { GlobalUIPackage } from '@idp/shared';
 import redis from '@/lib/redis';
 import { generateVersion } from '@/lib/version';
 import {

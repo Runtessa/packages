@@ -4,8 +4,8 @@ import { AppDataSource, ensureSchema } from './db';
 import { verifyPassword } from './password';
 import redis from './redis';
 import { logger } from './logger';
-import { User } from './entities/User';
-import { LoginSession } from './entities/LoginSession';
+import { User } from '@idp/shared';
+import { LoginSession } from '@idp/shared';
 
 type AuthHeader = {
   sessionToken?: string;

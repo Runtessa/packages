@@ -1,14 +1,14 @@
 import 'reflect-metadata';
 import { DataSource, DataSourceOptions } from 'typeorm';
-import { Account } from './entities/Account';
-import { ModuleEntity } from './entities/Module';
-import { Secret } from './entities/Secret';
-import { Tenant } from './entities/Tenant';
-import { UIPackage } from './entities/UIEntities';
-import { ModuleRevision } from './entities/ModuleRevision';
-import { UIPackageRevision } from './entities/UIPackageRevision';
-import { GlobalUIPackage } from './entities/GlobalUIPackage';
-import { GlobalUIPackageFile } from './entities/GlobalUIPackageFile';
+import { Account } from '@idp/shared';
+import { ModuleEntity } from '@idp/shared';
+import { Secret } from '@idp/shared';
+import { Tenant } from '@idp/shared';
+import { UIPackage } from '@idp/shared';
+import { ModuleRevision } from '@idp/shared';
+import { UIPackageRevision } from '@idp/shared';
+import { GlobalUIPackage } from '@idp/shared';
+import { GlobalUIPackageFile } from '@idp/shared';
 
 const dbType = (process.env.CORE_DB_TYPE ||
   process.env.DB_TYPE ||

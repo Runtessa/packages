@@ -3,8 +3,8 @@ import { DataSource } from 'typeorm';
 import { AppError } from '../../common/AppError';
 import { generateVersion } from '../../common/version';
 import { publishedCache } from '../../core/publishedCache';
-import { UIPackage } from '../../entities/UIEntities';
-import { UIPackageRevision } from '../../entities/UIPackageRevision';
+import { UIPackage } from '@idp/shared';
+import { UIPackageRevision } from '@idp/shared';
 import { TenantRequest } from '../../types/RequestContext';
 
 export class UIEntityController {

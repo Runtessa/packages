@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import 'reflect-metadata';
 import { AppDataSource, initializeDataSource } from './core/datasource';
-import { Tenant } from './entities/Tenant';
-import { UIPackage } from './entities/UIEntities';
+import { Tenant } from '@idp/shared';
+import { UIPackage } from '@idp/shared';
 
 const themePackage = {
   name: '@core/theme',

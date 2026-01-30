@@ -1,6 +1,7 @@
 const nextConfig = {
   reactStrictMode: true,
   productionBrowserSourceMaps: true,
+  transpilePackages: ["@idp/shared"],
   allowedDevOrigins: [
     "http://localhost:3002",
     "http://127.0.0.1:3002",

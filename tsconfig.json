@@ -8,6 +8,11 @@
     "strict": true,
     "esModuleInterop": true,
     "moduleResolution": "node",
+    "baseUrl": ".",
+    "paths": {
+      "@idp/shared": ["packages/shared/dist/index.d.ts"],
+      "@idp/shared/*": ["packages/shared/dist/*"]
+    },
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "sourceMap": true,

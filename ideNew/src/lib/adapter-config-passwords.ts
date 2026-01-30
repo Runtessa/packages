@@ -1,7 +1,7 @@
 import { DataSource } from 'typeorm';
 import { decryptSecret, encryptSecret } from '@/lib/crypto';
-import { Secret } from '@/lib/entities/Secret';
-import { Tenant } from '@/lib/entities/Tenant';
+import { Secret } from '@idp/shared';
+import { Tenant } from '@idp/shared';
 
 const isEncryptedMarker = (value: string) => value.startsWith('enc:');
 

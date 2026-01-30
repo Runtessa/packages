@@ -1,7 +1,7 @@
 import { NextFunction, Request, Response } from 'express';
 import { DataSource } from 'typeorm';
 import { AppError } from '../../common/AppError';
-import { Tenant } from '../../entities/Tenant';
+import { Tenant } from '@idp/shared';
 
 export class AdminController {
   constructor(private readonly dataSource: DataSource) {}

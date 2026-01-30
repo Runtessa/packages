@@ -2,10 +2,10 @@ import 'dotenv/config';
 import 'reflect-metadata';
 import { AppDataSource, initializeDataSource } from './core/datasource';
 import { CryptoService } from './core/security/CryptoService';
-import { Tenant } from './entities/Tenant';
-import { Account, AccountRole } from './entities/Account';
-import { Secret } from './entities/Secret';
-import { ModuleEntity, HttpMethod } from './entities/Module';
+import { Tenant } from '@idp/shared';
+import { Account, AccountRole } from '@idp/shared';
+import { Secret } from '@idp/shared';
+import { ModuleEntity, HttpMethod } from '@idp/shared';
 
 const getKeyFromEnv = (envName: string, expectedBytes: number): Buffer => {
   const raw = process.env[envName];

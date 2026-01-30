@@ -9,8 +9,8 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { DataSource } from 'typeorm';
 import { CircuitBreaker } from '../core/resilience/CircuitBreaker';
 import { CryptoService } from '../core/security/CryptoService';
-import { Tenant } from '../entities/Tenant';
-import { Secret } from '../entities/Secret';
+import { Tenant } from '@idp/shared';
+import { Secret } from '@idp/shared';
 import { CompilerAdapter } from './adapters/CompilerAdapter';
 
 type AsyncFactory<T> = (envKey: string) => Promise<T>;

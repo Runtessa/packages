@@ -1,6 +1,6 @@
 import vm from 'vm';
 import { SandboxAdapters } from './AdapterFactory';
-import { AccountRole } from '../entities/Account';
+import { AccountRole } from '@idp/shared';
 import { AppError } from '../common/AppError';
 
 export interface SandboxRequestContext {
