@@ -26,6 +26,12 @@ export class Tenant {
     timeout: number;
   };
 
+  @Column({ type: "jsonb", default: () => "'{}'" })
+  adapterAccess!: Record<string, { allow: string[] }>;
+
+  @Column({ type: "jsonb", default: () => "'{}'" })
+  adapterConfig!: Record<string, unknown>;
+
   @Column({ default: false })
   isSuspended!: boolean;
 

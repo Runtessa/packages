@@ -1,7 +1,7 @@
 import https from 'https';
 import { Pool as PgPool } from 'pg';
 import { createPool as createMySqlPool } from 'mysql2/promise';
-import { ConnectionPool } from 'mssql';
+import { ConnectionPool, config as MssqlConfig } from 'mssql';
 import Redis from 'ioredis';
 import { Kafka, Producer } from 'kafkajs';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -14,6 +14,12 @@ import { Secret } from '../entities/Secret';
 import { CompilerAdapter } from './adapters/CompilerAdapter';
 
 type AsyncFactory<T> = (envKey: string) => Promise<T>;
+
+type ReadWriteFactory<T> = {
+  (key: string): Promise<T>;
+  readOnly: (key: string) => Promise<T>;
+  readWrite: (key: string) => Promise<T>;
+};
 
 export interface PostgresAdapter {
   query: (sql: string, params?: unknown[]) => Promise<unknown[]>;
@@ -57,9 +63,9 @@ export interface HttpResponse {
 }
 
 export interface SandboxAdapters {
-  postgres: AsyncFactory<PostgresAdapter>;
-  mysql: AsyncFactory<MysqlAdapter>;
-  mssql: AsyncFactory<MssqlAdapter>;
+  postgres: ReadWriteFactory<PostgresAdapter>;
+  mysql: ReadWriteFactory<MysqlAdapter>;
+  mssql: ReadWriteFactory<MssqlAdapter>;
   redis: AsyncFactory<RedisAdapter>;
   kafka: AsyncFactory<KafkaAdapter>;
   s3: AsyncFactory<S3Adapter>;
@@ -85,10 +91,22 @@ export class AdapterFactory {
   }
 
   build(tenant: Tenant): SandboxAdapters {
+    const postgres = ((key: string) => this.buildPostgres(tenant, key, 'write')) as ReadWriteFactory<PostgresAdapter>;
+    postgres.readOnly = (key: string) => this.buildPostgres(tenant, key, 'read');
+    postgres.readWrite = (key: string) => this.buildPostgres(tenant, key, 'write');
+
+    const mysql = ((key: string) => this.buildMysql(tenant, key, 'write')) as ReadWriteFactory<MysqlAdapter>;
+    mysql.readOnly = (key: string) => this.buildMysql(tenant, key, 'read');
+    mysql.readWrite = (key: string) => this.buildMysql(tenant, key, 'write');
+
+    const mssql = ((key: string) => this.buildMssql(tenant, key, 'write')) as ReadWriteFactory<MssqlAdapter>;
+    mssql.readOnly = (key: string) => this.buildMssql(tenant, key, 'read');
+    mssql.readWrite = (key: string) => this.buildMssql(tenant, key, 'write');
+
     return {
-      postgres: (envKey) => this.buildPostgres(tenant, envKey),
-      mysql: (envKey) => this.buildMysql(tenant, envKey),
-      mssql: (envKey) => this.buildMssql(tenant, envKey),
+      postgres,
+      mysql,
+      mssql,
       redis: (envKey) => this.buildRedis(tenant, envKey),
       kafka: (envKey) => this.buildKafka(tenant, envKey),
       s3: (envKey) => this.buildS3(tenant, envKey),
@@ -108,22 +126,164 @@ export class AdapterFactory {
 
   private async getSecretValue(tenant: Tenant, keyName: string): Promise<string> {
     const repo = this.dataSource.getRepository(Secret);
-    const secret = await repo.findOne({ where: { tenant: { id: tenant.id }, keyName } });
+    let secret = await repo.findOne({ where: { tenant: { id: tenant.id }, keyName } });
     if (!secret) {
-      throw new Error(`Secret ${keyName} not found for tenant`);
+      secret = await repo
+        .createQueryBuilder('secret')
+        .where('secret."keyName" = :keyName', { keyName })
+        .andWhere('secret."tenantId" = :tenantId', { tenantId: tenant.id })
+        .getOne();
     }
-    return this.cryptoService.decryptSecret({
-      encryptedValue: secret.encryptedValue,
-      authTag: secret.authTag,
-      iv: secret.iv,
-    });
+    if (!secret) {
+      const rows = await repo.query(
+        'select "encryptedValue", "iv", "authTag" from secrets where "tenantId" = $1 and "keyName" = $2 limit 1',
+        [tenant.id, keyName],
+      );
+      if (Array.isArray(rows) && rows[0]) {
+        return this.cryptoService.decryptSecret({
+          encryptedValue: rows[0].encryptedValue,
+          iv: rows[0].iv,
+          authTag: rows[0].authTag,
+        });
+      }
+    }
+    if (!secret) {
+      let debugInfo = '';
+      try {
+        const result = await repo.query('select current_database() as db');
+        const dbName = Array.isArray(result) && result[0]?.db ? result[0].db : 'unknown';
+        const countResult = await repo.query(
+          'select count(*)::int as count from secrets where "tenantId" = $1',
+          [tenant.id],
+        );
+        const count =
+          Array.isArray(countResult) && typeof countResult[0]?.count === 'number'
+            ? countResult[0].count
+            : Number(countResult[0]?.count ?? 0);
+        debugInfo = ` (db=${dbName}, tenantSecrets=${count})`;
+      } catch {
+        // ignore debug failures
+      }
+      throw new Error(`Secret ${keyName} not found for tenant${debugInfo}`);
+    }
+    try {
+      return this.cryptoService.decryptSecret({
+        encryptedValue: secret.encryptedValue,
+        authTag: secret.authTag,
+        iv: secret.iv,
+      });
+    } catch (err) {
+      throw new Error(`Secret ${keyName} found but failed to decrypt`);
+    }
   }
 
-  private async buildPostgres(tenant: Tenant, envKey: string): Promise<PostgresAdapter> {
-    const cacheKey = `${tenant.id}:pg:${envKey}`;
+  private async resolveSecretValue(tenant: Tenant, adapter: string, key: string): Promise<string> {
+    const rawKey = key.trim();
+    const lowerKey = rawKey.toLowerCase();
+    const candidates = [
+      `${adapter}:${lowerKey}`,
+      `${adapter}:${rawKey}`,
+      lowerKey,
+      rawKey,
+    ];
+    for (const candidate of candidates) {
+      try {
+        return await this.getSecretValue(tenant, candidate);
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('failed to decrypt')) {
+          throw err;
+        }
+        // try next
+      }
+    }
+    let debugInfo = '';
+    try {
+      const repo = this.dataSource.getRepository(Secret);
+      const result = await repo.query('select current_database() as db');
+      const dbName = Array.isArray(result) && result[0]?.db ? result[0].db : 'unknown';
+      const countResult = await repo.query(
+        'select count(*)::int as count from secrets where "tenantId" = $1',
+        [tenant.id],
+      );
+      const count =
+        Array.isArray(countResult) && typeof countResult[0]?.count === 'number'
+          ? countResult[0].count
+          : Number(countResult[0]?.count ?? 0);
+      let keys: string[] = [];
+      if (count > 0) {
+        const rows = await repo.query(
+          'select "keyName" from secrets where "tenantId" = $1',
+          [tenant.id],
+        );
+        keys = Array.isArray(rows) ? rows.map((row) => row.keyName) : [];
+      }
+      debugInfo = ` (db=${dbName}, tenantSecrets=${count}, keys=${keys.join('|')})`;
+    } catch {
+      // ignore debug failures
+    }
+    throw new Error(
+      `Secret ${rawKey} not found for tenant ${tenant.id}. Tried keys: ${candidates.join(', ')}${debugInfo}`
+    );
+  }
+
+  private selectReadWriteConfig(secretVal: string, mode: 'read' | 'write') {
+    try {
+      const parsed = JSON.parse(secretVal);
+      if (!parsed || typeof parsed !== 'object') return secretVal;
+      if ('read' in parsed || 'write' in parsed) {
+        const readVal = (parsed as any).read;
+        const writeVal = (parsed as any).write;
+        const selected = mode === 'read' ? (readVal ?? writeVal) : (writeVal ?? readVal);
+        if (Array.isArray(selected)) {
+          return selected[0] ?? secretVal;
+        }
+        return selected ?? secretVal;
+      }
+      return parsed;
+    } catch {
+      return secretVal;
+    }
+  }
+
+  private normalizeDbConfig(config: Record<string, unknown>) {
+    const normalized = { ...config } as Record<string, unknown>;
+    if (!normalized.user && typeof normalized.username === 'string') {
+      normalized.user = normalized.username;
+    }
+    return normalized;
+  }
+
+  private ensureAdapterAccess(tenant: Tenant, adapter: string, adapterKey: string) {
+    const rawKey = adapterKey.trim();
+    const lowerKey = rawKey.toLowerCase();
+    const access = tenant.adapterAccess || {};
+    const rule = (access as Record<string, { allow?: string[] } | undefined>)[adapter];
+    const allow = rule?.allow ?? [];
+    if (allow.length === 0) {
+      throw new Error(`Access denied: ${adapter} adapter is not enabled for tenant`);
+    }
+    if (allow.includes('*')) return;
+    if (!allow.includes(rawKey) && !allow.includes(lowerKey)) {
+      throw new Error(`Access denied: ${adapter} adapter cannot access ${rawKey}`);
+    }
+  }
+
+  private async buildPostgres(
+    tenant: Tenant,
+    adapterKey: string,
+    mode: 'read' | 'write',
+  ): Promise<PostgresAdapter> {
+    this.ensureAdapterAccess(tenant, 'postgres', adapterKey);
+    const normalizedKey = adapterKey.trim().toLowerCase();
+    const cacheKey = `${tenant.id}:pg:${normalizedKey}:${mode}`;
     if (!this.pgPools.has(cacheKey)) {
-      const connString = await this.getSecretValue(tenant, envKey);
-      this.pgPools.set(cacheKey, new PgPool({ connectionString: connString }));
+      const secretVal = await this.resolveSecretValue(tenant, 'postgres', normalizedKey);
+      const config = this.selectReadWriteConfig(secretVal, mode);
+      if (typeof config === 'string') {
+        this.pgPools.set(cacheKey, new PgPool({ connectionString: config }));
+      } else {
+        this.pgPools.set(cacheKey, new PgPool(this.normalizeDbConfig(config as Record<string, unknown>)));
+      }
     }
     const pool = this.pgPools.get(cacheKey)!;
     const breaker = this.breakerFor(cacheKey);
@@ -141,11 +301,25 @@ export class AdapterFactory {
     };
   }
 
-  private async buildMysql(tenant: Tenant, envKey: string): Promise<MysqlAdapter> {
-    const cacheKey = `${tenant.id}:mysql:${envKey}`;
+  private async buildMysql(
+    tenant: Tenant,
+    adapterKey: string,
+    mode: 'read' | 'write',
+  ): Promise<MysqlAdapter> {
+    this.ensureAdapterAccess(tenant, 'mysql', adapterKey);
+    const normalizedKey = adapterKey.trim().toLowerCase();
+    const cacheKey = `${tenant.id}:mysql:${normalizedKey}:${mode}`;
     if (!this.mysqlPools.has(cacheKey)) {
-      const connString = await this.getSecretValue(tenant, envKey);
-      this.mysqlPools.set(cacheKey, createMySqlPool({ uri: connString }));
+      const secretVal = await this.resolveSecretValue(tenant, 'mysql', normalizedKey);
+      const config = this.selectReadWriteConfig(secretVal, mode);
+      if (typeof config === 'string') {
+        this.mysqlPools.set(cacheKey, createMySqlPool({ uri: config }));
+      } else {
+        this.mysqlPools.set(
+          cacheKey,
+          createMySqlPool(this.normalizeDbConfig(config as Record<string, unknown>)),
+        );
+      }
     }
     const pool = this.mysqlPools.get(cacheKey)!;
     const breaker = this.breakerFor(cacheKey);
@@ -158,11 +332,23 @@ export class AdapterFactory {
     };
   }
 
-  private async buildMssql(tenant: Tenant, envKey: string): Promise<MssqlAdapter> {
-    const cacheKey = `${tenant.id}:mssql:${envKey}`;
+  private async buildMssql(
+    tenant: Tenant,
+    adapterKey: string,
+    mode: 'read' | 'write',
+  ): Promise<MssqlAdapter> {
+    this.ensureAdapterAccess(tenant, 'mssql', adapterKey);
+    const normalizedKey = adapterKey.trim().toLowerCase();
+    const cacheKey = `${tenant.id}:mssql:${normalizedKey}:${mode}`;
     if (!this.mssqlPools.has(cacheKey)) {
-      const connString = await this.getSecretValue(tenant, envKey);
-      const pool = new ConnectionPool(connString);
+      const secretVal = await this.resolveSecretValue(tenant, 'mssql', normalizedKey);
+      const config = this.selectReadWriteConfig(secretVal, mode);
+      const pool =
+        typeof config === 'string'
+          ? new ConnectionPool(config)
+          : new ConnectionPool(
+              this.normalizeDbConfig(config as Record<string, unknown>) as unknown as MssqlConfig
+            );
       await pool.connect();
       this.mssqlPools.set(cacheKey, pool);
     }
@@ -178,10 +364,21 @@ export class AdapterFactory {
   }
 
   private async buildRedis(tenant: Tenant, envKey: string): Promise<RedisAdapter> {
+    this.ensureAdapterAccess(tenant, 'redis', envKey);
     const cacheKey = `${tenant.id}:redis:${envKey}`;
     if (!this.redisClients.has(cacheKey)) {
-      const connString = await this.getSecretValue(tenant, envKey);
-      this.redisClients.set(cacheKey, new Redis(connString));
+      const secretVal = await this.resolveSecretValue(tenant, 'redis', envKey);
+      let config: string | Record<string, unknown> = secretVal;
+      try {
+        const parsed = JSON.parse(secretVal);
+        if (parsed && typeof parsed === 'object') {
+          const url = (parsed as any).url;
+          config = typeof url === 'string' ? url : (parsed as Record<string, unknown>);
+        }
+      } catch {
+        // use raw string
+      }
+      this.redisClients.set(cacheKey, new Redis(config as any));
     }
     const client = this.redisClients.get(cacheKey)!;
     const breaker = this.breakerFor(cacheKey);
@@ -201,9 +398,10 @@ export class AdapterFactory {
   }
 
   private async buildKafka(tenant: Tenant, envKey: string): Promise<KafkaAdapter> {
+    this.ensureAdapterAccess(tenant, 'kafka', envKey);
     const cacheKey = `${tenant.id}:kafka:${envKey}`;
     if (!this.kafkaProducers.has(cacheKey)) {
-      const secretVal = await this.getSecretValue(tenant, envKey);
+      const secretVal = await this.resolveSecretValue(tenant, 'kafka', envKey);
       let brokers: string[] = [];
       try {
         const parsed = JSON.parse(secretVal);
@@ -230,9 +428,10 @@ export class AdapterFactory {
   }
 
   private async buildS3(tenant: Tenant, envKey: string): Promise<S3Adapter> {
+    this.ensureAdapterAccess(tenant, 's3', envKey);
     const cacheKey = `${tenant.id}:s3:${envKey}`;
     if (!this.s3Clients.has(cacheKey)) {
-      const secretVal = await this.getSecretValue(tenant, envKey);
+      const secretVal = await this.resolveSecretValue(tenant, 's3', envKey);
       let cfg: {
         endpoint?: string;
         region?: string;

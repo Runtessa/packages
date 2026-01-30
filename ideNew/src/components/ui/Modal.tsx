@@ -6,18 +6,28 @@ type ModalProps = {
   title: string;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  size?: 'md' | 'lg' | 'xl';
 };
 
-export const Modal = ({ open, onClose, title, children, footer }: ModalProps) => {
+const SIZE_CLASSES: Record<NonNullable<ModalProps['size']>, string> = {
+  md: 'max-w-2xl',
+  lg: 'max-w-3xl',
+  xl: 'max-w-4xl',
+};
+
+export const Modal = ({ open, onClose, title, children, footer, size = 'xl' }: ModalProps) => {
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-bgApp/90"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-bgApp/90 !mt-0"
       role="dialog"
       aria-modal="true"
       dir="ltr"
     >
-      <div className="w-full max-w-4xl rounded-lg border border-borderSubtle bg-bgSurface shadow-soft mx-4" dir="ltr">
+      <div
+        className={`flex max-h-[90vh] w-full ${SIZE_CLASSES[size]} flex-col rounded-lg border border-borderSubtle bg-bgSurface shadow-soft mx-4`}
+        dir="ltr"
+      >
         <div className="flex flex-row items-center justify-between border-b border-borderSubtle px-4 py-3">
           <h3 className="text-base font-semibold text-textPrimary">{title}</h3>
           <button
@@ -28,7 +38,9 @@ export const Modal = ({ open, onClose, title, children, footer }: ModalProps) =>
             X
           </button>
         </div>
-        <div className="px-4 py-4 text-left text-sm text-textPrimary">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 text-left text-sm text-textPrimary">
+          {children}
+        </div>
         {footer && <div className="border-t border-borderSubtle px-4 py-3">{footer}</div>}
       </div>
     </div>

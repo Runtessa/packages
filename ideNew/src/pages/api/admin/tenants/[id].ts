@@ -2,6 +2,10 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
+import { Secret } from '@/lib/entities/Secret';
+import { encryptSecret } from '@/lib/crypto';
+import { maskPasswordFields, resolveMaskedPasswords } from '@/lib/adapter-config-passwords';
+import { parseAdapterConfig } from '@/lib/tenant-adapter-config';
 import { Tenant } from '@/lib/entities/Tenant';
 
 const DEFAULT_RESOURCE_CONFIG = { memory: 512, timeout: 5000 };
@@ -81,11 +85,38 @@ const normalizeBoolean = (raw: unknown, fallback: boolean) => {
   throw err;
 };
 
+const parseAdapterConfigObject = (raw: unknown): Record<string, unknown> | null => {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') {
+        const err = new Error('adapterConfig must be an object');
+        (err as any).statusCode = 400;
+        throw err;
+      }
+      return parsed as Record<string, unknown>;
+    } catch {
+      const err = new Error('adapterConfig must be valid JSON');
+      (err as any).statusCode = 400;
+      throw err;
+    }
+  }
+  if (typeof raw !== 'object') {
+    const err = new Error('adapterConfig must be an object');
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  return raw as Record<string, unknown>;
+};
+
 const serializeTenant = (tenant: Tenant) => ({
   id: tenant.id,
   hostname: tenant.hostname,
   isSuspended: tenant.isSuspended,
   resourceConfig: tenant.resourceConfig,
+  adapterAccess: tenant.adapterAccess ?? {},
+  adapterConfig: tenant.adapterConfig ?? {},
   restrictRoutes: tenant.restrictRoutes ?? [],
   createdAt: tenant.createdAt,
   updatedAt: tenant.updatedAt,
@@ -104,7 +135,15 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       res.status(404).json({ error: 'Tenant not found' });
       return;
     }
-    res.status(200).json({ tenant: serializeTenant(tenant) });
+    const secretRepo = CoreDataSource.getRepository(Secret);
+    const secrets = await secretRepo.find({
+      where: { tenant: { id: tenant.id } },
+      order: { keyName: 'ASC' },
+    });
+    res.status(200).json({
+      tenant: serializeTenant(tenant),
+      secrets: secrets.map((secret) => ({ keyName: secret.keyName, updatedAt: secret.updatedAt })),
+    });
     return;
   }
 
@@ -126,6 +165,15 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       req.body?.restrictRoutes,
       tenant.restrictRoutes ?? []
     );
+    const configObject = parseAdapterConfigObject(req.body?.adapterConfig);
+    const resolvedConfig = configObject
+      ? await resolveMaskedPasswords(configObject, CoreDataSource, tenant)
+      : null;
+    const adapterConfig = parseAdapterConfig(resolvedConfig);
+    const nextAdapterAccess =
+      Object.keys(adapterConfig.adapterAccess).length > 0
+        ? adapterConfig.adapterAccess
+        : tenant.adapterAccess ?? {};
 
     if (nextHostname !== tenant.hostname) {
       const duplicate = await repo.findOne({ where: { hostname: nextHostname } });
@@ -138,8 +186,34 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     tenant.hostname = nextHostname;
     tenant.isSuspended = nextSuspended;
     tenant.resourceConfig = nextResourceConfig;
+    tenant.adapterAccess = nextAdapterAccess;
+    tenant.adapterConfig = resolvedConfig ? maskPasswordFields(resolvedConfig) : tenant.adapterConfig ?? {};
     tenant.restrictRoutes = nextRestrictRoutes;
     await repo.save(tenant);
+
+    if (adapterConfig.secrets) {
+      const secretRepo = CoreDataSource.getRepository(Secret);
+      for (const [keyName, value] of Object.entries(adapterConfig.secrets)) {
+        const encrypted = encryptSecret(value);
+        let secret = await secretRepo.findOne({
+          where: { tenant: { id: tenant.id }, keyName },
+        });
+        if (!secret) {
+          secret = secretRepo.create({
+            tenant,
+            keyName,
+            encryptedValue: encrypted.encryptedValue,
+            iv: encrypted.iv,
+            authTag: encrypted.authTag,
+          });
+        } else {
+          secret.encryptedValue = encrypted.encryptedValue;
+          secret.iv = encrypted.iv;
+          secret.authTag = encrypted.authTag;
+        }
+        await secretRepo.save(secret);
+      }
+    }
 
     res.status(200).json({ tenant: serializeTenant(tenant) });
     return;

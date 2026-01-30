@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { DataCard } from '@/components/ui/DataCard';
@@ -13,15 +14,25 @@ import { useToast } from '@/components/ui/Toast';
 import { fetchJson } from '@/lib/client/api';
 import { useSessionToken } from '@/lib/client/session';
 import { getSelectedTenantHost, setSelectedTenantHost } from '@/lib/client/tenant';
+import { buildAdapterConfigTemplate } from '@/lib/tenant-adapter-config';
+
+const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
 type TenantSummary = {
   id: string;
   hostname: string;
   isSuspended: boolean;
   resourceConfig?: { memory: number; timeout: number };
+  adapterAccess?: Record<string, { allow: string[] }>;
+  adapterConfig?: Record<string, unknown>;
   restrictRoutes?: string[];
   createdAt?: string;
   updatedAt?: string;
+};
+
+type TenantDetails = {
+  tenant: TenantSummary;
+  secrets?: Array<{ keyName: string; updatedAt?: string }>;
 };
 
 type TenantFormState = {
@@ -39,7 +50,6 @@ type TenantEditState = TenantFormState & {
 
 type TenantFormErrors = {
   hostname: string;
-  memory: string;
   timeout: string;
 };
 
@@ -51,6 +61,40 @@ const DEFAULT_FORM: TenantFormState = {
   restrictRoutes: '',
 };
 
+const DEFAULT_CONFIG_TEXT = JSON.stringify(
+  {
+    adapters: {
+      postgres: {
+        pga1: {
+          read: [
+            {
+              host: '',
+              port: '',
+              username: '',
+              password: '',
+              database: '',
+            },
+          ],
+          write: {
+            host: '',
+            port: '',
+            username: '',
+            password: '',
+            database: '',
+          },
+        },
+      },
+      mysql: {},
+      mssql: {},
+      redis: {},
+      kafka: {},
+      s3: {},
+    },
+  },
+  null,
+  2
+);
+const EMPTY_CONFIG_TEXT = JSON.stringify({ adapters: {} }, null, 2);
 const DEFAULT_EDIT_FORM: TenantEditState = {
   id: '',
   originalHostname: '',
@@ -68,16 +112,20 @@ const parseRoutes = (value: string) => {
     .map((route) => (route.startsWith('/') ? route : `/${route}`));
 };
 
+const parseConfigJson = (value: string) => {
+  if (!value.trim()) return {};
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error('Adapter config must be valid JSON.');
+  }
+};
+
 const validateTenantForm = (values: TenantFormState): TenantFormErrors => {
-  const errors: TenantFormErrors = { hostname: '', memory: '', timeout: '' };
+  const errors: TenantFormErrors = { hostname: '', timeout: '' };
 
   if (!values.hostname.trim()) {
     errors.hostname = 'Hostname is required';
-  }
-
-  const memory = Number(values.memory);
-  if (!Number.isFinite(memory) || memory <= 0) {
-    errors.memory = 'Memory must be a positive number';
   }
 
   const timeout = Number(values.timeout);
@@ -89,7 +137,7 @@ const validateTenantForm = (values: TenantFormState): TenantFormErrors => {
 };
 
 const hasErrors = (errors: TenantFormErrors) =>
-  Boolean(errors.hostname || errors.memory || errors.timeout);
+  Boolean(errors.hostname || errors.timeout);
 
 export default function AdminTenantsPage() {
   const router = useRouter();
@@ -101,15 +149,20 @@ export default function AdminTenantsPage() {
   const [loading, setLoading] = useState(false);
   const [selectedTenant, setSelectedTenant] = useState('');
   const [form, setForm] = useState<TenantFormState>(DEFAULT_FORM);
+  const [adapterConfigText, setAdapterConfigText] = useState(DEFAULT_CONFIG_TEXT);
+  const [adapterConfigModalOpen, setAdapterConfigModalOpen] = useState(false);
   const [editForm, setEditForm] = useState<TenantEditState>(DEFAULT_EDIT_FORM);
+  const [editAdapterConfigText, setEditAdapterConfigText] = useState(DEFAULT_CONFIG_TEXT);
+  const [editAdapterConfigModalOpen, setEditAdapterConfigModalOpen] = useState(false);
+  const [tenantSecrets, setTenantSecrets] = useState<
+    Array<{ keyName: string; updatedAt?: string }>
+  >([]);
   const [validationErrors, setValidationErrors] = useState<TenantFormErrors>({
     hostname: '',
-    memory: '',
     timeout: '',
   });
   const [editValidationErrors, setEditValidationErrors] = useState<TenantFormErrors>({
     hostname: '',
-    memory: '',
     timeout: '',
   });
   const [modalOpen, setModalOpen] = useState(false);
@@ -166,17 +219,21 @@ export default function AdminTenantsPage() {
 
   const openCreateModal = () => {
     setForm(DEFAULT_FORM);
-    setValidationErrors({ hostname: '', memory: '', timeout: '' });
+    setAdapterConfigText(DEFAULT_CONFIG_TEXT);
+    setAdapterConfigModalOpen(false);
+    setValidationErrors({ hostname: '', timeout: '' });
     setModalOpen(true);
   };
 
   const closeCreateModal = () => {
     setModalOpen(false);
     setForm(DEFAULT_FORM);
-    setValidationErrors({ hostname: '', memory: '', timeout: '' });
+    setAdapterConfigText(DEFAULT_CONFIG_TEXT);
+    setAdapterConfigModalOpen(false);
+    setValidationErrors({ hostname: '', timeout: '' });
   };
 
-  const openEditModal = (tenant: TenantSummary) => {
+  const openEditModal = async (tenant: TenantSummary) => {
     setEditForm({
       id: tenant.id,
       originalHostname: tenant.hostname,
@@ -186,14 +243,41 @@ export default function AdminTenantsPage() {
       timeout: String(tenant.resourceConfig?.timeout ?? Number(DEFAULT_FORM.timeout)),
       restrictRoutes: formatRoutes(tenant.restrictRoutes),
     });
-    setEditValidationErrors({ hostname: '', memory: '', timeout: '' });
+    setEditAdapterConfigText(DEFAULT_CONFIG_TEXT);
+    setTenantSecrets([]);
+    setEditAdapterConfigModalOpen(false);
+    setEditValidationErrors({ hostname: '', timeout: '' });
     setEditModalOpen(true);
+    if (!token) return;
+    try {
+      const detail = (await fetchJson(`/api/admin/tenants/${tenant.id}`, {
+        token,
+      })) as TenantDetails;
+      const access = detail?.tenant?.adapterAccess ?? {};
+      const storedConfig = detail?.tenant?.adapterConfig ?? {};
+      const secrets = detail?.secrets ?? [];
+      setTenantSecrets(secrets);
+      if (storedConfig && Object.keys(storedConfig).length > 0) {
+        setEditAdapterConfigText(JSON.stringify(storedConfig, null, 2));
+      } else {
+        const template = buildAdapterConfigTemplate(
+          access ?? {},
+          secrets.map((secret) => secret.keyName)
+        );
+        setEditAdapterConfigText(template === EMPTY_CONFIG_TEXT ? DEFAULT_CONFIG_TEXT : template);
+      }
+    } catch (err: any) {
+      setError(err.message);
+    }
   };
 
   const closeEditModal = () => {
     setEditModalOpen(false);
     setEditForm(DEFAULT_EDIT_FORM);
-    setEditValidationErrors({ hostname: '', memory: '', timeout: '' });
+    setEditAdapterConfigText(DEFAULT_CONFIG_TEXT);
+    setTenantSecrets([]);
+    setEditAdapterConfigModalOpen(false);
+    setEditValidationErrors({ hostname: '', timeout: '' });
   };
 
   const openDeleteModal = (tenant: TenantSummary) => {
@@ -212,7 +296,7 @@ export default function AdminTenantsPage() {
     router.push('/editor');
   };
 
-  const buildPayload = (values: TenantFormState) => ({
+  const buildPayload = (values: TenantFormState, configText?: string) => ({
     hostname: values.hostname.trim(),
     isSuspended: values.isSuspended,
     resourceConfig: {
@@ -220,6 +304,7 @@ export default function AdminTenantsPage() {
       timeout: Number(values.timeout),
     },
     restrictRoutes: parseRoutes(values.restrictRoutes),
+    adapterConfig: configText ? parseConfigJson(configText) : undefined,
   });
 
   const handleCreateSubmit = async (e: FormEvent) => {
@@ -231,7 +316,7 @@ export default function AdminTenantsPage() {
     if (!token) return;
 
     try {
-      const payload = buildPayload(form);
+      const payload = buildPayload(form, adapterConfigText);
       const data = await fetchJson('/api/admin/tenants', {
         method: 'POST',
         token,
@@ -254,7 +339,7 @@ export default function AdminTenantsPage() {
     if (!token) return;
 
     try {
-      const payload = buildPayload(editForm);
+      const payload = buildPayload(editForm, editAdapterConfigText);
       const data = await fetchJson(`/api/admin/tenants/${editForm.id}`, {
         method: 'PUT',
         token,
@@ -434,15 +519,6 @@ export default function AdminTenantsPage() {
               Suspended
             </label>
             <Input
-              label="Memory (MB)"
-              type="number"
-              min="1"
-              step="1"
-              value={form.memory}
-              onChange={(e) => setForm({ ...form, memory: e.target.value })}
-              error={validationErrors.memory}
-            />
-            <Input
               label="Timeout (ms)"
               type="number"
               min="1"
@@ -453,11 +529,45 @@ export default function AdminTenantsPage() {
             />
             <div className="md:col-span-2">
               <TextArea
-                label="Restrict routes"
-                placeholder="/admin\n/secret"
-                value={form.restrictRoutes}
-                onChange={(e) => setForm({ ...form, restrictRoutes: e.target.value })}
-              />
+          label="Restrict routes"
+          placeholder="/admin\n/secret"
+          value={form.restrictRoutes}
+          onChange={(e) => setForm({ ...form, restrictRoutes: e.target.value })}
+        />
+      </div>
+            <div className="md:col-span-2 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-textPrimary">
+                  Adapter config (JSON)
+                </label>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="xs"
+                  onClick={() => setAdapterConfigModalOpen(true)}
+                >
+                  Maximize
+                </Button>
+              </div>
+              <div className="h-40 overflow-hidden rounded-lg border border-borderSubtle bg-bgSurface">
+                <MonacoEditor
+                  height="100%"
+                  language="json"
+                  theme="vs-dark"
+                  value={adapterConfigText}
+                  onChange={(value) => setAdapterConfigText(value ?? '')}
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 12,
+                    scrollBeyondLastLine: false,
+                    wordWrap: 'on',
+                  }}
+                />
+              </div>
+              <p className="text-xs text-textMuted">
+                Connection strings are encrypted on save. Keep values empty to avoid overwriting
+                existing secrets.
+              </p>
             </div>
           </FormLayout>
         </form>
@@ -467,30 +577,20 @@ export default function AdminTenantsPage() {
         open={editModalOpen}
         onClose={closeEditModal}
         title="Edit tenant"
+        size="md"
         footer={
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={closeEditModal}>
               Cancel
             </Button>
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-              }}
-              aria-hidden
-              className="hidden"
-            />
+            <Button type="submit" variant="primary" form="edit-tenant-form">
+              Save changes
+            </Button>
           </div>
         }
       >
-        <form onSubmit={handleEditSubmit} className="space-y-4">
-          <FormLayout
-            gridClassName="grid gap-4 md:grid-cols-2"
-            actions={
-              <Button type="submit" variant="primary">
-                Save changes
-              </Button>
-            }
-          >
+        <form id="edit-tenant-form" onSubmit={handleEditSubmit} className="space-y-4">
+          <FormLayout gridClassName="grid gap-4 md:grid-cols-2">
             <div className="md:col-span-2">
               <Input
                 label="Hostname"
@@ -510,15 +610,6 @@ export default function AdminTenantsPage() {
               Suspended
             </label>
             <Input
-              label="Memory (MB)"
-              type="number"
-              min="1"
-              step="1"
-              value={editForm.memory}
-              onChange={(e) => setEditForm({ ...editForm, memory: e.target.value })}
-              error={editValidationErrors.memory}
-            />
-            <Input
               label="Timeout (ms)"
               type="number"
               min="1"
@@ -527,13 +618,50 @@ export default function AdminTenantsPage() {
               onChange={(e) => setEditForm({ ...editForm, timeout: e.target.value })}
               error={editValidationErrors.timeout}
             />
-            <div className="md:col-span-2">
-              <TextArea
-                label="Restrict routes"
-                placeholder="/admin\n/secret"
-                value={editForm.restrictRoutes}
-                onChange={(e) => setEditForm({ ...editForm, restrictRoutes: e.target.value })}
-              />
+          <div className="md:col-span-2">
+            <TextArea
+              label="Restrict routes"
+              placeholder="/admin\n/secret"
+              value={editForm.restrictRoutes}
+              onChange={(e) => setEditForm({ ...editForm, restrictRoutes: e.target.value })}
+            />
+          </div>
+            <div className="md:col-span-2 space-y-1">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-textPrimary">
+                  Adapter config (JSON)
+                </label>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="xs"
+                  onClick={() => setEditAdapterConfigModalOpen(true)}
+                >
+                  Maximize
+                </Button>
+              </div>
+              <div className="h-40 overflow-hidden rounded-lg border border-borderSubtle bg-bgSurface">
+                <MonacoEditor
+                  height="100%"
+                  language="json"
+                  theme="vs-dark"
+                  value={editAdapterConfigText}
+                  onChange={(value) => setEditAdapterConfigText(value ?? '')}
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 12,
+                    scrollBeyondLastLine: false,
+                    wordWrap: 'on',
+                  }}
+                />
+              </div>
+              <p className="text-xs text-textMuted">
+                Existing secrets:{' '}
+                {tenantSecrets.length
+                  ? tenantSecrets.map((s) => s.keyName).join(', ')
+                  : 'none'}
+                . Values you enter are encrypted on save.
+              </p>
             </div>
           </FormLayout>
         </form>
@@ -559,6 +687,66 @@ export default function AdminTenantsPage() {
             ? `Delete ${deleteTarget.hostname}? This will remove accounts, secrets, and modules for that tenant.`
             : 'Select a tenant to delete.'}
         </p>
+      </Modal>
+
+      <Modal
+        open={adapterConfigModalOpen}
+        onClose={() => setAdapterConfigModalOpen(false)}
+        title="Adapter config (JSON)"
+        size="lg"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setAdapterConfigModalOpen(false)}>
+              Close
+            </Button>
+          </div>
+        }
+      >
+        <div className="h-[70vh] overflow-hidden rounded-lg border border-borderSubtle bg-bgSurface">
+          <MonacoEditor
+            height="100%"
+            language="json"
+            theme="vs-dark"
+            value={adapterConfigText}
+            onChange={(value) => setAdapterConfigText(value ?? '')}
+            options={{
+              minimap: { enabled: false },
+              fontSize: 12,
+              scrollBeyondLastLine: false,
+              wordWrap: 'on',
+            }}
+          />
+        </div>
+      </Modal>
+
+      <Modal
+        open={editAdapterConfigModalOpen}
+        onClose={() => setEditAdapterConfigModalOpen(false)}
+        title="Adapter config (JSON)"
+        size="lg"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setEditAdapterConfigModalOpen(false)}>
+              Close
+            </Button>
+          </div>
+        }
+      >
+        <div className="h-[70vh] overflow-hidden rounded-lg border border-borderSubtle bg-bgSurface">
+          <MonacoEditor
+            height="100%"
+            language="json"
+            theme="vs-dark"
+            value={editAdapterConfigText}
+            onChange={(value) => setEditAdapterConfigText(value ?? '')}
+            options={{
+              minimap: { enabled: false },
+              fontSize: 12,
+              scrollBeyondLastLine: false,
+              wordWrap: 'on',
+            }}
+          />
+        </div>
       </Modal>
     </div>
   );

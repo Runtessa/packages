@@ -73,7 +73,18 @@ export const ensureCoreSchema = async () => {
         const hasFileTable = await queryRunner.hasTable('global_ui_package_files');
         const hasDraftVersion =
           hasGlobalTable && (await queryRunner.hasColumn('global_ui_packages', 'draft_version'));
-        if (!hasGlobalTable || !hasFileTable || !hasDraftVersion) {
+        const hasTenantTable = await queryRunner.hasTable('tenants');
+        const hasAdapterAccess =
+          hasTenantTable && (await queryRunner.hasColumn('tenants', 'adapterAccess'));
+        const hasAdapterConfig =
+          hasTenantTable && (await queryRunner.hasColumn('tenants', 'adapterConfig'));
+        if (
+          !hasGlobalTable ||
+          !hasFileTable ||
+          !hasDraftVersion ||
+          !hasAdapterAccess ||
+          !hasAdapterConfig
+        ) {
           await CoreDataSource.synchronize();
         }
       } finally {

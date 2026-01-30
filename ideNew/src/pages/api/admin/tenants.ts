@@ -3,6 +3,10 @@ import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
 import { Tenant } from '@/lib/entities/Tenant';
+import { Secret } from '@/lib/entities/Secret';
+import { encryptSecret } from '@/lib/crypto';
+import { maskPasswordFields, resolveMaskedPasswords } from '@/lib/adapter-config-passwords';
+import { parseAdapterConfig } from '@/lib/tenant-adapter-config';
 
 const DEFAULT_RESOURCE_CONFIG = { memory: 512, timeout: 5000 };
 
@@ -70,11 +74,38 @@ const normalizeBoolean = (raw: unknown, fallback: boolean) => {
   throw err;
 };
 
+const parseAdapterConfigObject = (raw: unknown): Record<string, unknown> | null => {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') {
+        const err = new Error('adapterConfig must be an object');
+        (err as any).statusCode = 400;
+        throw err;
+      }
+      return parsed as Record<string, unknown>;
+    } catch {
+      const err = new Error('adapterConfig must be valid JSON');
+      (err as any).statusCode = 400;
+      throw err;
+    }
+  }
+  if (typeof raw !== 'object') {
+    const err = new Error('adapterConfig must be an object');
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  return raw as Record<string, unknown>;
+};
+
 const serializeTenant = (tenant: Tenant) => ({
   id: tenant.id,
   hostname: tenant.hostname,
   isSuspended: tenant.isSuspended,
   resourceConfig: tenant.resourceConfig,
+  adapterAccess: tenant.adapterAccess ?? {},
+  adapterConfig: tenant.adapterConfig ?? {},
   restrictRoutes: tenant.restrictRoutes ?? [],
   createdAt: tenant.createdAt,
   updatedAt: tenant.updatedAt,
@@ -102,6 +133,12 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const isSuspended = normalizeBoolean(req.body?.isSuspended, false);
     const resourceConfig = normalizeResourceConfig(req.body?.resourceConfig, DEFAULT_RESOURCE_CONFIG);
     const restrictRoutes = normalizeRestrictRoutes(req.body?.restrictRoutes, []);
+    const configObject = parseAdapterConfigObject(req.body?.adapterConfig);
+    const resolvedConfig = configObject
+      ? await resolveMaskedPasswords(configObject, CoreDataSource)
+      : null;
+    const adapterConfig = parseAdapterConfig(resolvedConfig);
+    const adapterAccess = adapterConfig.adapterAccess;
 
     const repo = CoreDataSource.getRepository(Tenant);
     const existing = await repo.findOne({ where: { hostname } });
@@ -114,9 +151,25 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       hostname,
       isSuspended,
       resourceConfig,
+      adapterAccess,
+      adapterConfig: resolvedConfig ? maskPasswordFields(resolvedConfig) : {},
       restrictRoutes,
     });
     await repo.save(tenant);
+    if (adapterConfig.secrets) {
+      const secretRepo = CoreDataSource.getRepository(Secret);
+      for (const [keyName, value] of Object.entries(adapterConfig.secrets)) {
+        const encrypted = encryptSecret(value);
+        const secret = secretRepo.create({
+          tenant,
+          keyName,
+          encryptedValue: encrypted.encryptedValue,
+          iv: encrypted.iv,
+          authTag: encrypted.authTag,
+        });
+        await secretRepo.save(secret);
+      }
+    }
 
     res.status(201).json({ tenant: serializeTenant(tenant) });
     return;
