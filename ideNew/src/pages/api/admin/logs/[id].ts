@@ -12,17 +12,17 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   }
 
   await requireAdmin(req);
-  const { id } = req.query;
-  const logId = Array.isArray(id) ? Number(id[0]) : Number(id);
-  if (!logId) {
-    res.status(400).json({ error: 'Log id is required' });
+  await ensureSchema();
+
+  const idParam = Array.isArray(req.query.id) ? req.query.id[0] : req.query.id;
+  const id = Number(idParam);
+  if (!id || Number.isNaN(id)) {
+    res.status(400).json({ error: 'Invalid id' });
     return;
   }
 
-  await ensureSchema();
   const repo = AppDataSource.getRepository(SystemLog);
-  const log = await repo.findOne({ where: { id: logId } });
-
+  const log = await repo.findOne({ where: { id } });
   if (!log) {
     res.status(404).json({ error: 'Log not found' });
     return;
