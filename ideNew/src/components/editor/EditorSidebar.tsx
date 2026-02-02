@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { FiClock, FiFlag, FiFolder, FiMessageSquare, FiSearch } from 'react-icons/fi';
+import { FiClock, FiFlag, FiFolder, FiSearch } from 'react-icons/fi';
 
-type LeftPanelKey = 'explorer' | 'search' | 'history' | 'staging' | 'assistant';
+type LeftPanelKey = 'explorer' | 'search' | 'history' | 'staging';
 
 type EditorSidebarProps = {
   leftPanel: LeftPanelKey;
@@ -37,7 +37,6 @@ export function EditorSidebar({
     <div className="flex h-full w-12 flex-col items-center border-r border-[#2a2d2e] bg-[#1b1b1b] py-2">
       {makeButton('explorer', 'Explorer', <FiFolder />)}
       {makeButton('search', 'Search', <FiSearch />)}
-      {makeButton('assistant', 'Assistant', <FiMessageSquare />)}
       {makeButton('history', 'History', <FiClock />)}
       {makeButton('staging', 'Staging', <FiFlag />)}
       <div className="mt-auto flex w-full flex-col items-center px-1 pb-2">

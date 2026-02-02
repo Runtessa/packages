@@ -149,26 +149,6 @@ export type AclConfigDto = {
   >;
 };
 
-export type AssistantAction =
-  | { type: 'update_active_file'; content: string }
-  | { type: 'create_module'; routePath: string; method: string; code: string; fileExtension?: string }
-  | { type: 'update_module'; id?: string; routePath?: string; method?: string; code: string; fileExtension?: string }
-  | { type: 'delete_module'; id?: string; routePath?: string; method?: string }
-  | { type: 'create_ui'; name: string; version: string; code: string; fileExtension?: string; dependencies?: string[] }
-  | { type: 'update_ui'; id?: string; name?: string; version?: string; code: string; fileExtension?: string; dependencies?: string[] }
-  | { type: 'delete_ui'; id?: string; name?: string; version?: string }
-  | { type: 'update_acl'; file: 'permissions' | 'roles' | 'endpoints'; content: unknown }
-  | { type: 'create_shared_file'; path: string; content: string; fileExtension?: string }
-  | { type: 'update_shared_file'; id?: string; path?: string; content?: string; fileExtension?: string }
-  | { type: 'delete_shared_file'; id?: string; path?: string };
-
-export type AssistantFileBlock = {
-  path: string;
-  action: 'CREATE' | 'EDIT' | 'DELETE';
-  description: string;
-  content: string;
-};
-
 export type ModuleFormState = {
   routePath: string;
   method: string;
