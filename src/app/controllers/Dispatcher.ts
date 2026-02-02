@@ -90,7 +90,9 @@ export class Dispatcher {
         throw new AppError('Access denied', 403);
       }
 
-      const adapters = await this.adapterFactory.build(req.tenant);
+      const adapters = await this.adapterFactory.build(req.tenant, {
+        allowDraftSharedModules: isDev,
+      });
       const requestContext: SandboxRequestContext = {
         path: req.path,
         method: normalizedMethod,

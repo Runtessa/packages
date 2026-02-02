@@ -121,12 +121,27 @@ export default function EditorPage() {
   const router = useRouter();
   const { token, clear, ready } = useSessionToken();
   const { success, error: showError } = useToast();
-  const sharedProjectId = useMemo(() => {
+  const sharedUiProjectId = useMemo(() => {
     if (!router.isReady) return null;
     const value = router.query.sharedProject;
     return typeof value === 'string' && value.trim() ? value : null;
   }, [router.isReady, router.query.sharedProject]);
-  const isSharedMode = Boolean(sharedProjectId);
+  const sharedModuleProjectId = useMemo(() => {
+    if (!router.isReady) return null;
+    const value = router.query.sharedModule;
+    return typeof value === 'string' && value.trim() ? value : null;
+  }, [router.isReady, router.query.sharedModule]);
+  const sharedMode = sharedModuleProjectId
+    ? 'module'
+    : sharedUiProjectId
+    ? 'ui'
+    : null;
+  const sharedProjectId = sharedMode === 'module' ? sharedModuleProjectId : sharedUiProjectId;
+  const isSharedMode = Boolean(sharedMode);
+  const sharedBasePath =
+    sharedMode === 'module' ? '/api/admin/shared-modules' : '/api/admin/shared-packages';
+  const sharedRootLabel =
+    sharedMode === 'module' ? 'Shared Backend Project' : 'Shared Project';
   const [fileContents, setFileContents] = useState<Record<string, string>>({});
   const [savedContents, setSavedContents] = useState<Record<string, string>>({});
   const savedContentsRef = useRef<Record<string, string>>({});
@@ -270,8 +285,10 @@ export default function EditorPage() {
     const portSuffix = normalizedPort ? `:${normalizedPort}` : '';
     return `${protocol}//${host}${portSuffix}`;
   }, [previewPort, tenantHost]);
+  const sharedLabelFallback =
+    sharedMode === 'module' ? 'Shared Backend Project' : 'Shared Project';
   const sidebarLabel = isSharedMode
-    ? sharedProject?.name || 'Shared Project'
+    ? sharedProject?.name || sharedLabelFallback
     : tenantHost || 'None';
   const sidebarLabelTone = isSharedMode
     ? 'text-gray-200'
@@ -539,8 +556,8 @@ export default function EditorPage() {
     setTreeError('');
     try {
       const [projectResponse, filesResponse] = await Promise.all([
-        adminFetch(`/api/admin/shared-packages/${sharedProjectId}`),
-        adminFetch(`/api/admin/shared-packages/${sharedProjectId}/files`),
+        adminFetch(`${sharedBasePath}/${sharedProjectId}`),
+        adminFetch(`${sharedBasePath}/${sharedProjectId}/files`),
       ]);
       const project = projectResponse.package as SharedProjectDto;
       const files = (filesResponse.files as SharedFileDto[]) || [];
@@ -549,14 +566,19 @@ export default function EditorPage() {
       setModulesData([]);
       setUiData([]);
       setAclConfig(null);
-      setTreeData(buildSharedTree(project, files, sharedFolderOverrides));
+      setTreeData(
+        buildSharedTree(project, files, sharedFolderOverrides, {
+          rootLabel: sharedRootLabel,
+          sharedKind: sharedMode ?? undefined,
+        })
+      );
       setSavedContents(buildSharedContentMap(files));
     } catch (err) {
       setTreeError((err as Error).message || 'Failed to load shared project');
     } finally {
       setLoadingTree(false);
     }
-  }, [adminFetch, sharedFolderOverrides, sharedProjectId]);
+  }, [adminFetch, sharedBasePath, sharedFolderOverrides, sharedProjectId, sharedRootLabel, sharedMode]);
 
   const loadTree = useCallback(
     async (overrides: FolderOverride[] = folderOverrides) => {
@@ -618,18 +640,31 @@ export default function EditorPage() {
 
   useEffect(() => {
     if (!isSharedMode || !sharedProject) return;
-    setTreeData(buildSharedTree(sharedProject, sharedFiles, sharedFolderOverrides));
-  }, [isSharedMode, sharedFiles, sharedFolderOverrides, sharedProject]);
+    setTreeData(
+      buildSharedTree(sharedProject, sharedFiles, sharedFolderOverrides, {
+        rootLabel: sharedRootLabel,
+        sharedKind: sharedMode ?? undefined,
+      })
+    );
+  }, [isSharedMode, sharedFiles, sharedFolderOverrides, sharedProject, sharedMode, sharedRootLabel]);
 
   useEffect(() => {
     if (!isSharedMode || !sharedProject) return;
+    if (sharedMode === 'module') return;
     if (editorView !== 'preview') return;
     setPreviewTarget({
       kind: 'shared',
       name: sharedProject.name,
       version: sharedProject.version,
     });
-  }, [editorView, isSharedMode, sharedProject]);
+  }, [editorView, isSharedMode, sharedProject, sharedMode]);
+
+  useEffect(() => {
+    if (sharedMode !== 'module') return;
+    if (editorView === 'preview') {
+      setEditorView('code');
+    }
+  }, [editorView, sharedMode]);
 
   useEffect(() => {
     if (isSharedMode) return;
@@ -1263,7 +1298,7 @@ export default function EditorPage() {
         entryFile.fileExtension
       );
       const bundle = buildSharedBundle({ ...project, entryPath: normalizedEntry }, files);
-      await adminFetch(`/api/admin/shared-packages/${project.id}`, {
+      await adminFetch(`${sharedBasePath}/${project.id}`, {
         method: 'PUT',
         body: {
           name: project.name,
@@ -1277,7 +1312,7 @@ export default function EditorPage() {
       });
       return { ...project, entryPath: normalizedEntry };
     },
-    [adminFetch]
+    [adminFetch, sharedBasePath]
   );
 
   const saveFile = useCallback(
@@ -1291,7 +1326,7 @@ export default function EditorPage() {
         }
         const projectId = meta.projectId || sharedProject.id;
         await adminFetch(
-          `/api/admin/shared-packages/${projectId}/files/${meta.fileId}`,
+          `${sharedBasePath}/${projectId}/files/${meta.fileId}`,
           {
             method: 'PUT',
             body: {
@@ -1377,6 +1412,7 @@ export default function EditorPage() {
       apiFetch,
       aclConfig,
       fileContents,
+      sharedBasePath,
       sharedProject,
       syncSharedPackage,
     ]
@@ -1517,10 +1553,10 @@ export default function EditorPage() {
         if (!projectId) {
           throw new Error('Shared project is not loaded.');
         }
-        await adminFetch(`/api/admin/shared-packages/${projectId}/publish`, {
+        await adminFetch(`${sharedBasePath}/${projectId}/publish`, {
           method: 'POST',
         });
-        const refreshed = await adminFetch(`/api/admin/shared-packages/${projectId}`);
+        const refreshed = await adminFetch(`${sharedBasePath}/${projectId}`);
         setSharedProject(refreshed.package ?? refreshed);
         success('Shared project published');
       } catch (err) {
@@ -1530,7 +1566,16 @@ export default function EditorPage() {
         setStagingBusyId(null);
       }
     },
-    [adminFetch, apiFetch, reloadTree, sharedProject?.id, showError, stagingBusy, success]
+    [
+      adminFetch,
+      apiFetch,
+      reloadTree,
+      sharedBasePath,
+      sharedProject?.id,
+      showError,
+      stagingBusy,
+      success,
+    ]
   );
 
   const handleCloseFile = (id: string) => {
@@ -1701,7 +1746,12 @@ export default function EditorPage() {
           : [...sharedFolderOverrides, nextPath];
         setSharedFolderOverrides(nextOverrides);
         if (sharedProject) {
-          setTreeData(buildSharedTree(sharedProject, sharedFiles, nextOverrides));
+          setTreeData(
+            buildSharedTree(sharedProject, sharedFiles, nextOverrides, {
+              rootLabel: sharedRootLabel,
+              sharedKind: sharedMode ?? undefined,
+            })
+          );
         }
         success('Folder created');
         closeCreateModal();
@@ -1722,7 +1772,7 @@ export default function EditorPage() {
       }
       try {
         const content = sharedFileForm.content ?? '';
-        await adminFetch(`/api/admin/shared-packages/${sharedProjectId}/files`, {
+        await adminFetch(`${sharedBasePath}/${sharedProjectId}/files`, {
           method: 'POST',
           body: {
             path: normalizedPath,
@@ -1879,7 +1929,7 @@ export default function EditorPage() {
       }
       try {
         await adminFetch(
-          `/api/admin/shared-packages/${sharedProject.id}/files/${editMeta.fileId}`,
+          `${sharedBasePath}/${sharedProject.id}/files/${editMeta.fileId}`,
           {
             method: 'PUT',
             body: {
@@ -2010,7 +2060,7 @@ export default function EditorPage() {
             const remainder = segments.slice(oldPath.length);
             const nextPath = normalizeSharedPath([...newPath, ...remainder].join('/'));
             return adminFetch(
-              `/api/admin/shared-packages/${sharedProject.id}/files/${file.id}`,
+              `${sharedBasePath}/${sharedProject.id}/files/${file.id}`,
               { method: 'PUT', body: { path: nextPath } }
             );
           })
@@ -2135,7 +2185,7 @@ export default function EditorPage() {
             return;
           }
           await adminFetch(
-            `/api/admin/shared-packages/${sharedProject.id}/files/${meta.fileId}`,
+            `${sharedBasePath}/${sharedProject.id}/files/${meta.fileId}`,
             { method: 'DELETE' }
           );
           const nextFiles = sharedFiles.filter((file) => file.id !== meta.fileId);
@@ -2181,7 +2231,7 @@ export default function EditorPage() {
           await Promise.all(
             removals.map((file) =>
               adminFetch(
-                `/api/admin/shared-packages/${sharedProject.id}/files/${file.id}`,
+                `${sharedBasePath}/${sharedProject.id}/files/${file.id}`,
                 { method: 'DELETE' }
               )
             )
@@ -2416,7 +2466,7 @@ export default function EditorPage() {
           (async () => {
             try {
               await adminFetch(
-                `/api/admin/shared-packages/${sharedProject.id}/files/${meta.fileId}`,
+                `${sharedBasePath}/${sharedProject.id}/files/${meta.fileId}`,
                 {
                   method: 'PUT',
                   body: {
@@ -2464,7 +2514,7 @@ export default function EditorPage() {
                   [...newPath, ...remainder].join('/')
                 );
                 return adminFetch(
-                  `/api/admin/shared-packages/${sharedProject.id}/files/${file.id}`,
+                  `${sharedBasePath}/${sharedProject.id}/files/${file.id}`,
                   { method: 'PUT', body: { path: nextPath } }
                 );
               })
@@ -2639,6 +2689,7 @@ export default function EditorPage() {
       reloadTree,
       modulesData,
       savedContents,
+      sharedBasePath,
       sharedFiles,
       sharedFolderOverrides,
       sharedProject,

@@ -7,11 +7,14 @@ import { Kafka, Producer } from 'kafkajs';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { DataSource } from 'typeorm';
+import vm from 'vm';
 import { CircuitBreaker } from '../core/resilience/CircuitBreaker';
 import { CryptoService } from '../core/security/CryptoService';
 import { Tenant } from '@idp/shared';
 import { Secret } from '@idp/shared';
 import { CompilerAdapter } from './adapters/CompilerAdapter';
+import { GlobalModulePackage } from '@idp/shared';
+import { resolveGlobalDataSource } from '../core/globalDatasource';
 
 type AsyncFactory<T> = (envKey: string) => Promise<T>;
 
@@ -49,6 +52,10 @@ export interface S3Adapter {
   getSignedUrl: (params: { bucket: string; key: string; expiresIn?: number }) => Promise<string>;
 }
 
+export interface SharedModuleAdapter {
+  require: (name: string, version?: string) => Promise<unknown>;
+}
+
 export interface HttpRequestOptions {
   method?: string;
   headers?: Record<string, string>;
@@ -69,6 +76,7 @@ export interface SandboxAdapters {
   redis: AsyncFactory<RedisAdapter>;
   kafka: AsyncFactory<KafkaAdapter>;
   s3: AsyncFactory<S3Adapter>;
+  shared: SharedModuleAdapter;
   http?: {
     request: (url: string, options?: HttpRequestOptions) => Promise<HttpResponse>;
   };
@@ -82,6 +90,7 @@ export class AdapterFactory {
   private redisClients: Map<string, Redis> = new Map();
   private kafkaProducers: Map<string, Producer> = new Map();
   private s3Clients: Map<string, S3Client> = new Map();
+  private sharedModuleCache: Map<string, unknown> = new Map();
 
   private breakers: Map<string, CircuitBreaker> = new Map();
   private compilerAdapter: CompilerAdapter;
@@ -90,7 +99,10 @@ export class AdapterFactory {
     this.compilerAdapter = new CompilerAdapter();
   }
 
-  build(tenant: Tenant): SandboxAdapters {
+  build(
+    tenant: Tenant,
+    options?: { allowDraftSharedModules?: boolean }
+  ): SandboxAdapters {
     const postgres = ((key: string) => this.buildPostgres(tenant, key, 'write')) as ReadWriteFactory<PostgresAdapter>;
     postgres.readOnly = (key: string) => this.buildPostgres(tenant, key, 'read');
     postgres.readWrite = (key: string) => this.buildPostgres(tenant, key, 'write');
@@ -102,6 +114,11 @@ export class AdapterFactory {
     const mssql = ((key: string) => this.buildMssql(tenant, key, 'write')) as ReadWriteFactory<MssqlAdapter>;
     mssql.readOnly = (key: string) => this.buildMssql(tenant, key, 'read');
     mssql.readWrite = (key: string) => this.buildMssql(tenant, key, 'write');
+    const allowDraftSharedModules = Boolean(options?.allowDraftSharedModules);
+    const shared: SharedModuleAdapter = {
+      require: (name: string, version?: string) =>
+        this.loadSharedModule(name, version, allowDraftSharedModules),
+    };
 
     return {
       postgres,
@@ -110,9 +127,81 @@ export class AdapterFactory {
       redis: (envKey) => this.buildRedis(tenant, envKey),
       kafka: (envKey) => this.buildKafka(tenant, envKey),
       s3: (envKey) => this.buildS3(tenant, envKey),
+      shared,
       http: this.buildHttpAdapter(tenant),
       compiler: this.compilerAdapter,
     };
+  }
+
+  private async loadSharedModule(
+    name: string,
+    version?: string,
+    allowDraft = false,
+  ): Promise<unknown> {
+    const normalizedName = String(name || '').trim();
+    if (!normalizedName) {
+      throw new Error('Shared module name is required');
+    }
+    const versionToken = String(version || 'latest').trim() || 'latest';
+
+    const globalDataSource = await resolveGlobalDataSource(this.dataSource);
+    const repo = globalDataSource.getRepository(GlobalModulePackage);
+    let pkg: GlobalModulePackage | null = null;
+
+    if (versionToken === 'latest') {
+      const latest = await repo.find({
+        where: { name: normalizedName },
+        order: { createdAt: 'DESC' },
+        take: 1,
+      });
+      pkg = latest[0] ?? null;
+    } else {
+      pkg = await repo.findOne({ where: { name: normalizedName, version: versionToken } });
+    }
+
+    if (!pkg) {
+      throw new Error(`Shared module ${normalizedName}@${versionToken} not found`);
+    }
+
+    const resolvedVersion = allowDraft
+      ? pkg.draftVersion || pkg.version
+      : pkg.publishedVersion || pkg.version;
+    const cacheKey = `${normalizedName}@${versionToken === 'latest' ? resolvedVersion : versionToken}:${
+      allowDraft ? 'draft' : 'published'
+    }`;
+    if (this.sharedModuleCache.has(cacheKey)) {
+      return this.sharedModuleCache.get(cacheKey);
+    }
+
+    const source = allowDraft ? pkg.codeBlob : pkg.publishedCodeBlob;
+    if (!source) {
+      if (allowDraft) {
+        throw new Error(`Shared module ${normalizedName}@${versionToken} has no draft code`);
+      }
+      throw new Error(`Shared module ${normalizedName}@${versionToken} is not published`);
+    }
+
+    const exports = this.evaluateSharedModule(source, normalizedName);
+    this.sharedModuleCache.set(cacheKey, exports);
+    return exports;
+  }
+
+  private evaluateSharedModule(source: string, name: string): unknown {
+    const module = { exports: {} as unknown };
+    const sandboxGlobals: Record<string, unknown> = {
+      module,
+      exports: module.exports,
+      require: (id: string) => {
+        throw new Error(`External require not allowed: ${id}`);
+      },
+      console,
+    };
+    const context = vm.createContext(sandboxGlobals);
+    const script = new vm.Script(`"use strict";\n${source}`, {
+      filename: `shared-module:${name}`,
+    });
+    script.runInContext(context);
+    return module.exports;
   }
 
   private breakerFor(key: string): CircuitBreaker {

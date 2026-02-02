@@ -1,4 +1,6 @@
 export * from './entities/Account';
+export * from './entities/GlobalModulePackage';
+export * from './entities/GlobalModulePackageFile';
 export * from './entities/GlobalUIPackage';
 export * from './entities/GlobalUIPackageFile';
 export * from './entities/LoginSession';

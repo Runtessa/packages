@@ -163,11 +163,12 @@ export const ensureSharedFolderPath = (root: ExplorerNode, segments: string[]) =
 export const buildSharedTree = (
   project: SharedProjectDto | null,
   files: SharedFileDto[],
-  overrides: string[][]
+  overrides: string[][],
+  options?: { rootLabel?: string; sharedKind?: 'ui' | 'module' }
 ): ExplorerNode => {
   const root: ExplorerNode = {
     id: 'root',
-    name: project?.name || 'Shared Project',
+    name: project?.name || options?.rootLabel || 'Shared Project',
     type: 'folder',
     children: [],
   };
@@ -188,6 +189,7 @@ export const buildSharedTree = (
           fileId: file.id,
           path: file.path,
           fileExtension: file.fileExtension,
+          sharedKind: options?.sharedKind,
         } as NodeMeta,
         content: file.content,
       },

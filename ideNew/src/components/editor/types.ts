@@ -195,6 +195,7 @@ export type NodeMeta =
       fileId: string;
       path: string;
       fileExtension?: string;
+      sharedKind?: 'ui' | 'module';
     }
   | {
       kind: 'acl';

@@ -48,6 +48,13 @@ const navItems: NavItem[] = [
     roles: ["admin"],
   },
   {
+    label: "Shared Backend Modules",
+    href: "/admin/shared-modules",
+    icon: FiPackage,
+    match: "/admin/shared-modules",
+    roles: ["admin"],
+  },
+  {
     label: "Users",
     href: "/admin/users",
     icon: FiUsers,

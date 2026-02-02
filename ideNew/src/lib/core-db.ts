@@ -7,6 +7,8 @@ import { Tenant } from '@idp/shared';
 import { UIPackage } from '@idp/shared';
 import { ModuleRevision } from '@idp/shared';
 import { UIPackageRevision } from '@idp/shared';
+import { GlobalModulePackage } from '@idp/shared';
+import { GlobalModulePackageFile } from '@idp/shared';
 import { GlobalUIPackage } from '@idp/shared';
 import { GlobalUIPackageFile } from '@idp/shared';
 
@@ -44,6 +46,8 @@ const baseOptions = {
     Secret,
     ModuleEntity,
     UIPackage,
+    GlobalModulePackage,
+    GlobalModulePackageFile,
     GlobalUIPackage,
     GlobalUIPackageFile,
     ModuleRevision,
@@ -73,6 +77,11 @@ export const ensureCoreSchema = async () => {
         const hasFileTable = await queryRunner.hasTable('global_ui_package_files');
         const hasDraftVersion =
           hasGlobalTable && (await queryRunner.hasColumn('global_ui_packages', 'draft_version'));
+        const hasModuleTable = await queryRunner.hasTable('global_module_packages');
+        const hasModuleFileTable = await queryRunner.hasTable('global_module_package_files');
+        const hasModuleDraft =
+          hasModuleTable &&
+          (await queryRunner.hasColumn('global_module_packages', 'draft_version'));
         const hasTenantTable = await queryRunner.hasTable('tenants');
         const hasAdapterAccess =
           hasTenantTable && (await queryRunner.hasColumn('tenants', 'adapterAccess'));
@@ -90,6 +99,9 @@ export const ensureCoreSchema = async () => {
           !hasGlobalTable ||
           !hasFileTable ||
           !hasDraftVersion ||
+          !hasModuleTable ||
+          !hasModuleFileTable ||
+          !hasModuleDraft ||
           !hasAdapterAccess ||
           !hasAdapterConfig ||
           !hasAclPermissions ||

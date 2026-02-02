@@ -5,6 +5,7 @@ export const EDITOR_NAV_ITEMS = [
   { label: 'Dashboard', href: '/dashboard', match: '/dashboard' },
   { label: 'Docs', href: '/docs', match: '/docs' },
   { label: 'Shared Projects', href: '/admin/shared-packages', match: '/admin/shared-packages' },
+  { label: 'Shared Backends', href: '/admin/shared-modules', match: '/admin/shared-modules' },
   { label: 'Tenants', href: '/admin/tenants', match: '/admin/tenants' },
 ];
 
