@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireUser } from '@/lib/auth';
 import { CoreDataSource } from '@/lib/core-db';
-import { HttpMethod, ModuleEntity } from '@idp/shared';
+import { HttpMethod, ModuleEntity, Tenant } from '@idp/shared';
 import { resolveTenant } from '@/lib/tenancy';
 import { generateVersion } from '@/lib/version';
 
@@ -45,6 +45,24 @@ const normalizeFileExtension = (raw: unknown): string => {
   if (!raw || typeof raw !== 'string') return 'ts';
   const normalized = raw.replace(/^\./, '').toLowerCase();
   return allowed.has(normalized) ? normalized : 'ts';
+};
+
+const ensureAclEndpoint = async (tenant: Tenant, routePath: string) => {
+  const endpoints = (tenant.aclEndpoints ?? {}) as Record<
+    string,
+    { read?: string[]; write?: string[]; edit?: string[]; delete?: string[]; allowAnonymous?: boolean }
+  >;
+  if (endpoints[routePath]) return;
+  endpoints[routePath] = {
+    read: [],
+    write: [],
+    edit: [],
+    delete: [],
+    allowAnonymous: false,
+  };
+  tenant.aclEndpoints = endpoints as Tenant['aclEndpoints'];
+  const tenantRepo = CoreDataSource.getRepository(Tenant);
+  await tenantRepo.save(tenant);
 };
 
 const serialize = (mod: ModuleEntity) => ({
@@ -100,6 +118,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       tenant,
     });
     await repo.save(mod);
+    await ensureAclEndpoint(tenant as Tenant, normalizedRoute);
     res.status(201).json(serialize(mod));
     return;
   }

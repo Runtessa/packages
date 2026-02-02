@@ -3,8 +3,7 @@ import { DataSource } from 'typeorm';
 import { AppError } from '../../common/AppError';
 import { generateVersion } from '../../common/version';
 import { publishedCache } from '../../core/publishedCache';
-import { HttpMethod, ModuleEntity } from '@idp/shared';
-import { ModuleRevision } from '@idp/shared';
+import { HttpMethod, ModuleEntity, ModuleRevision, Tenant } from '@idp/shared';
 import { TenantRequest } from '../../types/RequestContext';
 
 export class ModuleController {
@@ -70,6 +69,7 @@ export class ModuleController {
         tenant: req.tenant!,
       });
       await repo.save(mod);
+      await this.ensureAclEndpoint(req.tenant as Tenant, normalizedRoute);
       return res.status(201).json(this.serialize(mod));
     } catch (error) {
       next(error);
@@ -110,12 +110,13 @@ export class ModuleController {
 
       await this.createRevision(req, mod, 'update');
 
-      mod.routePath = nextRoute;
-      mod.method = nextMethod;
-      mod.code = nextCode;
-      mod.fileExtension = nextExt;
-      mod.draftVersion = generateVersion();
-      await repo.save(mod);
+    mod.routePath = nextRoute;
+    mod.method = nextMethod;
+    mod.code = nextCode;
+    mod.fileExtension = nextExt;
+    mod.draftVersion = generateVersion();
+    await repo.save(mod);
+    await this.ensureAclEndpoint(req.tenant as Tenant, nextRoute);
 
       return res.json(this.serialize(mod));
     } catch (error) {
@@ -299,6 +300,24 @@ export class ModuleController {
       createdBy: req.account?.id ?? null,
     });
     await revRepo.save(revision);
+  }
+
+  private async ensureAclEndpoint(tenant: Tenant, routePath: string) {
+    const endpoints = (tenant.aclEndpoints ?? {}) as Record<
+      string,
+      { read?: string[]; write?: string[]; edit?: string[]; delete?: string[]; allowAnonymous?: boolean }
+    >;
+    if (endpoints[routePath]) return;
+    endpoints[routePath] = {
+      read: [],
+      write: [],
+      edit: [],
+      delete: [],
+      allowAnonymous: false,
+    };
+    tenant.aclEndpoints = endpoints as Tenant['aclEndpoints'];
+    const tenantRepo = this.dataSource.getRepository(Tenant);
+    await tenantRepo.save(tenant);
   }
 
   private moduleCacheKey(tenantId: string, method: HttpMethod) {
