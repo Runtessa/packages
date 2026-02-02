@@ -102,7 +102,12 @@ export class Dispatcher {
       const params =
         matchResult?.params ?? this.matchPath(module.routePath, req.path) ?? {};
 
-      const allowAnonymous = Boolean(sharedMatch?.allowAnonymous);
+      const endpointConfig = matchResult
+        ? (req.tenant?.aclEndpoints ?? {})[module.routePath]
+        : null;
+      const allowAnonymous = Boolean(
+        sharedMatch?.allowAnonymous || (endpointConfig as any)?.allowAnonymous
+      );
       if (!req.account && !allowAnonymous) {
         throw new AppError('Authentication required', 401);
       }
@@ -314,7 +319,13 @@ export class Dispatcher {
 
     const endpoints = (tenant.aclEndpoints || {}) as Record<
       string,
-      { read?: string[]; write?: string[]; edit?: string[]; delete?: string[] }
+      {
+        read?: string[];
+        write?: string[];
+        edit?: string[];
+        delete?: string[];
+        allowAnonymous?: boolean;
+      }
     >;
     const rolesConfig = (tenant.aclRoles || {}) as {
       roles?: Record<string, string[]>;

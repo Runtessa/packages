@@ -47,24 +47,6 @@ const normalizeResourceConfig = (
   };
 };
 
-const normalizeRestrictRoutes = (raw: unknown, fallback: string[] = []) => {
-  if (raw === undefined || raw === null) return fallback;
-  let items: string[] = [];
-  if (Array.isArray(raw)) {
-    items = raw.map((item) => String(item));
-  } else if (typeof raw === 'string') {
-    items = raw.split(/[\n,]+/g).map((item) => item.trim());
-  } else {
-    const err = new Error('restrictRoutes must be an array of strings');
-    (err as any).statusCode = 400;
-    throw err;
-  }
-  return items
-    .map((route) => route.trim())
-    .filter(Boolean)
-    .map((route) => (route.startsWith('/') ? route : `/${route}`));
-};
-
 const normalizeBoolean = (raw: unknown, fallback: boolean) => {
   if (raw === undefined || raw === null || raw === '') return fallback;
   if (typeof raw === 'boolean') return raw;
@@ -106,7 +88,6 @@ const serializeTenant = (tenant: Tenant) => ({
   resourceConfig: tenant.resourceConfig,
   adapterAccess: tenant.adapterAccess ?? {},
   adapterConfig: tenant.adapterConfig ?? {},
-  restrictRoutes: tenant.restrictRoutes ?? [],
   createdAt: tenant.createdAt,
   updatedAt: tenant.updatedAt,
 });
@@ -132,7 +113,6 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const hostname = normalizeHostname(req.body?.hostname);
     const isSuspended = normalizeBoolean(req.body?.isSuspended, false);
     const resourceConfig = normalizeResourceConfig(req.body?.resourceConfig, DEFAULT_RESOURCE_CONFIG);
-    const restrictRoutes = normalizeRestrictRoutes(req.body?.restrictRoutes, []);
     const configObject = parseAdapterConfigObject(req.body?.adapterConfig);
     const resolvedConfig = configObject
       ? await resolveMaskedPasswords(configObject, CoreDataSource)
@@ -153,7 +133,6 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       resourceConfig,
       adapterAccess,
       adapterConfig: resolvedConfig ? maskPasswordFields(resolvedConfig) : {},
-      restrictRoutes,
     });
     await repo.save(tenant);
     if (adapterConfig.secrets) {

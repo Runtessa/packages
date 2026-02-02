@@ -80,6 +80,7 @@ export const DEFAULT_ACL_ROLES = `{
 
 export const DEFAULT_ACL_ENDPOINTS = `{
   "/api/example": {
+    "allowAnonymous": true,
     "read": ["example.read"]
   }
 }

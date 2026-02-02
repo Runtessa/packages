@@ -12,7 +12,7 @@ const defaultRoles = {
 };
 const defaultEndpoints = {} as Record<
   string,
-  { read?: string[]; write?: string[]; edit?: string[]; delete?: string[] }
+  { read?: string[]; write?: string[]; edit?: string[]; delete?: string[]; allowAnonymous?: boolean }
 >;
 
 const parseJsonBody = (value: unknown) => {
@@ -32,6 +32,14 @@ const validateEndpointAcl = (endpoints: Record<string, any>) => {
   Object.entries(endpoints || {}).forEach(([path, config]) => {
     if (!config || typeof config !== 'object') {
       const err = new Error(`Invalid ACL config for endpoint ${path}`);
+      (err as any).statusCode = 400;
+      throw err;
+    }
+    if (
+      (config as any).allowAnonymous !== undefined &&
+      typeof (config as any).allowAnonymous !== 'boolean'
+    ) {
+      const err = new Error(`Endpoint ${path} allowAnonymous must be boolean`);
       (err as any).statusCode = 400;
       throw err;
     }

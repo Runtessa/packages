@@ -9,7 +9,6 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { TextArea } from '@/components/ui/TextArea';
 import { useToast } from '@/components/ui/Toast';
 import { fetchJson } from '@/lib/client/api';
 import { useSessionToken } from '@/lib/client/session';
@@ -25,7 +24,6 @@ type TenantSummary = {
   resourceConfig?: { memory: number; timeout: number };
   adapterAccess?: Record<string, { allow: string[] }>;
   adapterConfig?: Record<string, unknown>;
-  restrictRoutes?: string[];
   createdAt?: string;
   updatedAt?: string;
 };
@@ -40,7 +38,6 @@ type TenantFormState = {
   isSuspended: boolean;
   memory: string;
   timeout: string;
-  restrictRoutes: string;
 };
 
 type TenantEditState = TenantFormState & {
@@ -58,7 +55,6 @@ const DEFAULT_FORM: TenantFormState = {
   isSuspended: false,
   memory: '512',
   timeout: '5000',
-  restrictRoutes: '',
 };
 
 const DEFAULT_CONFIG_TEXT = JSON.stringify(
@@ -99,17 +95,6 @@ const DEFAULT_EDIT_FORM: TenantEditState = {
   id: '',
   originalHostname: '',
   ...DEFAULT_FORM,
-};
-
-const formatRoutes = (routes?: string[]) => (routes && routes.length ? routes.join('\n') : '');
-
-const parseRoutes = (value: string) => {
-  if (!value.trim()) return [];
-  return value
-    .split(/[\n,]+/g)
-    .map((route) => route.trim())
-    .filter(Boolean)
-    .map((route) => (route.startsWith('/') ? route : `/${route}`));
 };
 
 const parseConfigJson = (value: string) => {
@@ -241,7 +226,6 @@ export default function AdminTenantsPage() {
       isSuspended: tenant.isSuspended,
       memory: String(tenant.resourceConfig?.memory ?? Number(DEFAULT_FORM.memory)),
       timeout: String(tenant.resourceConfig?.timeout ?? Number(DEFAULT_FORM.timeout)),
-      restrictRoutes: formatRoutes(tenant.restrictRoutes),
     });
     setEditAdapterConfigText(DEFAULT_CONFIG_TEXT);
     setTenantSecrets([]);
@@ -303,7 +287,6 @@ export default function AdminTenantsPage() {
       memory: Number(values.memory),
       timeout: Number(values.timeout),
     },
-    restrictRoutes: parseRoutes(values.restrictRoutes),
     adapterConfig: configText ? parseConfigJson(configText) : undefined,
   });
 
@@ -527,14 +510,6 @@ export default function AdminTenantsPage() {
               onChange={(e) => setForm({ ...form, timeout: e.target.value })}
               error={validationErrors.timeout}
             />
-            <div className="md:col-span-2">
-              <TextArea
-          label="Restrict routes"
-          placeholder="/admin\n/secret"
-          value={form.restrictRoutes}
-          onChange={(e) => setForm({ ...form, restrictRoutes: e.target.value })}
-        />
-      </div>
             <div className="md:col-span-2 space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-textPrimary">
@@ -618,14 +593,6 @@ export default function AdminTenantsPage() {
               onChange={(e) => setEditForm({ ...editForm, timeout: e.target.value })}
               error={editValidationErrors.timeout}
             />
-          <div className="md:col-span-2">
-            <TextArea
-              label="Restrict routes"
-              placeholder="/admin\n/secret"
-              value={editForm.restrictRoutes}
-              onChange={(e) => setEditForm({ ...editForm, restrictRoutes: e.target.value })}
-            />
-          </div>
             <div className="md:col-span-2 space-y-1">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-textPrimary">

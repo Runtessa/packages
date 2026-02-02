@@ -10,7 +10,7 @@ import { AdapterFactory } from "./engine/AdapterFactory";
 import { SandboxRunner } from "./engine/SandboxRunner";
 import { AuthController } from "./app/controllers/AuthController";
 import { Dispatcher } from "./app/controllers/Dispatcher";
-import { AuthGuard } from "./app/middleware/AuthGuard";
+import { AuthGuard, OptionalAuthGuard } from "./app/middleware/AuthGuard";
 import { ContextMiddleware, OptionalContextMiddleware } from "./app/middleware/ContextMiddleware";
 import { AdminController } from "./app/controllers/AdminController";
 import { RegistryController } from "./app/controllers/RegistryController";
@@ -82,6 +82,7 @@ const bootstrap = async () => {
   const contextMiddleware = ContextMiddleware(AppDataSource);
   const optionalContextMiddleware = OptionalContextMiddleware(AppDataSource);
   const authGuard = AuthGuard(AppDataSource, cryptoService);
+  const optionalAuthGuard = OptionalAuthGuard(AppDataSource, cryptoService);
 
   app.post("/admin/tenants", adminController.createTenant);
   app.post("/auth/register", contextMiddleware, authController.register);
@@ -112,7 +113,7 @@ const bootstrap = async () => {
     return res.sendFile(indexPath);
   });
 
-  app.all("*", contextMiddleware, authGuard, dispatcher.handle);
+  app.all("*", contextMiddleware, optionalAuthGuard, dispatcher.handle);
 
   app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
     const isAppError = err instanceof AppError;

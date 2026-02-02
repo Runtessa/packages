@@ -145,7 +145,7 @@ export type AclConfigDto = {
   roles: { roles?: Record<string, string[]>; groups?: Record<string, string[]> };
   endpoints: Record<
     string,
-    { read?: string[]; write?: string[]; edit?: string[]; delete?: string[] }
+    { read?: string[]; write?: string[]; edit?: string[]; delete?: string[]; allowAnonymous?: boolean }
   >;
 };
 

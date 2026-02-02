@@ -46,6 +46,7 @@ export class Tenant {
       write?: string[];
       edit?: string[];
       delete?: string[];
+      allowAnonymous?: boolean;
     }
   >;
 
@@ -67,8 +68,6 @@ export class Tenant {
   @UpdateDateColumn()
   updatedAt!: Date;
 
-  @Column({ type: "jsonb", default: () => "'[]'" })
-  restrictRoutes?: string[];
 }
 
 export type TenantDTO = Pick<
@@ -82,7 +81,6 @@ export type TenantDTO = Pick<
   | 'aclRoles'
   | 'aclEndpoints'
   | 'isSuspended'
-  | 'restrictRoutes'
   | 'createdAt'
   | 'updatedAt'
 >;
