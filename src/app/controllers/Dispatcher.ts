@@ -3,10 +3,11 @@ import { DataSource } from 'typeorm';
 import { AppError } from '../../common/AppError';
 import { isDeveloperAccess } from '../../common/devAccess';
 import { publishedCache } from '../../core/publishedCache';
-import { AdapterFactory } from '../../engine/AdapterFactory';
+import { AdapterFactory, SandboxAdapters } from '../../engine/AdapterFactory';
 import { SandboxRunner, SandboxRequestContext } from '../../engine/SandboxRunner';
-import { AccountRole, ModuleEntity, HttpMethod, Tenant } from '@idp/shared';
+import { AccountRole, GlobalModuleEndpoint, GlobalModulePackage, HttpMethod, ModuleEntity, Tenant } from '@idp/shared';
 import { TenantRequest } from '../../types/RequestContext';
+import { resolveGlobalDataSource } from '../../core/globalDatasource';
 
 type ModuleLike = {
   routePath: string;
@@ -14,6 +15,16 @@ type ModuleLike = {
   code: string;
   fileExtension?: string;
 };
+
+type SharedEndpointMatch = {
+  routePath: string;
+  method: HttpMethod;
+  packageName: string;
+  packageVersion: string;
+  allowAnonymous: boolean;
+};
+
+const MAX_SHARED_TIMEOUT_MS = 30_000;
 
 export class Dispatcher {
   constructor(
@@ -70,24 +81,42 @@ export class Dispatcher {
       }
 
       const matchResult = this.findMatchingModule(modules, req.path);
-      if (!matchResult) {
+      const sharedMatch = matchResult
+        ? null
+        : await this.findMatchingSharedEndpoint(
+            normalizedMethod as HttpMethod,
+            req.path,
+            isDev
+          );
+      if (!matchResult && !sharedMatch) {
         return res.status(404).json({ error: 'Module not found' });
       }
 
-      const { module, params } = matchResult;
+      const module = matchResult
+        ? matchResult.module
+        : ({
+            routePath: sharedMatch!.routePath,
+            method: sharedMatch!.method,
+            code: '',
+          } as ModuleLike);
+      const params =
+        matchResult?.params ?? this.matchPath(module.routePath, req.path) ?? {};
 
-      if (!req.account) {
+      const allowAnonymous = Boolean(sharedMatch?.allowAnonymous);
+      if (!req.account && !allowAnonymous) {
         throw new AppError('Authentication required', 401);
       }
 
-      const aclAllowed = this.checkEndpointAccess(
-        req.tenant as Tenant,
-        req.account.role,
-        module,
-        req.account.groups ?? [],
-      );
-      if (!aclAllowed) {
-        throw new AppError('Access denied', 403);
+      if (!allowAnonymous) {
+        const aclAllowed = this.checkEndpointAccess(
+          req.tenant as Tenant,
+          req.account?.role ?? '',
+          module,
+          req.account?.groups ?? [],
+        );
+        if (!aclAllowed) {
+          throw new AppError('Access denied', 403);
+        }
       }
 
       const adapters = await this.adapterFactory.build(req.tenant, {
@@ -110,10 +139,12 @@ export class Dispatcher {
           : undefined,
       };
 
-      const sandboxResult = await this.sandboxRunner.run(module.code, {
-        request: requestContext,
-        adapters,
-      });
+      const sandboxResult = sharedMatch
+        ? await this.runSharedEndpoint(sharedMatch, requestContext, adapters)
+        : await this.sandboxRunner.run(module.code, {
+            request: requestContext,
+            adapters,
+          });
 
       res.status(sandboxResult.statusCode ?? 200);
       if (sandboxResult.headers) {
@@ -141,6 +172,91 @@ export class Dispatcher {
       }
     }
     return normalized;
+  }
+
+  private async findMatchingSharedEndpoint(
+    method: HttpMethod,
+    path: string,
+    allowDraft: boolean,
+  ): Promise<SharedEndpointMatch | null> {
+    const globalDataSource = await resolveGlobalDataSource(this.dataSource);
+    const repo = globalDataSource.getRepository(GlobalModuleEndpoint);
+    const endpoints = await repo.find({
+      where: { method },
+      relations: ['package'],
+      order: { routePath: 'ASC' },
+    });
+
+    for (const endpoint of endpoints) {
+      const pkg = endpoint.package as GlobalModulePackage | undefined;
+      if (!pkg) continue;
+      const match = this.matchPath(endpoint.routePath, path);
+      if (!match) continue;
+      if (!allowDraft) {
+        if (!pkg.publishedCodeBlob || !pkg.publishedVersion) {
+          return null;
+        }
+      }
+      return {
+        routePath: endpoint.routePath,
+        method: endpoint.method as HttpMethod,
+        packageName: pkg.name,
+        packageVersion: pkg.version,
+        allowAnonymous: Boolean(endpoint.allowAnonymous),
+      };
+    }
+
+    return null;
+  }
+
+  private resolveSharedHandler(exported: unknown): unknown {
+    if (typeof exported === 'function') return exported;
+    if (exported && typeof exported === 'object' && (exported as Record<string, unknown>).default) {
+      return (exported as Record<string, unknown>).default;
+    }
+    return null;
+  }
+
+  private async runSharedEndpoint(
+    sharedMatch: SharedEndpointMatch,
+    requestContext: SandboxRequestContext,
+    adapters: SandboxAdapters,
+  ): Promise<{ statusCode: number; headers?: Record<string, string>; body?: unknown }> {
+    const handlerExports = await adapters.shared.require(
+      sharedMatch.packageName,
+      sharedMatch.packageVersion,
+    );
+    const handler = this.resolveSharedHandler(handlerExports);
+    if (typeof handler !== 'function') {
+      throw new AppError('Shared module must export a function', 400);
+    }
+
+    const timeoutMs = Math.min(
+      requestContext.tenant.resourceConfig?.timeout ?? 5_000,
+      MAX_SHARED_TIMEOUT_MS,
+    );
+
+    try {
+      const result = await Promise.race([
+        Promise.resolve(handler(requestContext, adapters)),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Execution timed out')), timeoutMs),
+        ),
+      ]);
+
+      if (result && typeof result === 'object') {
+        const typed = result as { statusCode?: number; headers?: Record<string, string>; body?: unknown };
+        return {
+          statusCode: typed.statusCode ?? 200,
+          headers: typed.headers,
+          body: typed.body,
+        };
+      }
+
+      return { statusCode: 200, body: result };
+    } catch (error) {
+      throw new AppError(`Shared module error: ${(error as Error).message}`, 500);
+    }
   }
 
   private findMatchingModule(

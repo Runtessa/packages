@@ -7,6 +7,7 @@ import { Tenant } from '@idp/shared';
 import { UIPackage } from '@idp/shared';
 import { ModuleRevision } from '@idp/shared';
 import { UIPackageRevision } from '@idp/shared';
+import { GlobalModuleEndpoint } from '@idp/shared';
 import { GlobalModulePackage } from '@idp/shared';
 import { GlobalModulePackageFile } from '@idp/shared';
 import { GlobalUIPackage } from '@idp/shared';
@@ -46,6 +47,7 @@ const baseOptions = {
     Secret,
     ModuleEntity,
     UIPackage,
+    GlobalModuleEndpoint,
     GlobalModulePackage,
     GlobalModulePackageFile,
     GlobalUIPackage,
@@ -79,6 +81,7 @@ export const ensureCoreSchema = async () => {
           hasGlobalTable && (await queryRunner.hasColumn('global_ui_packages', 'draft_version'));
         const hasModuleTable = await queryRunner.hasTable('global_module_packages');
         const hasModuleFileTable = await queryRunner.hasTable('global_module_package_files');
+        const hasModuleEndpointTable = await queryRunner.hasTable('global_module_endpoints');
         const hasModuleDraft =
           hasModuleTable &&
           (await queryRunner.hasColumn('global_module_packages', 'draft_version'));
@@ -101,6 +104,7 @@ export const ensureCoreSchema = async () => {
           !hasDraftVersion ||
           !hasModuleTable ||
           !hasModuleFileTable ||
+          !hasModuleEndpointTable ||
           !hasModuleDraft ||
           !hasAdapterAccess ||
           !hasAdapterConfig ||

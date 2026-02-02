@@ -1,4 +1,5 @@
 export * from './entities/Account';
+export * from './entities/GlobalModuleEndpoint';
 export * from './entities/GlobalModulePackage';
 export * from './entities/GlobalModulePackageFile';
 export * from './entities/GlobalUIPackage';

@@ -38,6 +38,37 @@ type ProjectFormErrors = {
   entryPath: string;
 };
 
+type SharedEndpoint = {
+  id: string;
+  routePath: string;
+  method: string;
+  allowAnonymous?: boolean;
+  packageId?: string;
+  packageName?: string;
+  packageVersion?: string;
+  updatedAt?: string;
+};
+
+type EndpointFormState = {
+  routePath: string;
+  method: string;
+  packageId: string;
+  allowAnonymous: boolean;
+};
+
+type EndpointFormErrors = {
+  routePath: string;
+  packageId: string;
+};
+
+const METHOD_OPTIONS = [
+  { label: 'GET', value: 'GET' },
+  { label: 'POST', value: 'POST' },
+  { label: 'PUT', value: 'PUT' },
+  { label: 'PATCH', value: 'PATCH' },
+  { label: 'DELETE', value: 'DELETE' },
+];
+
 const FILE_EXTENSION_OPTIONS = [
   { label: 'JS', value: 'js' },
   { label: 'TS', value: 'ts' },
@@ -73,6 +104,9 @@ const validateForm = (values: ProjectFormState): ProjectFormErrors => {
 const hasErrors = (errors: ProjectFormErrors) =>
   Boolean(errors.name || errors.version || errors.entryPath);
 
+const hasEndpointErrors = (errors: EndpointFormErrors) =>
+  Boolean(errors.routePath || errors.packageId);
+
 export default function AdminSharedModulesPage() {
   const router = useRouter();
   const { token, setToken, ready } = useSessionToken();
@@ -81,13 +115,32 @@ export default function AdminSharedModulesPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [projects, setProjects] = useState<SharedModuleProject[]>([]);
+  const [endpoints, setEndpoints] = useState<SharedEndpoint[]>([]);
+  const [endpointLoading, setEndpointLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<SharedModuleProject | null>(null);
+  const [endpointModalOpen, setEndpointModalOpen] = useState(false);
+  const [endpointEditModalOpen, setEndpointEditModalOpen] = useState(false);
+  const [endpointDeleteModalOpen, setEndpointDeleteModalOpen] = useState(false);
+  const [endpointDeleteTarget, setEndpointDeleteTarget] = useState<SharedEndpoint | null>(null);
   const [form, setForm] = useState<ProjectFormState>(DEFAULT_FORM);
   const [editForm, setEditForm] = useState<ProjectFormState>(DEFAULT_FORM);
   const [editTargetId, setEditTargetId] = useState('');
+  const [endpointForm, setEndpointForm] = useState<EndpointFormState>({
+    routePath: '/api/auth',
+    method: 'GET',
+    packageId: '',
+    allowAnonymous: false,
+  });
+  const [endpointEditForm, setEndpointEditForm] = useState<EndpointFormState>({
+    routePath: '',
+    method: 'GET',
+    packageId: '',
+    allowAnonymous: false,
+  });
+  const [endpointEditTargetId, setEndpointEditTargetId] = useState('');
   const [validationErrors, setValidationErrors] = useState<ProjectFormErrors>({
     name: '',
     version: '',
@@ -97,6 +150,14 @@ export default function AdminSharedModulesPage() {
     name: '',
     version: '',
     entryPath: '',
+  });
+  const [endpointErrors, setEndpointErrors] = useState<EndpointFormErrors>({
+    routePath: '',
+    packageId: '',
+  });
+  const [endpointEditErrors, setEndpointEditErrors] = useState<EndpointFormErrors>({
+    routePath: '',
+    packageId: '',
   });
 
   const loadProjects = async () => {
@@ -113,6 +174,23 @@ export default function AdminSharedModulesPage() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadEndpoints = async () => {
+    if (!token) return;
+    setEndpointLoading(true);
+    setError('');
+    try {
+      const data = await fetchJson('/api/admin/shared-modules/endpoints', { token });
+      setEndpoints(data.endpoints || []);
+    } catch (err: any) {
+      setError(err.message);
+      if (err.message?.toLowerCase().includes('unauthorized')) {
+        setToken('');
+      }
+    } finally {
+      setEndpointLoading(false);
     }
   };
 
@@ -133,6 +211,7 @@ export default function AdminSharedModulesPage() {
           return;
         }
         await loadProjects();
+        await loadEndpoints();
       } catch (err: any) {
         setError(err.message);
         if (err.message?.toLowerCase().includes('unauthorized')) {
@@ -165,6 +244,29 @@ export default function AdminSharedModulesPage() {
   const confirmDelete = (project: SharedModuleProject) => {
     setDeleteTarget(project);
     setDeleteModalOpen(true);
+  };
+
+  const openEndpointCreate = () => {
+    setEndpointForm({ routePath: '/api/auth', method: 'GET', packageId: '', allowAnonymous: false });
+    setEndpointErrors({ routePath: '', packageId: '' });
+    setEndpointModalOpen(true);
+  };
+
+  const openEndpointEdit = (endpoint: SharedEndpoint) => {
+    setEndpointEditTargetId(endpoint.id);
+    setEndpointEditForm({
+      routePath: endpoint.routePath,
+      method: endpoint.method,
+      packageId: endpoint.packageId || '',
+      allowAnonymous: Boolean(endpoint.allowAnonymous),
+    });
+    setEndpointEditErrors({ routePath: '', packageId: '' });
+    setEndpointEditModalOpen(true);
+  };
+
+  const confirmEndpointDelete = (endpoint: SharedEndpoint) => {
+    setEndpointDeleteTarget(endpoint);
+    setEndpointDeleteModalOpen(true);
   };
 
   const handleCreate = async (event: FormEvent) => {
@@ -214,6 +316,83 @@ export default function AdminSharedModulesPage() {
       success('Shared backend project updated');
       setEditModalOpen(false);
       await loadProjects();
+    } catch (err: any) {
+      setError(err.message);
+      showError(err.message);
+    }
+  };
+
+  const handleEndpointCreate = async (event: FormEvent) => {
+    event.preventDefault();
+    setError('');
+    const errors: EndpointFormErrors = { routePath: '', packageId: '' };
+    if (!endpointForm.routePath.trim()) errors.routePath = 'Route is required';
+    if (!endpointForm.packageId) errors.packageId = 'Package is required';
+    setEndpointErrors(errors);
+    if (hasEndpointErrors(errors)) return;
+    try {
+      const payload = {
+        routePath: endpointForm.routePath.trim(),
+        method: endpointForm.method,
+        packageId: endpointForm.packageId,
+        allowAnonymous: endpointForm.allowAnonymous,
+      };
+      await fetchJson('/api/admin/shared-modules/endpoints', {
+        token,
+        method: 'POST',
+        body: payload,
+      });
+      success('Shared route created');
+      setEndpointModalOpen(false);
+      await loadEndpoints();
+    } catch (err: any) {
+      setError(err.message);
+      showError(err.message);
+    }
+  };
+
+  const handleEndpointEdit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!endpointEditTargetId) return;
+    setError('');
+    const errors: EndpointFormErrors = { routePath: '', packageId: '' };
+    if (!endpointEditForm.routePath.trim()) errors.routePath = 'Route is required';
+    if (!endpointEditForm.packageId) errors.packageId = 'Package is required';
+    setEndpointEditErrors(errors);
+    if (hasEndpointErrors(errors)) return;
+    try {
+      const payload = {
+        routePath: endpointEditForm.routePath.trim(),
+        method: endpointEditForm.method,
+        packageId: endpointEditForm.packageId,
+        allowAnonymous: endpointEditForm.allowAnonymous,
+      };
+      await fetchJson(`/api/admin/shared-modules/endpoints/${endpointEditTargetId}`, {
+        token,
+        method: 'PUT',
+        body: payload,
+      });
+      success('Shared route updated');
+      setEndpointEditModalOpen(false);
+      await loadEndpoints();
+    } catch (err: any) {
+      setError(err.message);
+      showError(err.message);
+    }
+  };
+
+  const handleEndpointDelete = async () => {
+    if (!endpointDeleteTarget) return;
+    setError('');
+    try {
+      await fetchJson(`/api/admin/shared-modules/endpoints/${endpointDeleteTarget.id}`, {
+        token,
+        method: 'DELETE',
+      });
+      success('Shared route deleted');
+      setEndpointDeleteModalOpen(false);
+      setEndpointDeleteTarget(null);
+      await loadEndpoints();
     } catch (err: any) {
       setError(err.message);
       showError(err.message);
@@ -307,6 +486,58 @@ export default function AdminSharedModulesPage() {
                       variant="danger"
                       size="sm"
                       onClick={() => confirmDelete(project)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </DataTable>
+        </div>
+      </DataCard>
+
+      <DataCard
+        title="Shared backend routes"
+        subtitle="Map routes to shared backend projects (same URL across tenants)."
+        actions={
+          <Button onClick={openEndpointCreate} variant="secondary" size="sm">
+            New shared route
+          </Button>
+        }
+      >
+        <div className="space-y-4">
+          <DataTable
+            headers={['Route', 'Method', 'Access', 'Package', 'Updated', 'Actions']}
+            loading={endpointLoading}
+            emptyMessage="No shared routes yet."
+          >
+            {endpoints.map((endpoint) => (
+              <tr key={endpoint.id} className="text-sm hover:bg-bgApp transition">
+                <td className="px-4 py-3 text-textPrimary">{endpoint.routePath}</td>
+                <td className="px-4 py-3 text-textMuted">{endpoint.method}</td>
+                <td className="px-4 py-3 text-textMuted">
+                  {endpoint.allowAnonymous ? 'Anonymous' : 'Authenticated'}
+                </td>
+                <td className="px-4 py-3 text-textMuted">
+                  {endpoint.packageName ? `${endpoint.packageName}@${endpoint.packageVersion}` : '—'}
+                </td>
+                <td className="px-4 py-3 text-textMuted">
+                  {endpoint.updatedAt ? new Date(endpoint.updatedAt).toLocaleString() : '—'}
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => openEndpointEdit(endpoint)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => confirmEndpointDelete(endpoint)}
                     >
                       Delete
                     </Button>
@@ -417,6 +648,150 @@ export default function AdminSharedModulesPage() {
             rows={4}
           />
         </FormLayout>
+      </Modal>
+
+      <Modal
+        open={endpointModalOpen}
+        onClose={() => setEndpointModalOpen(false)}
+        title="Create shared backend route"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setEndpointModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleEndpointCreate}>
+              Create
+            </Button>
+          </div>
+        }
+      >
+        <FormLayout onSubmit={handleEndpointCreate}>
+          <Input
+            label="Route path"
+            value={endpointForm.routePath}
+            onChange={(event) =>
+              setEndpointForm({ ...endpointForm, routePath: event.target.value })
+            }
+            error={endpointErrors.routePath}
+            placeholder="/api/auth"
+          />
+          <Select
+            label="Method"
+            value={endpointForm.method}
+            onChange={(event) =>
+              setEndpointForm({ ...endpointForm, method: event.target.value })
+            }
+            options={METHOD_OPTIONS}
+          />
+          <Select
+            label="Shared backend project"
+            value={endpointForm.packageId}
+            onChange={(event) =>
+              setEndpointForm({ ...endpointForm, packageId: event.target.value })
+            }
+            options={[
+              { label: 'Select project', value: '' },
+              ...projects.map((project) => ({
+                label: `${project.name}@${project.version}`,
+                value: project.id,
+              })),
+            ]}
+            error={endpointErrors.packageId}
+          />
+          <label className="flex items-center gap-2 text-sm text-textPrimary">
+            <input
+              type="checkbox"
+              checked={endpointForm.allowAnonymous}
+              onChange={(event) =>
+                setEndpointForm({ ...endpointForm, allowAnonymous: event.target.checked })
+              }
+              className="h-4 w-4 rounded border-borderSubtle text-accent focus:ring-accent/30"
+            />
+            Allow anonymous access
+          </label>
+        </FormLayout>
+      </Modal>
+
+      <Modal
+        open={endpointEditModalOpen}
+        onClose={() => setEndpointEditModalOpen(false)}
+        title="Edit shared backend route"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setEndpointEditModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleEndpointEdit}>
+              Save changes
+            </Button>
+          </div>
+        }
+      >
+        <FormLayout onSubmit={handleEndpointEdit}>
+          <Input
+            label="Route path"
+            value={endpointEditForm.routePath}
+            onChange={(event) =>
+              setEndpointEditForm({ ...endpointEditForm, routePath: event.target.value })
+            }
+            error={endpointEditErrors.routePath}
+          />
+          <Select
+            label="Method"
+            value={endpointEditForm.method}
+            onChange={(event) =>
+              setEndpointEditForm({ ...endpointEditForm, method: event.target.value })
+            }
+            options={METHOD_OPTIONS}
+          />
+          <Select
+            label="Shared backend project"
+            value={endpointEditForm.packageId}
+            onChange={(event) =>
+              setEndpointEditForm({ ...endpointEditForm, packageId: event.target.value })
+            }
+            options={[
+              { label: 'Select project', value: '' },
+              ...projects.map((project) => ({
+                label: `${project.name}@${project.version}`,
+                value: project.id,
+              })),
+            ]}
+            error={endpointEditErrors.packageId}
+          />
+          <label className="flex items-center gap-2 text-sm text-textPrimary">
+            <input
+              type="checkbox"
+              checked={endpointEditForm.allowAnonymous}
+              onChange={(event) =>
+                setEndpointEditForm({ ...endpointEditForm, allowAnonymous: event.target.checked })
+              }
+              className="h-4 w-4 rounded border-borderSubtle text-accent focus:ring-accent/30"
+            />
+            Allow anonymous access
+          </label>
+        </FormLayout>
+      </Modal>
+
+      <Modal
+        open={endpointDeleteModalOpen}
+        onClose={() => setEndpointDeleteModalOpen(false)}
+        title="Delete shared backend route?"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setEndpointDeleteModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={handleEndpointDelete}>
+              Delete
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-textMuted">
+          This will remove the mapping for{' '}
+          <span className="font-semibold text-textPrimary">{endpointDeleteTarget?.routePath}</span>.
+        </p>
       </Modal>
 
       <Modal
