@@ -24,18 +24,10 @@ const normalizeMethod = (raw: unknown) => {
   return value as HttpMethod;
 };
 
-const normalizeAllowAnonymous = (raw: unknown) => {
-  if (raw === undefined) return false;
-  if (typeof raw === 'boolean') return raw;
-  const value = String(raw).trim().toLowerCase();
-  return value === 'true' || value === '1' || value === 'yes';
-};
-
 const serialize = (endpoint: GlobalModuleEndpoint) => ({
   id: endpoint.id,
   routePath: endpoint.routePath,
   method: endpoint.method,
-  allowAnonymous: Boolean(endpoint.allowAnonymous),
   packageId: endpoint.package?.id,
   packageName: endpoint.package?.name,
   packageVersion: endpoint.package?.version,
@@ -62,7 +54,6 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   if (req.method === 'POST') {
     const routePath = normalizeRoutePath(req.body?.routePath);
     const method = normalizeMethod(req.body?.method);
-    const allowAnonymous = normalizeAllowAnonymous(req.body?.allowAnonymous);
     const packageId = String(req.body?.packageId || '').trim();
     if (!packageId) {
       const err = new Error('packageId is required');
@@ -79,7 +70,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       res.status(409).json({ error: 'Route already mapped' });
       return;
     }
-    const endpoint = repo.create({ routePath, method, package: pkg, allowAnonymous });
+    const endpoint = repo.create({ routePath, method, package: pkg });
     await repo.save(endpoint);
     const saved = await repo.findOne({ where: { id: endpoint.id }, relations: ['package'] });
     res.status(201).json({ endpoint: saved ? serialize(saved) : serialize(endpoint) });

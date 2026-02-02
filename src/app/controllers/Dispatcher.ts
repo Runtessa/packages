@@ -21,7 +21,6 @@ type SharedEndpointMatch = {
   method: HttpMethod;
   packageName: string;
   packageVersion: string;
-  allowAnonymous: boolean;
 };
 
 const MAX_SHARED_TIMEOUT_MS = 30_000;
@@ -102,12 +101,12 @@ export class Dispatcher {
       const params =
         matchResult?.params ?? this.matchPath(module.routePath, req.path) ?? {};
 
-      const endpointConfig = matchResult
-        ? (req.tenant?.aclEndpoints ?? {})[module.routePath]
-        : null;
-      const allowAnonymous = Boolean(
-        sharedMatch?.allowAnonymous || (endpointConfig as any)?.allowAnonymous
+      const endpointConfig = this.resolveEndpointConfig(
+        req.tenant as Tenant,
+        module.routePath,
+        req.path
       );
+      const allowAnonymous = Boolean((endpointConfig as any)?.allowAnonymous);
       if (!req.account && !allowAnonymous) {
         throw new AppError('Authentication required', 401);
       }
@@ -118,6 +117,7 @@ export class Dispatcher {
           req.account?.role ?? '',
           module,
           req.account?.groups ?? [],
+          req.path,
         );
         if (!aclAllowed) {
           throw new AppError('Access denied', 403);
@@ -207,7 +207,6 @@ export class Dispatcher {
         method: endpoint.method as HttpMethod,
         packageName: pkg.name,
         packageVersion: pkg.version,
-        allowAnonymous: Boolean(endpoint.allowAnonymous),
       };
     }
 
@@ -302,21 +301,11 @@ export class Dispatcher {
     return `module:published:${tenantId}:${method}`;
   }
 
-  private checkEndpointAccess(
+  private resolveEndpointConfig(
     tenant: Tenant,
-    accountRole: AccountRole | string,
-    module: ModuleLike,
-    accountGroups: string[],
+    routePath: string,
+    requestPath?: string,
   ) {
-    const action =
-      module.method === HttpMethod.GET
-        ? 'read'
-        : module.method === HttpMethod.POST
-        ? 'write'
-        : module.method === HttpMethod.PUT || module.method === HttpMethod.PATCH
-        ? 'edit'
-        : 'delete';
-
     const endpoints = (tenant.aclEndpoints || {}) as Record<
       string,
       {
@@ -327,6 +316,32 @@ export class Dispatcher {
         allowAnonymous?: boolean;
       }
     >;
+    if (endpoints[routePath]) return endpoints[routePath];
+    if (!requestPath) return undefined;
+    if (endpoints[requestPath]) return endpoints[requestPath];
+    if (requestPath.length > 1 && requestPath.endsWith('/')) {
+      const trimmed = requestPath.replace(/\/+$/, '');
+      if (endpoints[trimmed]) return endpoints[trimmed];
+    }
+    return undefined;
+  }
+
+  private checkEndpointAccess(
+    tenant: Tenant,
+    accountRole: AccountRole | string,
+    module: ModuleLike,
+    accountGroups: string[],
+    requestPath?: string,
+  ) {
+    const action =
+      module.method === HttpMethod.GET
+        ? 'read'
+        : module.method === HttpMethod.POST
+        ? 'write'
+        : module.method === HttpMethod.PUT || module.method === HttpMethod.PATCH
+        ? 'edit'
+        : 'delete';
+
     const rolesConfig = (tenant.aclRoles || {}) as {
       roles?: Record<string, string[]>;
       groups?: Record<string, string[]>;
@@ -354,7 +369,7 @@ export class Dispatcher {
       }
     }
 
-    const endpointConfig = endpoints[module.routePath];
+    const endpointConfig = this.resolveEndpointConfig(tenant, module.routePath, requestPath);
     if (!endpointConfig) return false;
     const requiredPermissions = endpointConfig[action] || [];
     if (!Array.isArray(requiredPermissions) || requiredPermissions.length === 0) return false;

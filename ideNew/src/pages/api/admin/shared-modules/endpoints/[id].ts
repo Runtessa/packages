@@ -24,18 +24,10 @@ const normalizeMethod = (raw: unknown) => {
   return value as HttpMethod;
 };
 
-const normalizeAllowAnonymous = (raw: unknown) => {
-  if (raw === undefined) return undefined;
-  if (typeof raw === 'boolean') return raw;
-  const value = String(raw).trim().toLowerCase();
-  return value === 'true' || value === '1' || value === 'yes';
-};
-
 const serialize = (endpoint: GlobalModuleEndpoint) => ({
   id: endpoint.id,
   routePath: endpoint.routePath,
   method: endpoint.method,
-  allowAnonymous: Boolean(endpoint.allowAnonymous),
   packageId: endpoint.package?.id,
   packageName: endpoint.package?.name,
   packageVersion: endpoint.package?.version,
@@ -65,7 +57,6 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       req.body?.routePath !== undefined ? normalizeRoutePath(req.body.routePath) : endpoint.routePath;
     const method =
       req.body?.method !== undefined ? normalizeMethod(req.body.method) : endpoint.method;
-    const allowAnonymous = normalizeAllowAnonymous(req.body?.allowAnonymous);
     let pkg = endpoint.package;
     if (req.body?.packageId !== undefined) {
       const packageId = String(req.body?.packageId || '').trim();
@@ -90,9 +81,6 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
 
     endpoint.routePath = routePath;
     endpoint.method = method;
-    if (allowAnonymous !== undefined) {
-      endpoint.allowAnonymous = allowAnonymous;
-    }
     endpoint.package = pkg;
     await repo.save(endpoint);
     const saved = await repo.findOne({ where: { id: endpoint.id }, relations: ['package'] });

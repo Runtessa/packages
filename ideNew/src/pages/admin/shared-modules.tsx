@@ -42,7 +42,6 @@ type SharedEndpoint = {
   id: string;
   routePath: string;
   method: string;
-  allowAnonymous?: boolean;
   packageId?: string;
   packageName?: string;
   packageVersion?: string;
@@ -53,7 +52,6 @@ type EndpointFormState = {
   routePath: string;
   method: string;
   packageId: string;
-  allowAnonymous: boolean;
 };
 
 type EndpointFormErrors = {
@@ -132,13 +130,11 @@ export default function AdminSharedModulesPage() {
     routePath: '/api/auth',
     method: 'GET',
     packageId: '',
-    allowAnonymous: false,
   });
   const [endpointEditForm, setEndpointEditForm] = useState<EndpointFormState>({
     routePath: '',
     method: 'GET',
     packageId: '',
-    allowAnonymous: false,
   });
   const [endpointEditTargetId, setEndpointEditTargetId] = useState('');
   const [validationErrors, setValidationErrors] = useState<ProjectFormErrors>({
@@ -247,7 +243,7 @@ export default function AdminSharedModulesPage() {
   };
 
   const openEndpointCreate = () => {
-    setEndpointForm({ routePath: '/api/auth', method: 'GET', packageId: '', allowAnonymous: false });
+    setEndpointForm({ routePath: '/api/auth', method: 'GET', packageId: '' });
     setEndpointErrors({ routePath: '', packageId: '' });
     setEndpointModalOpen(true);
   };
@@ -258,7 +254,6 @@ export default function AdminSharedModulesPage() {
       routePath: endpoint.routePath,
       method: endpoint.method,
       packageId: endpoint.packageId || '',
-      allowAnonymous: Boolean(endpoint.allowAnonymous),
     });
     setEndpointEditErrors({ routePath: '', packageId: '' });
     setEndpointEditModalOpen(true);
@@ -335,7 +330,6 @@ export default function AdminSharedModulesPage() {
         routePath: endpointForm.routePath.trim(),
         method: endpointForm.method,
         packageId: endpointForm.packageId,
-        allowAnonymous: endpointForm.allowAnonymous,
       };
       await fetchJson('/api/admin/shared-modules/endpoints', {
         token,
@@ -365,7 +359,6 @@ export default function AdminSharedModulesPage() {
         routePath: endpointEditForm.routePath.trim(),
         method: endpointEditForm.method,
         packageId: endpointEditForm.packageId,
-        allowAnonymous: endpointEditForm.allowAnonymous,
       };
       await fetchJson(`/api/admin/shared-modules/endpoints/${endpointEditTargetId}`, {
         token,
@@ -508,7 +501,7 @@ export default function AdminSharedModulesPage() {
       >
         <div className="space-y-4">
           <DataTable
-            headers={['Route', 'Method', 'Access', 'Package', 'Updated', 'Actions']}
+            headers={['Route', 'Method', 'Package', 'Updated', 'Actions']}
             loading={endpointLoading}
             emptyMessage="No shared routes yet."
           >
@@ -516,9 +509,6 @@ export default function AdminSharedModulesPage() {
               <tr key={endpoint.id} className="text-sm hover:bg-bgApp transition">
                 <td className="px-4 py-3 text-textPrimary">{endpoint.routePath}</td>
                 <td className="px-4 py-3 text-textMuted">{endpoint.method}</td>
-                <td className="px-4 py-3 text-textMuted">
-                  {endpoint.allowAnonymous ? 'Anonymous' : 'Authenticated'}
-                </td>
                 <td className="px-4 py-3 text-textMuted">
                   {endpoint.packageName ? `${endpoint.packageName}@${endpoint.packageVersion}` : '—'}
                 </td>
@@ -698,17 +688,6 @@ export default function AdminSharedModulesPage() {
             ]}
             error={endpointErrors.packageId}
           />
-          <label className="flex items-center gap-2 text-sm text-textPrimary">
-            <input
-              type="checkbox"
-              checked={endpointForm.allowAnonymous}
-              onChange={(event) =>
-                setEndpointForm({ ...endpointForm, allowAnonymous: event.target.checked })
-              }
-              className="h-4 w-4 rounded border-borderSubtle text-accent focus:ring-accent/30"
-            />
-            Allow anonymous access
-          </label>
         </FormLayout>
       </Modal>
 
@@ -759,17 +738,6 @@ export default function AdminSharedModulesPage() {
             ]}
             error={endpointEditErrors.packageId}
           />
-          <label className="flex items-center gap-2 text-sm text-textPrimary">
-            <input
-              type="checkbox"
-              checked={endpointEditForm.allowAnonymous}
-              onChange={(event) =>
-                setEndpointEditForm({ ...endpointEditForm, allowAnonymous: event.target.checked })
-              }
-              className="h-4 w-4 rounded border-borderSubtle text-accent focus:ring-accent/30"
-            />
-            Allow anonymous access
-          </label>
         </FormLayout>
       </Modal>
 

@@ -22,9 +22,6 @@ export class GlobalModuleEndpoint {
   @Column({ type: 'enum', enum: HttpMethod, default: HttpMethod.GET })
   method!: HttpMethod;
 
-  @Column({ name: 'allow_anonymous', type: 'boolean', default: false })
-  allowAnonymous!: boolean;
-
   @ManyToOne(() => GlobalModulePackage, { onDelete: 'CASCADE' })
   package!: GlobalModulePackage;
 
