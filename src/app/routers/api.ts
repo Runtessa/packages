@@ -62,6 +62,12 @@ export const ApiRouter = (
     normalizeRegistryParams,
     registryController.resolve
   );
+  router.get(
+    "/registry-tenant/*",
+    contextMiddleware,
+    normalizeRegistryParams,
+    registryController.resolveTenantOnly
+  );
   router.get("/modules", contextMiddleware, authGuard, moduleController.list);
   router.get(
     "/modules/:id",

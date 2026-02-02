@@ -85,6 +85,7 @@ const serializeTenant = (tenant: Tenant) => ({
   id: tenant.id,
   hostname: tenant.hostname,
   isSuspended: tenant.isSuspended,
+  allowRegistration: tenant.allowRegistration ?? true,
   resourceConfig: tenant.resourceConfig,
   adapterAccess: tenant.adapterAccess ?? {},
   adapterConfig: tenant.adapterConfig ?? {},
@@ -112,6 +113,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
 
     const hostname = normalizeHostname(req.body?.hostname);
     const isSuspended = normalizeBoolean(req.body?.isSuspended, false);
+    const allowRegistration = normalizeBoolean(req.body?.allowRegistration, true);
     const resourceConfig = normalizeResourceConfig(req.body?.resourceConfig, DEFAULT_RESOURCE_CONFIG);
     const configObject = parseAdapterConfigObject(req.body?.adapterConfig);
     const resolvedConfig = configObject
@@ -130,6 +132,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const tenant = repo.create({
       hostname,
       isSuspended,
+      allowRegistration,
       resourceConfig,
       adapterAccess,
       adapterConfig: resolvedConfig ? maskPasswordFields(resolvedConfig) : {},

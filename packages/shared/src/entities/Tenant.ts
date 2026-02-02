@@ -53,6 +53,9 @@ export class Tenant {
   @Column({ default: false })
   isSuspended!: boolean;
 
+  @Column({ default: true })
+  allowRegistration!: boolean;
+
   @OneToMany(() => Account, (account) => account.tenant, { cascade: true })
   accounts!: Account[];
 
@@ -81,6 +84,7 @@ export type TenantDTO = Pick<
   | 'aclRoles'
   | 'aclEndpoints'
   | 'isSuspended'
+  | 'allowRegistration'
   | 'createdAt'
   | 'updatedAt'
 >;

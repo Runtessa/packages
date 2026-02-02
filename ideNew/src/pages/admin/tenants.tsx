@@ -21,6 +21,7 @@ type TenantSummary = {
   id: string;
   hostname: string;
   isSuspended: boolean;
+  allowRegistration?: boolean;
   resourceConfig?: { memory: number; timeout: number };
   adapterAccess?: Record<string, { allow: string[] }>;
   adapterConfig?: Record<string, unknown>;
@@ -36,6 +37,7 @@ type TenantDetails = {
 type TenantFormState = {
   hostname: string;
   isSuspended: boolean;
+  allowRegistration: boolean;
   memory: string;
   timeout: string;
 };
@@ -53,6 +55,7 @@ type TenantFormErrors = {
 const DEFAULT_FORM: TenantFormState = {
   hostname: '',
   isSuspended: false,
+  allowRegistration: true,
   memory: '512',
   timeout: '5000',
 };
@@ -224,6 +227,7 @@ export default function AdminTenantsPage() {
       originalHostname: tenant.hostname,
       hostname: tenant.hostname,
       isSuspended: tenant.isSuspended,
+      allowRegistration: tenant.allowRegistration ?? true,
       memory: String(tenant.resourceConfig?.memory ?? Number(DEFAULT_FORM.memory)),
       timeout: String(tenant.resourceConfig?.timeout ?? Number(DEFAULT_FORM.timeout)),
     });
@@ -283,6 +287,7 @@ export default function AdminTenantsPage() {
   const buildPayload = (values: TenantFormState, configText?: string) => ({
     hostname: values.hostname.trim(),
     isSuspended: values.isSuspended,
+    allowRegistration: values.allowRegistration,
     resourceConfig: {
       memory: Number(values.memory),
       timeout: Number(values.timeout),
@@ -501,6 +506,15 @@ export default function AdminTenantsPage() {
               />
               Suspended
             </label>
+            <label className="flex items-center gap-2 pt-6 text-sm text-textPrimary">
+              <input
+                type="checkbox"
+                checked={form.allowRegistration}
+                onChange={(e) => setForm({ ...form, allowRegistration: e.target.checked })}
+                className="h-4 w-4 rounded border-borderSubtle text-accent focus:ring-accent/30"
+              />
+              Allow registration
+            </label>
             <Input
               label="Timeout (ms)"
               type="number"
@@ -583,6 +597,17 @@ export default function AdminTenantsPage() {
                 className="h-4 w-4 rounded border-borderSubtle text-accent focus:ring-accent/30"
               />
               Suspended
+            </label>
+            <label className="flex items-center gap-2 pt-6 text-sm text-textPrimary">
+              <input
+                type="checkbox"
+                checked={editForm.allowRegistration}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, allowRegistration: e.target.checked })
+                }
+                className="h-4 w-4 rounded border-borderSubtle text-accent focus:ring-accent/30"
+              />
+              Allow registration
             </label>
             <Input
               label="Timeout (ms)"

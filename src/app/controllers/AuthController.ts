@@ -13,6 +13,9 @@ export class AuthController {
       if (!req.tenant) {
         throw new AppError('Tenant required', 400);
       }
+      if (req.tenant.allowRegistration === false) {
+        return res.status(403).json({ error: 'Registration is disabled for this tenant' });
+      }
 
       const { email, password, role } = req.body ?? {};
       if (!email || !password) {
@@ -42,6 +45,19 @@ export class AuthController {
 
       await accountRepo.save(account);
       res.status(201).json({ id: account.id, email: account.email, role: account.role });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  config = async (req: TenantRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!req.tenant) {
+        throw new AppError('Tenant required', 400);
+      }
+      res.status(200).json({
+        allowRegistration: req.tenant.allowRegistration ?? true,
+      });
     } catch (error) {
       next(error);
     }

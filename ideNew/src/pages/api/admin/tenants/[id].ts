@@ -96,6 +96,7 @@ const serializeTenant = (tenant: Tenant) => ({
   id: tenant.id,
   hostname: tenant.hostname,
   isSuspended: tenant.isSuspended,
+  allowRegistration: tenant.allowRegistration ?? true,
   resourceConfig: tenant.resourceConfig,
   adapterAccess: tenant.adapterAccess ?? {},
   adapterConfig: tenant.adapterConfig ?? {},
@@ -138,6 +139,10 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const nextHostname =
       req.body?.hostname !== undefined ? normalizeHostname(req.body.hostname) : tenant.hostname;
     const nextSuspended = normalizeBoolean(req.body?.isSuspended, tenant.isSuspended);
+    const nextAllowRegistration = normalizeBoolean(
+      req.body?.allowRegistration,
+      tenant.allowRegistration ?? true
+    );
     const nextResourceConfig = normalizeResourceConfig(
       req.body?.resourceConfig,
       tenant.resourceConfig ?? DEFAULT_RESOURCE_CONFIG
@@ -162,6 +167,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
 
     tenant.hostname = nextHostname;
     tenant.isSuspended = nextSuspended;
+    tenant.allowRegistration = nextAllowRegistration;
     tenant.resourceConfig = nextResourceConfig;
     tenant.adapterAccess = nextAdapterAccess;
     tenant.adapterConfig = resolvedConfig ? maskPasswordFields(resolvedConfig) : tenant.adapterConfig ?? {};

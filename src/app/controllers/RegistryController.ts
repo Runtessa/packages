@@ -11,6 +11,67 @@ import { TenantRequest } from '../../types/RequestContext';
 export class RegistryController {
   constructor(private readonly dataSource: DataSource) {}
 
+  resolveTenantOnly = async (req: TenantRequest, res: Response, next: NextFunction) => {
+    try {
+      const { name, version } = req.params;
+      if (!name) {
+        return res.status(400).json({ error: 'Package name required' });
+      }
+      if (!req.tenant) {
+        return res.status(404).json({ error: 'Package not found' });
+      }
+
+      const versionToken = version || 'latest';
+      const isDev = isDeveloperAccess(req);
+      const pkgRepo = this.dataSource.getRepository(UIPackage);
+
+      const findPackage = async (tenantId: string) => {
+        if (!version || version === 'latest') {
+          const latest = await pkgRepo.find({
+            where: { tenant: { id: tenantId }, name },
+            order: { createdAt: 'DESC' },
+            take: 1,
+          });
+          return latest[0] ?? null;
+        }
+        return pkgRepo.findOne({
+          where: { tenant: { id: tenantId }, name, version },
+        });
+      };
+
+      if (!isDev) {
+        const tenantCacheKey = this.registryCacheKey('tenant', req.tenant.id, name, versionToken);
+        const cached = await publishedCache.get(tenantCacheKey);
+        if (cached) {
+          return res.json(cached);
+        }
+      }
+
+      const pkg = await findPackage(req.tenant.id);
+
+      if (!pkg) {
+        return res.status(404).json({ error: 'Package not found' });
+      }
+
+      if (isDev) {
+        return res.json(this.serializeDraft(pkg));
+      }
+
+      if (!this.hasPublished(pkg)) {
+        return res.status(404).json({ error: 'Package not published' });
+      }
+
+      const payload = this.serializePublished(pkg);
+      await publishedCache.set(
+        this.registryCacheKey('tenant', req.tenant.id, name, versionToken),
+        payload
+      );
+      return res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   resolve = async (req: TenantRequest, res: Response, next: NextFunction) => {
     try {
       const { name, version } = req.params;
