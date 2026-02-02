@@ -14,6 +14,7 @@ import { EditorExplorerPanel } from '@/components/editor/EditorExplorerPanel';
 import { EditorHistoryPanel } from '@/components/editor/EditorHistoryPanel';
 import { EditorSearchPanel } from '@/components/editor/EditorSearchPanel';
 import { EditorStagingPanel } from '@/components/editor/EditorStagingPanel';
+import { EditorAiPanel } from '@/components/editor/EditorAiPanel';
 import { EditorBottomBar } from '@/components/editor/EditorBottomBar';
 import { EditorTabBar } from '@/components/editor/EditorTabBar';
 import { EditorTabContextMenu } from '@/components/editor/EditorTabContextMenu';
@@ -98,6 +99,7 @@ import type {
   ModuleRevisionDto,
   UiRevisionDto,
   AclConfigDto,
+  AssistantFileBlock,
 } from '@/components/editor/types';
 
 const CORE_API_BASE = process.env.NEXT_PUBLIC_CORE_API_URL?.trim() || '';
@@ -228,7 +230,7 @@ export default function EditorPage() {
   const splitResizeRef = useRef<{ active: boolean }>({ active: false });
   const dragTabIdRef = useRef<string | null>(null);
   const [leftPanel, setLeftPanel] = useState<
-    'explorer' | 'history' | 'search' | 'staging'
+    'explorer' | 'history' | 'search' | 'staging' | 'assistant'
   >('explorer');
   const [stagingBusy, setStagingBusy] = useState(false);
   const [stagingBusyId, setStagingBusyId] = useState<string | null>(null);
@@ -976,6 +978,448 @@ export default function EditorPage() {
     }
     updateFileContent(fileId, value);
   };
+
+  const replaceActiveFile = useCallback(
+    (nextContent: string) => {
+      if (!activeFile) {
+        showError('Open a file to apply changes.');
+        return;
+      }
+      const editor = mainEditorRef.current;
+      const model = editor?.getModel();
+      if (model) {
+        model.setValue(nextContent);
+        editor?.focus();
+        return;
+      }
+      updateFileContent(activeFile.id, nextContent);
+    },
+    [activeFile, showError, updateFileContent]
+  );
+
+  const applyAssistantActions = useCallback(
+    async (blocks: AssistantFileBlock[]) => {
+      const errors: string[] = [];
+      let applied = 0;
+      const report: string[] = [];
+      const syncFileContent = (fileId: string, content: string) => {
+        setFileContents((prev) => ({ ...prev, [fileId]: content }));
+        setSavedContents((prev) => ({ ...prev, [fileId]: content }));
+      };
+      const normalizeUiName = (name?: string, code?: string) => {
+        const trimmed = name?.trim();
+        const hasAppEntry =
+          typeof code === 'string' && /function\s+App\s*\(/.test(code);
+        if (!trimmed) {
+          return hasAppEntry ? '@app/dashboard' : name;
+        }
+        const lower = trimmed.toLowerCase();
+        if (lower === 'dashboard' || lower === 'app/dashboard' || lower === '@app') {
+          return '@app/dashboard';
+        }
+        if (lower.startsWith('app/')) {
+          return `@${trimmed}`;
+        }
+        if (hasAppEntry && !trimmed.startsWith('@app/')) {
+          return '@app/dashboard';
+        }
+        return trimmed;
+      };
+      const normalizeRoute = (value?: string) => {
+        if (!value) return undefined;
+        const trimmed = value.trim();
+        if (!trimmed) return undefined;
+        return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+      };
+      const normalizeMethod = (value?: string) => (value ? value.toUpperCase() : undefined);
+      const normalizePath = (value?: string) =>
+        value ? value.trim().replace(/^\.?\//, '').replace(/\\/g, '/') : '';
+      const parseDescriptionMeta = (value?: string) => {
+        const description = value ?? '';
+        const nameMatch = description.match(/name:\s*([^\n,]+)/i);
+        const idMatch = description.match(/id:\s*([a-f0-9-]+)/i);
+        const versionMatch = description.match(/version:\s*([0-9A-Za-z._-]+)/i);
+        const methodMatch = description.match(
+          /method:\s*(GET|POST|PUT|PATCH|DELETE)/i
+        );
+        const routeMatch = description.match(/route:\s*([^\s]+)/i);
+        const depsMatch = description.match(/deps:\s*([^\n]+)/i);
+        const deps =
+          depsMatch?.[1]
+            ?.split(',')
+            .map((dep) => dep.trim())
+            .filter(Boolean) ?? [];
+        return {
+          name: nameMatch?.[1]?.trim(),
+          id: idMatch?.[1],
+          version: versionMatch?.[1],
+          method: methodMatch?.[1]?.toUpperCase(),
+          route: routeMatch?.[1],
+          deps,
+        };
+      };
+      const parseUiFromPath = (path: string) => {
+        const segments = path.split('/').filter(Boolean);
+        const fileName = segments.pop() || '';
+        const baseName = fileName.split('.ui.')[0] || fileName.replace(/\.[^.]+$/, '');
+        let versionFromName: string | undefined;
+        let namePart = baseName;
+        const fileVersionMatch = baseName.match(/(.+)@([0-9A-Za-z._-]+)$/);
+        if (fileVersionMatch) {
+          namePart = fileVersionMatch[1];
+          versionFromName = fileVersionMatch[2];
+        }
+
+        const nameSegments = [...segments.slice(1)];
+        if (nameSegments.length > 0) {
+          const lastSegment = nameSegments[nameSegments.length - 1];
+          const folderVersionMatch = lastSegment.match(/(.+)@([0-9A-Za-z._-]+)$/);
+          if (folderVersionMatch) {
+            nameSegments[nameSegments.length - 1] = folderVersionMatch[1];
+            if (!versionFromName) {
+              versionFromName = folderVersionMatch[2];
+            }
+          } else if (
+            !versionFromName &&
+            lastSegment.match(/^\d+(\.\d+)*([A-Za-z.-]+)?$/) &&
+            nameSegments.length > 1
+          ) {
+            versionFromName = lastSegment;
+            nameSegments.pop();
+          }
+        }
+
+        const name = [...nameSegments, namePart].filter(Boolean).join('/');
+        return { name, versionFromName };
+      };
+      const parseModuleFromPath = (path: string) => {
+        const segments = path.split('/').filter(Boolean);
+        const fileName = segments.pop() || '';
+        const baseName = fileName.replace(/\.[^.]+$/, '');
+        const methodToken = baseName.split('.')[0];
+        const allowedMethods = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+        const method = methodToken
+          ? allowedMethods.has(methodToken.toUpperCase())
+            ? methodToken.toUpperCase()
+            : undefined
+          : undefined;
+        let routeSegments = segments.slice(1);
+        if (!method && baseName && baseName !== 'index') {
+          routeSegments = [...routeSegments, baseName];
+        }
+        const routePath = buildRoutePath(routeSegments);
+        return { routePath, method };
+      };
+      const parseDepsFromCode = (code?: string) => {
+        if (!code) return [];
+        const deps = new Set<string>();
+        const importRegex = /import\s+[^'"]*['"]([^'"]+)['"]/g;
+        const requireRegex = /require\(['"]([^'"]+)['"]\)/g;
+        let match: RegExpExecArray | null = null;
+        while ((match = importRegex.exec(code))) {
+          const dep = match[1];
+          if (dep && !dep.startsWith('.') && !dep.startsWith('/')) deps.add(dep);
+        }
+        while ((match = requireRegex.exec(code))) {
+          const dep = match[1];
+          if (dep && !dep.startsWith('.') && !dep.startsWith('/')) deps.add(dep);
+        }
+        return Array.from(deps);
+      };
+
+      const createdSharedPaths = new Set<string>();
+      for (const block of blocks) {
+        const path = normalizePath(block.path);
+        const action = block.action;
+        const reportPrefix = path ? `${action} ${path}` : action;
+        const description = block.description || '';
+        const meta = parseDescriptionMeta(description);
+        try {
+          if (!path) throw new Error('FILE path is missing');
+          if (path.startsWith('acl/')) {
+            const file = path.split('/')[1]?.replace('.json', '');
+            if (!file || !['permissions', 'roles', 'endpoints'].includes(file)) {
+              throw new Error('Invalid ACL file path');
+            }
+            if (action === 'DELETE') {
+              throw new Error('ACL files cannot be deleted');
+            }
+            let content: any;
+            try {
+              content = block.content.trim() ? JSON.parse(block.content) : {};
+            } catch {
+              throw new Error('ACL content must be valid JSON.');
+            }
+            await apiFetch('/api/acl/config', {
+              method: 'PUT',
+              body: { file, content },
+            });
+            const fileId = `acl-${file}`;
+            syncFileContent(fileId, JSON.stringify(content ?? {}, null, 2) + '\n');
+            report.push(`${reportPrefix} -> Updated ACL ${file}.json`);
+            applied += 1;
+            continue;
+          }
+
+          if (path.startsWith('modules/')) {
+            const parsed = parseModuleFromPath(path);
+            const routePath = normalizeRoute(meta.route) ?? parsed.routePath;
+            let method = normalizeMethod(meta.method) ?? parsed.method;
+            if (!routePath) throw new Error('Module route is missing');
+            if (action === 'CREATE') {
+              if (!method) {
+                method = 'GET';
+              }
+              const created = await apiFetch('/api/modules', {
+                method: 'POST',
+                body: {
+                  routePath,
+                  method,
+                  code: block.content || DEFAULT_MODULE_CODE,
+                  fileExtension: extractFileExtension(path) ?? MODULE_EXTENSION,
+                },
+              });
+              if (created?.id) {
+                syncFileContent(`module-${created.id}`, block.content);
+              }
+              report.push(`${reportPrefix} -> Created module ${method} ${routePath}.`);
+              applied += 1;
+              continue;
+            }
+            let targetId = meta.id;
+            if (!targetId && !method) {
+              const matches = modulesData.filter((mod) => mod.routePath === routePath);
+              if (matches.length === 1) {
+                method = matches[0].method;
+                targetId = matches[0].id;
+              } else {
+                throw new Error(
+                  'Module method missing (add method: in DESCRIPTION or use modules/<route>/<method>.js)'
+                );
+              }
+            }
+            if (!targetId && method) {
+              targetId = modulesData.find(
+                (mod) => mod.routePath === routePath && mod.method === method
+              )?.id;
+            }
+            if (!targetId) throw new Error('Module id or route/method not found');
+            if (action === 'DELETE') {
+              await apiFetch(`/api/modules/${targetId}`, { method: 'DELETE' });
+              report.push(
+                `${reportPrefix} -> Deleted module ${method} ${routePath} (id:${targetId}).`
+              );
+              applied += 1;
+              continue;
+            }
+            await apiFetch(`/api/modules/${targetId}`, {
+              method: 'PUT',
+              body: {
+                routePath,
+                method,
+                code: block.content,
+                fileExtension: extractFileExtension(path) ?? MODULE_EXTENSION,
+              },
+            });
+            syncFileContent(`module-${targetId}`, block.content);
+            report.push(
+              `${reportPrefix} -> Updated module ${method} ${routePath} (id:${targetId}).`
+            );
+            applied += 1;
+            continue;
+          }
+
+          if (path.startsWith('ui/')) {
+            const parsed = parseUiFromPath(path);
+            const normalizedName = normalizeUiName(
+              parsed.name || meta.name,
+              block.content
+            );
+            const version = meta.version ?? parsed.versionFromName;
+            const deps =
+              meta.deps.length > 0 ? meta.deps : parseDepsFromCode(block.content);
+            const cleanedDependencies = deps.filter(
+              (dep) => dep && dep !== 'react' && dep !== 'react-dom'
+            );
+            const uiExtension = coerceUiExtension(extractFileExtension(path));
+            if (uiExtension !== 'css' && !window.Babel) {
+              throw new Error('Babel runtime not loaded in browser; cannot build code_blob');
+            }
+            const compiled =
+              uiExtension === 'css' ? block.content : compileWithBabel(block.content);
+            if (action === 'CREATE') {
+              if (!normalizedName || !version) {
+                throw new Error('UI name or version missing');
+              }
+              const created = await apiFetch('/api/ui-entities', {
+                method: 'POST',
+                body: {
+                  name: normalizedName,
+                  version,
+                  code: block.content,
+                  codeBlob: compiled,
+                  dependencies: cleanedDependencies,
+                  fileExtension: uiExtension,
+                },
+              });
+              if (created?.id) {
+                syncFileContent(`ui-${created.id}`, block.content);
+              }
+              report.push(`${reportPrefix} -> Created UI ${normalizedName}@${version}.`);
+              applied += 1;
+              continue;
+            }
+            let targetId = meta.id;
+            if (!targetId && normalizedName && version) {
+              targetId = uiData.find(
+                (pkg) => pkg.name === normalizedName && pkg.version === version
+              )?.id;
+            }
+            if (!targetId) throw new Error('UI entity id or name/version not found');
+            if (action === 'DELETE') {
+              await apiFetch(`/api/ui-entities/${targetId}`, { method: 'DELETE' });
+              report.push(
+                `${reportPrefix} -> Deleted UI ${normalizedName}@${version} (id:${targetId}).`
+              );
+              applied += 1;
+              continue;
+            }
+            await apiFetch(`/api/ui-entities/${targetId}`, {
+              method: 'PUT',
+              body: {
+                name: normalizedName,
+                version,
+                code: block.content,
+                codeBlob: compiled,
+                dependencies: cleanedDependencies,
+                fileExtension: uiExtension,
+              },
+            });
+            syncFileContent(`ui-${targetId}`, block.content);
+            report.push(
+              `${reportPrefix} -> Updated UI ${normalizedName}@${version} (id:${targetId}).`
+            );
+            applied += 1;
+            continue;
+          }
+
+          if (path.startsWith('shared/')) {
+            if (!sharedProjectId) throw new Error('Shared project is not loaded');
+            const sharedPath = path.replace(/^shared\//, '');
+            if (!sharedPath) throw new Error('Shared file path is missing');
+            if (action === 'CREATE') {
+              const created = await adminFetch(`${sharedBasePath}/${sharedProjectId}/files`, {
+                method: 'POST',
+                body: {
+                  path: sharedPath,
+                  content: block.content ?? '',
+                  fileExtension: resolveSharedExtension(sharedPath),
+                },
+              });
+              if (created?.file?.id && block.content !== undefined) {
+                syncFileContent(`shared-${created.file.id}`, block.content);
+              }
+              createdSharedPaths.add(sharedPath);
+              report.push(`${reportPrefix} -> Created shared file ${sharedPath}.`);
+              applied += 1;
+              continue;
+            }
+            let targetId = meta.id;
+            if (!targetId) {
+              targetId = sharedFiles.find((file) => file.path === sharedPath)?.id;
+            }
+            if (!targetId) throw new Error('Shared file id or path not found');
+            if (action === 'DELETE') {
+              await adminFetch(
+                `${sharedBasePath}/${sharedProjectId}/files/${targetId}`,
+                { method: 'DELETE' }
+              );
+              report.push(
+                `${reportPrefix} -> Deleted shared file ${sharedPath} (id:${targetId}).`
+              );
+              applied += 1;
+              continue;
+            }
+            await adminFetch(`${sharedBasePath}/${sharedProjectId}/files/${targetId}`, {
+              method: 'PUT',
+              body: {
+                path: sharedPath,
+                content: block.content,
+                fileExtension: resolveSharedExtension(sharedPath),
+              },
+            });
+            syncFileContent(`shared-${targetId}`, block.content);
+            report.push(
+              `${reportPrefix} -> Updated shared file ${sharedPath} (id:${targetId}).`
+            );
+            applied += 1;
+            continue;
+          }
+
+          throw new Error('Unsupported file path');
+        } catch (err) {
+          const message = (err as Error).message || 'Action failed';
+          errors.push(path ? `${action} ${path}: ${message}` : message);
+        }
+      }
+
+      if (applied > 0) {
+        if (sharedMode === 'ui' && sharedProjectId) {
+          const configNames = new Set([
+            'tailwind.config.js',
+            'tailwind.config.cjs',
+            'tailwind.config.ts',
+          ]);
+          const hasConfig =
+            sharedFiles.some((file) => configNames.has(file.path)) ||
+            Array.from(createdSharedPaths).some((path) => configNames.has(path));
+          if (!hasConfig) {
+            try {
+              await adminFetch(`${sharedBasePath}/${sharedProjectId}/files`, {
+                method: 'POST',
+                body: {
+                  path: 'tailwind.config.js',
+                  content:
+                    "module.exports = {\\n  content: ['**/*.{js,jsx,ts,tsx}'],\\n  theme: { extend: {} },\\n  plugins: [],\\n};\\n",
+                  fileExtension: 'js',
+                },
+              });
+              report.push('Created tailwind.config.js');
+            } catch (err) {
+              errors.push('Failed to create tailwind.config.js');
+            }
+          }
+        }
+        await reloadTree();
+        if (activeFile?.meta?.kind !== 'shared' && activeFile?.meta?.kind !== 'acl') {
+          loadHistory();
+        }
+      }
+      const reportText = report.length ? `Changes:\n- ${report.join('\n- ')}` : '';
+      return { applied, errors, report: reportText };
+    },
+    [
+      activeFile,
+      adminFetch,
+      apiFetch,
+      compileWithBabel,
+      coerceModuleExtension,
+      coerceUiExtension,
+      buildRoutePath,
+      extractFileExtension,
+      loadHistory,
+      modulesData,
+      reloadTree,
+      resolveSharedExtension,
+      sharedMode,
+      sharedBasePath,
+      sharedFiles,
+      sharedProjectId,
+      uiData,
+      replaceActiveFile,
+    ]
+  );
+
 
   const searchPattern = useMemo(
     () =>
@@ -3075,7 +3519,7 @@ export default function EditorPage() {
               className="relative flex h-full min-w-0 flex-col overflow-hidden border-r border-[#2a2d2e] bg-[#252526] text-gray-100"
               style={{ width: leftPanelWidth }}
             >
-              {leftPanel === 'explorer' ? (
+              <div className={leftPanel === 'explorer' ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
                 <EditorExplorerPanel
                   treeError={treeError}
                   loadingTree={loadingTree}
@@ -3087,7 +3531,8 @@ export default function EditorPage() {
                   onDeleteNode={handleDeleteRequest}
                   onMoveNode={handleMoveRequest}
                 />
-              ) : leftPanel === 'history' ? (
+              </div>
+              <div className={leftPanel === 'history' ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
                 <EditorHistoryPanel
                   activeFile={activeFile}
                   historyItems={historyItems}
@@ -3107,7 +3552,8 @@ export default function EditorPage() {
                   }
                   formatTimestamp={formatHistoryTimestamp}
                 />
-              ) : leftPanel === 'staging' ? (
+              </div>
+              <div className={leftPanel === 'staging' ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
                 <EditorStagingPanel
                   stagingItems={stagingItems}
                   stagingCounts={stagingCounts}
@@ -3116,7 +3562,30 @@ export default function EditorPage() {
                   onPublish={publishTarget}
                   formatTimestamp={formatHistoryTimestamp}
                 />
-              ) : (
+              </div>
+              <div className={leftPanel === 'assistant' ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
+                <EditorAiPanel
+                  activeFile={activeFile}
+                  activeFileContent={activeContent}
+                  sessionToken={token}
+                  modules={modulesData}
+                  uiPackages={uiData}
+                  aclConfig={aclConfig}
+                  sharedFiles={sharedFiles}
+                  sharedProject={sharedProject}
+                  sharedMode={sharedMode}
+                  getSelectionText={() => {
+                    const editor = mainEditorRef.current;
+                    const model = editor?.getModel();
+                    const selection = editor?.getSelection();
+                    if (!editor || !model || !selection) return '';
+                    return model.getValueInRange(selection);
+                  }}
+                  onReplaceActiveFile={replaceActiveFile}
+                  onApplyActions={applyAssistantActions}
+                />
+              </div>
+              <div className={leftPanel === 'search' ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
                 <EditorSearchPanel
                   searchQuery={searchQuery}
                   onSearchQueryChange={setSearchQuery}
@@ -3141,7 +3610,7 @@ export default function EditorPage() {
                   searchSelected={searchSelected}
                   onOpenResult={openSearchResult}
                 />
-              )}
+              </div>
               <div
                 className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-[#2a2d2e]"
                 onMouseDown={handleResizeStart}
