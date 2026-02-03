@@ -14,6 +14,7 @@ import { EditorExplorerPanel } from '@/components/editor/EditorExplorerPanel';
 import { EditorHistoryPanel } from '@/components/editor/EditorHistoryPanel';
 import { EditorSearchPanel } from '@/components/editor/EditorSearchPanel';
 import { EditorStagingPanel } from '@/components/editor/EditorStagingPanel';
+import { EditorAiPanel } from '@/components/editor/EditorAiPanel';
 import { EditorBottomBar } from '@/components/editor/EditorBottomBar';
 import { EditorTabBar } from '@/components/editor/EditorTabBar';
 import { EditorTabContextMenu } from '@/components/editor/EditorTabContextMenu';
@@ -228,7 +229,7 @@ export default function EditorPage() {
   const splitResizeRef = useRef<{ active: boolean }>({ active: false });
   const dragTabIdRef = useRef<string | null>(null);
   const [leftPanel, setLeftPanel] = useState<
-    'explorer' | 'history' | 'search' | 'staging'
+    'explorer' | 'history' | 'search' | 'staging' | 'assistant'
   >('explorer');
   const [stagingBusy, setStagingBusy] = useState(false);
   const [stagingBusyId, setStagingBusyId] = useState<string | null>(null);
@@ -375,6 +376,41 @@ export default function EditorPage() {
         throw new Error(data.error || 'Request failed');
       }
       return data;
+    },
+    [clear, resolveApiUrl, token]
+  );
+
+  const apiStreamFetch = useCallback(
+    async (url: string, options: { method?: string; body?: unknown } = {}) => {
+      if (!token) {
+        const err = new Error('Session token is missing');
+        (err as any).statusCode = 401;
+        throw err;
+      }
+      const tenantHost = getSelectedTenantHost();
+      if (!tenantHost) {
+        const err = new Error('Select a tenant in /admin/tenants to use the editor.');
+        (err as any).statusCode = 400;
+        throw err;
+      }
+      const res = await fetch(resolveApiUrl(url), {
+        method: options.method ?? 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(tenantHost ? { 'X-Tenant-Host': tenantHost } : {}),
+          ...(token ? { Authorization: `Session ${token}` } : {}),
+        },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+      });
+      if (!res.ok) {
+        if (res.status === 401) {
+          clear();
+        }
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : {};
+        throw new Error(data.error || 'Request failed');
+      }
+      return res;
     },
     [clear, resolveApiUrl, token]
   );
@@ -3033,6 +3069,11 @@ export default function EditorPage() {
     setEditorView('preview');
   }, [isSharedMode, previewTarget, sharedProject, uiData]);
 
+  const refreshWorkspace = useCallback(() => {
+    reloadTree();
+    loadHistory();
+  }, [loadHistory, reloadTree]);
+
   
 
   return (
@@ -3115,6 +3156,17 @@ export default function EditorPage() {
                   stagingBusyId={stagingBusyId}
                   onPublish={publishTarget}
                   formatTimestamp={formatHistoryTimestamp}
+                />
+              ) : leftPanel === 'assistant' ? (
+                <EditorAiPanel
+                  apiFetch={apiFetch}
+                  apiStreamFetch={apiStreamFetch}
+                  tenantHost={tenantHost}
+                  activeFile={activeFile}
+                  fileContents={fileContents}
+                  savedContents={savedContents}
+                  aclConfig={aclConfig}
+                  onWorkspaceRefresh={refreshWorkspace}
                 />
               ) : (
                 <EditorSearchPanel

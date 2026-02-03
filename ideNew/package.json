@@ -11,6 +11,11 @@
     "dump": "node ./scripts/dump.js"
   },
   "dependencies": {
+    "@babel/core": "^7.28.6",
+    "@babel/preset-env": "^7.28.6",
+    "@babel/preset-react": "^7.28.5",
+    "@babel/preset-typescript": "^7.28.5",
+    "@mastra/core": "^1.1.0",
     "@monaco-editor/react": "^4.7.0",
     "autoprefixer": "latest",
     "bcryptjs": "latest",
@@ -29,7 +34,8 @@
     "sqlite3": "^5.1.7",
     "tailwindcss": "3.4.14",
     "tedious": "^19.2.0",
-    "typeorm": "^0.3.28"
+    "typeorm": "^0.3.28",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "latest",

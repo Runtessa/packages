@@ -37,7 +37,14 @@ export class Kernel {
     const url = `${this.registryUrl}/${encodeURIComponent(
       name,
     )}/${encodeURIComponent(version || "latest")}`;
-    const res = await fetch(url);
+    const token =
+      typeof window !== "undefined"
+        ? window.localStorage?.getItem("idp_token")
+        : null;
+    const headers: HeadersInit = token
+      ? { Authorization: `Session ${token}` }
+      : {};
+    const res = await fetch(url, { headers });
     if (!res.ok) {
       throw new Error(
         `Failed to fetch package ${name}@${version || "latest"} (${res.status})`,
