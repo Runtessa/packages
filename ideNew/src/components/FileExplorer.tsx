@@ -570,7 +570,7 @@ export default function FileExplorer({
   onMoveNode,
 }: FileExplorerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { success } = useToast();
+  const { success, error } = useToast();
   const [tree, setTree] = useState<ExplorerNode>(() => {
     if (typeof window === "undefined") return initialData;
     if (initialTree) return initialTree;
@@ -605,6 +605,55 @@ export default function FileExplorer({
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(null);
+
+  const copyToClipboard = useCallback(
+    async (value: string) => {
+      if (!value) return;
+      try {
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(value);
+          success("Import address copied");
+          return;
+        }
+      } catch {
+        // fallback below
+      }
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = value;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "absolute";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(textarea);
+        if (ok) {
+          success("Import address copied");
+        } else {
+          error("Failed to copy import address");
+        }
+      } catch {
+        error("Failed to copy import address");
+      }
+    },
+    [error, success]
+  );
+
+  const resolveImportAddress = useCallback(
+    (node: ExplorerNode) => {
+      const meta = (node.meta ?? {}) as Record<string, unknown>;
+      if (meta.kind === "ui" && typeof meta.name === "string") {
+        return meta.name;
+      }
+      if (meta.kind === "shared") {
+        const projectName = typeof tree.name === "string" ? tree.name : "";
+        return projectName && projectName !== "PROJECT" ? projectName : null;
+      }
+      return null;
+    },
+    [tree.name]
+  );
 
   useEffect(() => {
     if (initialTree) {
@@ -1019,6 +1068,7 @@ export default function FileExplorer({
     if (!contextMenu) return null;
     const node = contextMenu.nodeId ? findNodeById(tree, contextMenu.nodeId) : null;
     const isRoot = node?.id === "root";
+    const importAddress = node ? resolveImportAddress(node) : null;
 
     return (
       <div
@@ -1067,6 +1117,20 @@ export default function FileExplorer({
               }}
             >
               Delete
+            </button>
+          </>
+        )}
+        {node && importAddress && (
+          <>
+            <div className="border-t border-[#2a2d2e]" />
+            <button
+              className="flex w-full items-center px-3 py-2 text-left hover:bg-[#2e2e2e]"
+              onClick={() => {
+                void copyToClipboard(importAddress);
+                setContextMenu(null);
+              }}
+            >
+              Copy Import Address
             </button>
           </>
         )}

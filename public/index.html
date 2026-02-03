@@ -9,6 +9,7 @@
     <div id="root"></div>
     <script defer>
       if (window.Kernel) {
+        window.__IDP_TENANT_HOST__ = window.location.host;
         var kernel = new window.Kernel({});
         kernel.boot("@app/dashboard");
       } else {

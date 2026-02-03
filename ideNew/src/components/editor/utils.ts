@@ -378,6 +378,50 @@ export const parseDependencies = (value: string) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+const UI_DEPENDENCY_EXCLUDES = new Set([
+  'react',
+  'react-dom',
+  'react-dom/client',
+  'react/jsx-runtime',
+  'react/jsx-dev-runtime',
+]);
+
+const isBareImport = (value: string) => {
+  const trimmed = value.trim();
+  return trimmed.length > 0 && !trimmed.startsWith('.') && !trimmed.startsWith('/');
+};
+
+export const extractUiDependencies = (source: string) => {
+  if (!source) return [] as string[];
+  const results: string[] = [];
+  const seen = new Set<string>();
+  const addDep = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || !isBareImport(trimmed)) return;
+    if (UI_DEPENDENCY_EXCLUDES.has(trimmed)) return;
+    if (seen.has(trimmed)) return;
+    seen.add(trimmed);
+    results.push(trimmed);
+  };
+
+  const importFromRegex =
+    /^\s*import(?:\s+type)?[\s\S]*?\s+from\s*['"]([^'"]+)['"]\s*;?/gm;
+  const importSideEffectRegex = /^\s*import\s*['"]([^'"]+)['"]\s*;?/gm;
+  const exportFromRegex =
+    /^\s*export(?:\s+type)?[\s\S]*?\s+from\s*['"]([^'"]+)['"]\s*;?/gm;
+  const requireRegex = /require\(\s*['"]([^'"]+)['"]\s*\)/gm;
+  const dynamicImportRegex = /import\(\s*['"]([^'"]+)['"]\s*\)/gm;
+
+  let match: RegExpExecArray | null;
+  while ((match = importFromRegex.exec(source))) addDep(match[1]);
+  while ((match = importSideEffectRegex.exec(source))) addDep(match[1]);
+  while ((match = exportFromRegex.exec(source))) addDep(match[1]);
+  while ((match = requireRegex.exec(source))) addDep(match[1]);
+  while ((match = dynamicImportRegex.exec(source))) addDep(match[1]);
+
+  return results;
+};
+
 export const extractFileExtension = (fileName: string) => {
   const idx = fileName.lastIndexOf('.');
   if (idx === -1 || idx === fileName.length - 1) return '';

@@ -58,6 +58,7 @@ import {
   detectLanguage,
   escapeRegExp,
   extractFileExtension,
+  extractUiDependencies,
   findPathById,
   formatHistoryTimestamp,
   getFileIdFromUriPath,
@@ -1429,6 +1430,7 @@ export default function EditorPage() {
           throw new Error('Babel runtime not loaded in browser; cannot build code_blob');
         }
         const compiled = uiExtension === 'css' ? content : compileWithBabel(content);
+        const detectedDependencies = extractUiDependencies(content);
         await apiFetch(`/api/ui-entities/${meta.backendId}`, {
           method: 'PUT',
           body: {
@@ -1436,10 +1438,15 @@ export default function EditorPage() {
             version: meta.version,
             code: content,
             codeBlob: compiled,
-            dependencies: meta.dependencies ?? [],
+            dependencies: detectedDependencies,
             fileExtension: uiExtension,
           },
         });
+        setUiData((prev) =>
+          prev.map((pkg) =>
+            pkg.id === meta.backendId ? { ...pkg, dependencies: detectedDependencies } : pkg
+          )
+        );
       }
       setSavedContents((prev) => ({ ...prev, [file.id]: content }));
     },
@@ -1887,6 +1894,7 @@ export default function EditorPage() {
       const fallbackSource = uiExtension === 'css' ? DEFAULT_CSS_CODE : DEFAULT_UI_CODE;
       const sourceCode = uiForm.code || fallbackSource;
       const compiled = uiExtension === 'css' ? sourceCode : compileWithBabel(sourceCode);
+      const detectedDependencies = extractUiDependencies(sourceCode);
       await apiFetch('/api/ui-entities', {
         method: 'POST',
         body: {
@@ -1894,7 +1902,7 @@ export default function EditorPage() {
           version: uiForm.version,
           code: sourceCode,
           codeBlob: compiled,
-          dependencies: parseDependencies(uiForm.dependencies),
+          dependencies: detectedDependencies,
           fileExtension: uiExtension,
         },
       });

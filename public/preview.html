@@ -40,6 +40,8 @@
         var version = params.get("version") || "latest";
         var tenantHost = params.get("tenantHost") || "";
         var registryUrl = params.get("registryUrl") || "/api/registry";
+        window.__IDP_TENANT_HOST__ = tenantHost;
+        window.__IDP_PREVIEW__ = true;
 
         if (!name) {
           statusEl.textContent = "No preview target selected.";

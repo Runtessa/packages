@@ -4,17 +4,45 @@ import { createRoot } from "react-dom/client";
 window.React = React;
 interface Options {
   registryUrl?: string;
+  apiBaseUrl?: string;
+  tenantHost?: string;
+  preview?: boolean;
 }
+
+type ApiRequestOptions = {
+  method?: string;
+  headers?: HeadersInit;
+  body?: unknown;
+  rawBody?: BodyInit | null;
+  json?: boolean;
+};
+
+type ApiClient = {
+  request: (path: string, options?: ApiRequestOptions) => Promise<Response>;
+  get: (path: string, options?: Omit<ApiRequestOptions, "method" | "body">) => Promise<Response>;
+  post: (path: string, body?: unknown, options?: Omit<ApiRequestOptions, "method" | "body">) => Promise<Response>;
+  put: (path: string, body?: unknown, options?: Omit<ApiRequestOptions, "method" | "body">) => Promise<Response>;
+  del: (path: string, options?: Omit<ApiRequestOptions, "method" | "body">) => Promise<Response>;
+};
 
 export class Kernel {
   registryUrl: string;
+  apiBaseUrl: string;
+  tenantHost: string | null;
+  previewMode: boolean;
   cache: Map<string, any>;
+  api: ApiClient;
   private appliedStyles: Map<string, HTMLStyleElement>;
 
   constructor(options: Options = {}) {
     this.registryUrl = (options && options.registryUrl) || "/api/registry";
+    this.apiBaseUrl = (options && options.apiBaseUrl) || "";
+    this.tenantHost = (options && options.tenantHost) || null;
+    this.previewMode = Boolean(options && options.preview);
     this.cache = new Map(); // key: name@version -> exports or Promise<exports>
     this.appliedStyles = new Map();
+    this.api = this.createApiClient();
+    this.initGlobalContext();
   }
 
   async load(name: string, version: string = "latest") {
@@ -37,13 +65,7 @@ export class Kernel {
     const url = `${this.registryUrl}/${encodeURIComponent(
       name,
     )}/${encodeURIComponent(version || "latest")}`;
-    const token =
-      typeof window !== "undefined"
-        ? window.localStorage?.getItem("idp_token")
-        : null;
-    const headers: HeadersInit = token
-      ? { Authorization: `Session ${token}` }
-      : {};
+    const headers = this.buildAuthHeaders();
     const res = await fetch(url, { headers });
     if (!res.ok) {
       throw new Error(
@@ -55,12 +77,29 @@ export class Kernel {
       dependencies?: string[];
       fileExtension?: string;
     };
-    const dependencies = payload.dependencies || [];
+    const dependencies = [...(payload.dependencies || [])];
     const fileExtension = (payload.fileExtension || "js").toLowerCase();
+    const tailwindName = `${name}__tw`;
+    const shouldAttachTailwind =
+      fileExtension !== "css" &&
+      !name.endsWith("__tw") &&
+      !/tailwind\.config/i.test(name) &&
+      !dependencies.includes(tailwindName);
+    if (shouldAttachTailwind) {
+      dependencies.push(tailwindName);
+    }
     const cacheKey = `${name}@${version || "latest"}`;
 
     // Pre-load dependencies
     for (const dep of dependencies) {
+      if (shouldAttachTailwind && dep === tailwindName) {
+        try {
+          await this.load(dep);
+        } catch {
+          // tailwind package is optional; ignore if not found
+        }
+        continue;
+      }
       await this.load(dep);
     }
 
@@ -90,6 +129,90 @@ export class Kernel {
     }
     module.exports = this.wrapExports(module.exports);
     return module.exports;
+  }
+
+  private initGlobalContext() {
+    if (typeof window === "undefined") return;
+    const win = window as any;
+    if (win.__IDP_TENANT_HOST__) {
+      this.tenantHost = win.__IDP_TENANT_HOST__ || this.tenantHost;
+    }
+    if (win.__IDP_API_BASE__) {
+      this.apiBaseUrl = win.__IDP_API_BASE__ || this.apiBaseUrl;
+    }
+    if (win.__IDP_PREVIEW__) {
+      this.previewMode = true;
+    }
+    win.IDP = win.IDP || {};
+    win.IDP.kernel = this;
+    win.IDP.api = this.api;
+    win.IDP.getToken = () => this.getToken();
+  }
+
+  private getToken() {
+    if (typeof window === "undefined") return null;
+    return window.localStorage?.getItem("idp_token") || null;
+  }
+
+  private getTenantHost() {
+    if (this.tenantHost) return this.tenantHost;
+    if (typeof window === "undefined") return null;
+    return (window as any).__IDP_TENANT_HOST__ || null;
+  }
+
+  private buildAuthHeaders(extra?: HeadersInit) {
+    const headers = new Headers(extra || {});
+    const token = this.getToken();
+    if (token && !headers.has("Authorization")) {
+      headers.set("Authorization", `Session ${token}`);
+    }
+    const tenantHost = this.getTenantHost();
+    if (tenantHost && !headers.has("X-Tenant-Host")) {
+      headers.set("X-Tenant-Host", tenantHost);
+    }
+    if (this.previewMode && !headers.has("X-Dev-Preview")) {
+      headers.set("X-Dev-Preview", "true");
+    }
+    return headers;
+  }
+
+  private resolveApiUrl(path: string, baseUrl?: string) {
+    if (/^https?:\/\//i.test(path)) return path;
+    const base = (baseUrl ?? this.apiBaseUrl ?? "").replace(/\/$/, "");
+    if (!base) return path;
+    return path.startsWith("/") ? `${base}${path}` : `${base}/${path}`;
+  }
+
+  private createApiClient(baseUrl?: string): ApiClient {
+    const request = async (path: string, options: ApiRequestOptions = {}) => {
+      const url = this.resolveApiUrl(path, baseUrl);
+      const headers = this.buildAuthHeaders(options.headers);
+      let body: BodyInit | null | undefined = options.rawBody ?? null;
+      if (body == null && options.body !== undefined) {
+        if (options.body instanceof FormData || options.body instanceof Blob) {
+          body = options.body as BodyInit;
+        } else {
+          body = JSON.stringify(options.body);
+          if (!headers.has("Content-Type")) {
+            headers.set("Content-Type", "application/json");
+          }
+        }
+      }
+      return fetch(url, {
+        method: options.method ?? "GET",
+        headers,
+        body: body ?? undefined,
+      });
+    };
+    return {
+      request,
+      get: (path, options) => request(path, { ...options, method: "GET" }),
+      post: (path, body, options) =>
+        request(path, { ...options, method: "POST", body }),
+      put: (path, body, options) =>
+        request(path, { ...options, method: "PUT", body }),
+      del: (path, options) => request(path, { ...options, method: "DELETE" }),
+    };
   }
 
   private injectCss(cacheKey: string, cssText: string) {
