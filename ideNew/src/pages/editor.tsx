@@ -129,6 +129,23 @@ export default function EditorPage() {
   const router = useRouter();
   const { token, clear, ready } = useSessionToken();
   const { success, error: showError } = useToast();
+  const MODULE_JSDOC = `/** @type {IdpModuleHandler} */\n`;
+  const ensureModuleTyping = useCallback((content: string) => {
+    if (!content) return content;
+    if (
+      content.includes('IdpModuleHandler') ||
+      content.includes('@type {IdpModuleHandler}') ||
+      content.includes('@param {IdpAdapters}') ||
+      content.includes('IdpAdapters') ||
+      content.includes('@typedef {IdpAdapters')
+    ) {
+      return content;
+    }
+    const marker = 'module.exports';
+    const idx = content.indexOf(marker);
+    if (idx === -1) return content;
+    return `${content.slice(0, idx)}${MODULE_JSDOC}${content.slice(idx)}`;
+  }, []);
   const sharedUiProjectId = useMemo(() => {
     if (!router.isReady) return null;
     const value = router.query.sharedProject;
@@ -947,19 +964,38 @@ export default function EditorPage() {
     if (file.type !== 'file') return;
     const language = detectLanguage(file.name);
     const meta = (file.meta as NodeMeta | undefined) ?? null;
-    const serverContent = file.content ?? '';
+    const isModuleFile =
+      meta?.kind === 'module' || (meta?.kind === 'shared' && meta.sharedKind === 'module');
+    const rawServerContent = file.content ?? '';
+    const serverContent = isModuleFile ? ensureModuleTyping(rawServerContent) : rawServerContent;
+    const existingSaved = savedContents[file.id];
+    const existingCurrent = fileContents[file.id];
+    const hasLocalEdits =
+      existingSaved !== undefined &&
+      existingCurrent !== undefined &&
+      existingCurrent !== existingSaved;
+    const canUpgradeTyping =
+      isModuleFile &&
+      serverContent !== rawServerContent &&
+      !hasLocalEdits &&
+      (existingSaved === undefined || existingSaved === rawServerContent) &&
+      (existingCurrent === undefined ||
+        existingCurrent === rawServerContent ||
+        existingCurrent === existingSaved);
     const persistedContent =
-      savedContents[file.id] !== undefined ? savedContents[file.id] : serverContent;
+      existingSaved !== undefined && !canUpgradeTyping ? existingSaved : serverContent;
     const initialContent =
-      fileContents[file.id] !== undefined ? fileContents[file.id] : persistedContent;
+      existingCurrent !== undefined && !canUpgradeTyping ? existingCurrent : persistedContent;
 
     setFileContents((prev) => {
-      if (prev[file.id] !== undefined) return prev;
+      if (prev[file.id] !== undefined && !canUpgradeTyping) return prev;
+      if (prev[file.id] === initialContent) return prev;
       return { ...prev, [file.id]: initialContent };
     });
 
     setSavedContents((prev) => {
-      if (prev[file.id] !== undefined) return prev;
+      if (prev[file.id] !== undefined && !canUpgradeTyping) return prev;
+      if (prev[file.id] === persistedContent) return prev;
       return { ...prev, [file.id]: persistedContent };
     });
 
@@ -975,6 +1011,27 @@ export default function EditorPage() {
 
     setActiveFile({ id: file.id, name: file.name, language, meta });
   };
+
+  useEffect(() => {
+    if (!activeFile?.meta) return;
+    const meta = activeFile.meta;
+    const isModuleFile =
+      meta.kind === 'module' || (meta.kind === 'shared' && meta.sharedKind === 'module');
+    if (!isModuleFile) return;
+    const fileId = activeFile.id;
+    const current = fileContents[fileId] ?? savedContents[fileId];
+    if (!current) return;
+    const typed = ensureModuleTyping(current);
+    if (typed === current) return;
+    const saved = savedContents[fileId];
+    const hasLocalEdits =
+      saved !== undefined &&
+      fileContents[fileId] !== undefined &&
+      fileContents[fileId] !== saved;
+    if (hasLocalEdits) return;
+    setFileContents((prev) => ({ ...prev, [fileId]: typed }));
+    setSavedContents((prev) => ({ ...prev, [fileId]: typed }));
+  }, [activeFile?.id, activeFile?.meta, ensureModuleTyping, fileContents, savedContents]);
 
   const updateFileContent = useCallback((fileId: string, value?: string) => {
     if (value === undefined) return;

@@ -34,7 +34,8 @@ export const PREVIEW_PORT_STORAGE_KEY = 'editor-preview-port';
 export const DEFAULT_PREVIEW_PORT =
   process.env.NEXT_PUBLIC_KERNEL_PREVIEW_PORT?.trim() || '3000';
 
-export const DEFAULT_MODULE_CODE = `module.exports = async function handler(req, adapters) {
+export const DEFAULT_MODULE_CODE = `/** @type {IdpModuleHandler} */
+module.exports = async function handler(req, adapters) {
   return {
     statusCode: 200,
     body: { ok: true },

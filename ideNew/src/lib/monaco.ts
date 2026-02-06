@@ -20,20 +20,178 @@ const configureMonaco = () => {
 
     if (!typescript) return;
 
+    const idpTypes = `
+declare var module: { exports: any };
+declare var exports: any;
+declare function require(id: string): any;
+declare namespace Idp {
+  interface HttpRequest {
+    body?: any;
+    query?: Record<string, any>;
+    params?: Record<string, any>;
+    headers?: Record<string, string>;
+    method?: string;
+    user?: any;
+    tenant?: any;
+  }
+  interface HttpResponse {
+    statusCode: number;
+    body: any;
+    headers?: Record<string, string>;
+  }
+  interface ReadWriteFactory<T> {
+    (key: string): Promise<T>;
+    readOnly: (key: string) => Promise<T>;
+    readWrite: (key: string) => Promise<T>;
+  }
+  interface PostgresAdapter {
+    query: (sql: string, params?: any[]) => Promise<any[]>;
+  }
+  interface MysqlAdapter {
+    query: (sql: string, params?: any[]) => Promise<any[]>;
+  }
+  interface MssqlAdapter {
+    query: (sql: string) => Promise<any[]>;
+  }
+  interface RedisAdapter {
+    get: (key: string) => Promise<string | null>;
+    set: (key: string, value: string, ttlSeconds?: number) => Promise<'OK'>;
+    del: (key: string) => Promise<number>;
+    publish: (channel: string, message: string) => Promise<number>;
+  }
+  interface KafkaAdapter {
+    publish: (topic: string, messages: { key?: string; value: string }[]) => Promise<void>;
+  }
+  interface S3Adapter {
+    putObject: (params: { bucket: string; key: string; body: Buffer | string }) => Promise<void>;
+    getSignedUrl: (params: { bucket: string; key: string; expiresIn?: number }) => Promise<string>;
+  }
+  interface SharedModuleAdapter {
+    require: (name: string, version?: string) => Promise<any>;
+  }
+  interface OrmAdapter {
+    dataSource: any;
+    entities: Record<string, any>;
+    getRepository: (name: string) => any;
+  }
+  interface Adapters {
+    postgres: ReadWriteFactory<PostgresAdapter>;
+    mysql: ReadWriteFactory<MysqlAdapter>;
+    mssql: ReadWriteFactory<MssqlAdapter>;
+    orm: ReadWriteFactory<OrmAdapter>;
+    redis: (envKey: string) => Promise<RedisAdapter>;
+    kafka: (envKey: string) => Promise<KafkaAdapter>;
+    s3: (envKey: string) => Promise<S3Adapter>;
+    shared: SharedModuleAdapter;
+    http?: {
+      request: (url: string, options?: { method?: string; headers?: Record<string, string>; body?: any; timeoutMs?: number }) => Promise<{ statusCode: number; headers: Record<string, string | string[]>; body: string }>;
+    };
+    compiler?: any;
+  }
+}
+type IdpRequest = Idp.HttpRequest;
+type IdpAdapters = Idp.Adapters;
+type IdpResponse = Idp.HttpResponse;
+type IdpModuleHandler = (req: IdpRequest, adapters: IdpAdapters) => Promise<IdpResponse>;
+`;
+
+    const uiTypes = `
+declare module 'react' {
+  export const useState: any;
+  export const useEffect: any;
+  export const useMemo: any;
+  export const useCallback: any;
+  export const useRef: any;
+  export const useContext: any;
+  export const useReducer: any;
+  export const useLayoutEffect: any;
+  export const useId: any;
+  export const memo: any;
+  export const createElement: any;
+  export const Fragment: any;
+  const React: any;
+  export default React;
+}
+declare module 'react-dom' {
+  export const render: any;
+  export const createPortal: any;
+  const ReactDOM: any;
+  export default ReactDOM;
+}
+declare namespace JSX {
+  interface IntrinsicElements {
+    [elemName: string]: any;
+  }
+}
+declare module '@shared/*' {
+  const mod: any;
+  export = mod;
+}
+declare module '@app/*' {
+  const mod: any;
+  export = mod;
+}
+declare module '*.css' {
+  const mod: any;
+  export = mod;
+}
+`;
+
+    const typeormTypes = `
+declare module 'typeorm' {
+  export function Entity(options?: any): ClassDecorator;
+  export function Column(options?: any): PropertyDecorator;
+  export function PrimaryGeneratedColumn(strategy?: any): PropertyDecorator;
+  export function PrimaryColumn(options?: any): PropertyDecorator;
+  export function CreateDateColumn(options?: any): PropertyDecorator;
+  export function UpdateDateColumn(options?: any): PropertyDecorator;
+  export function ManyToOne(typeFn?: any, inverse?: any, options?: any): PropertyDecorator;
+  export function OneToMany(typeFn?: any, inverse?: any, options?: any): PropertyDecorator;
+  export function OneToOne(typeFn?: any, inverse?: any, options?: any): PropertyDecorator;
+  export function JoinColumn(options?: any): PropertyDecorator;
+  export function Index(options?: any): ClassDecorator & PropertyDecorator;
+  export class DataSource {
+    constructor(options: any);
+    initialize(): Promise<DataSource>;
+    destroy(): Promise<void>;
+    synchronize(): Promise<void>;
+    getRepository(entity: any): any;
+  }
+}
+`;
+
+    const libIdpUri = 'inmemory://model/idp-editor.d.ts';
+    const libUiUri = 'inmemory://model/idp-ui.d.ts';
+    const libTypeormUri = 'inmemory://model/typeorm-shim.d.ts';
+    typescript.javascriptDefaults.addExtraLib(idpTypes, libIdpUri);
+    typescript.javascriptDefaults.addExtraLib(uiTypes, libUiUri);
+    typescript.javascriptDefaults.addExtraLib(typeormTypes, libTypeormUri);
+    typescript.typescriptDefaults.addExtraLib(idpTypes, libIdpUri);
+    typescript.typescriptDefaults.addExtraLib(uiTypes, libUiUri);
+    typescript.typescriptDefaults.addExtraLib(typeormTypes, libTypeormUri);
+
     typescript.javascriptDefaults.setCompilerOptions({
       allowJs: true,
       allowNonTsExtensions: true,
-      checkJs: false,
+      checkJs: true,
       jsx: typescript.JsxEmit.ReactJSX,
       module: typescript.ModuleKind.ESNext,
+      moduleResolution: typescript.ModuleResolutionKind.NodeJs,
       target: typescript.ScriptTarget.ES2020,
+      esModuleInterop: true,
+      allowSyntheticDefaultImports: true,
+      resolveJsonModule: true,
     });
     typescript.javascriptDefaults.setEagerModelSync(true);
     typescript.typescriptDefaults.setCompilerOptions({
       allowNonTsExtensions: true,
       jsx: typescript.JsxEmit.ReactJSX,
       module: typescript.ModuleKind.ESNext,
+      moduleResolution: typescript.ModuleResolutionKind.NodeJs,
       target: typescript.ScriptTarget.ES2020,
+      esModuleInterop: true,
+      allowSyntheticDefaultImports: true,
+      resolveJsonModule: true,
     });
     typescript.typescriptDefaults.setEagerModelSync(true);
   });

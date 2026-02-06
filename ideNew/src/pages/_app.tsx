@@ -1,5 +1,6 @@
 import type { AppProps } from "next/app";
 import "../styles/globals.css";
+import "@/lib/monaco";
 import AppShell from "@/layouts/AppShell";
 import { AuthGuard } from "@/components/AuthGuard";
 import { ToastProvider } from "@/components/ui/Toast";
