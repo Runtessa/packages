@@ -3,7 +3,7 @@ import { loader } from '@monaco-editor/react';
 const publicBase = (process.env.NEXT_PUBLIC_BASE_PATH || '').replace(/\/$/, '');
 const monacoBasePath = `${publicBase}/monaco`;
 
-type MonacoWithTypes = typeof import('monaco-editor');
+type MonacoWithTypes = typeof import('monaco-editor/esm/vs/editor/editor.api');
 
 const configureMonaco = () => {
   // Point Monaco at the bundled assets in /public/monaco instead of the default CDN.
@@ -15,7 +15,7 @@ const configureMonaco = () => {
 
   // Configure Monaco once it's ready so JSX/JS, CSS, and HTML work without a CDN.
   loader.init().then((monaco) => {
-    const monacoWithTypes = monaco as MonacoWithTypes;
+    const monacoWithTypes = monaco as unknown as MonacoWithTypes;
     const typescript = monacoWithTypes.languages?.typescript as any;
 
     if (!typescript) return;

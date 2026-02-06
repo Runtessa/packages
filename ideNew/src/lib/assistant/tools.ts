@@ -1001,10 +1001,10 @@ export const rollbackChanges = async (
         if (mod) await moduleRepo.remove(mod);
       } else if (change.action === 'delete' && change.before) {
         const mod = moduleRepo.create({
-          ...change.before,
+          ...(change.before as any),
           tenant: ctx.tenant,
           draftVersion: generateVersion(),
-        });
+        } as any) as unknown as ModuleEntity;
         await moduleRepo.save(mod);
         await ensureAclEndpoint(ctx.tenant, mod.routePath);
       } else if (change.action === 'update' && change.before) {
@@ -1013,7 +1013,7 @@ export const rollbackChanges = async (
           mod.routePath = change.before.routePath;
           mod.method = change.before.method as HttpMethod;
           mod.code = change.before.code;
-          mod.fileExtension = change.before.fileExtension ?? undefined;
+          mod.fileExtension = change.before.fileExtension ?? mod.fileExtension;
           mod.draftVersion = generateVersion();
           await moduleRepo.save(mod);
           await ensureAclEndpoint(ctx.tenant, mod.routePath);
@@ -1028,10 +1028,10 @@ export const rollbackChanges = async (
         if (pkg) await uiRepo.remove(pkg);
       } else if (change.action === 'delete' && change.before) {
         const pkg = uiRepo.create({
-          ...change.before,
+          ...(change.before as any),
           tenant: ctx.tenant,
           draftVersion: generateVersion(),
-        });
+        } as any) as unknown as UIPackage;
         await uiRepo.save(pkg);
         await clearRegistryCache(ctx.tenant.id, pkg.name, pkg.version);
       } else if (change.action === 'update' && change.before) {
@@ -1042,7 +1042,7 @@ export const rollbackChanges = async (
           pkg.code = change.before.code;
           pkg.codeBlob = change.before.codeBlob;
           pkg.dependencies = change.before.dependencies;
-          pkg.fileExtension = change.before.fileExtension ?? undefined;
+          pkg.fileExtension = change.before.fileExtension ?? pkg.fileExtension;
           pkg.draftVersion = generateVersion();
           await uiRepo.save(pkg);
           await clearRegistryCache(ctx.tenant.id, pkg.name, pkg.version);
@@ -1078,16 +1078,16 @@ export const rollbackChanges = async (
         });
         if (!project) continue;
         const file = fileRepo.create({
-          ...change.before,
+          ...(change.before as any),
           project: project as any,
-        });
+        } as any);
         await fileRepo.save(file);
       } else if (change.action === 'update' && change.before) {
         const file = await fileRepo.findOne({ where: { id: change.before.id } });
         if (file) {
           file.path = change.before.path;
           file.content = change.before.content;
-          file.fileExtension = change.before.fileExtension ?? undefined;
+          file.fileExtension = change.before.fileExtension ?? file.fileExtension;
           await fileRepo.save(file);
         }
       }

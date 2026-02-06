@@ -1,6 +1,7 @@
 import type React from 'react';
 import dynamic from 'next/dynamic';
 import type * as monaco from 'monaco-editor';
+import type * as monacoApi from 'monaco-editor/esm/vs/editor/editor.api';
 import type { ActiveFile, PreviewTarget } from '@/components/editor/types';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
@@ -34,11 +35,11 @@ type EditorWorkspaceProps = {
   ) => void;
   onMainEditorMount: (
     editor: monaco.editor.IStandaloneCodeEditor,
-    monacoInstance: typeof monaco
+    monacoInstance: typeof monaco | typeof monacoApi
   ) => void;
   onSideEditorMount: (
     editor: monaco.editor.IStandaloneCodeEditor,
-    monacoInstance: typeof monaco
+    monacoInstance: typeof monaco | typeof monacoApi
   ) => void;
   onSplitResizeStart: (event: React.MouseEvent<HTMLDivElement>) => void;
   onTabDragOver: (event: React.DragEvent<HTMLDivElement>) => void;

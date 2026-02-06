@@ -114,11 +114,14 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     await ensureCoreSchema();
 
     const repo = CoreDataSource.getRepository(GlobalUIPackage);
+    const fileRepo = CoreDataSource.getRepository(GlobalUIPackageFile);
     const pkg = await repo.findOne({ where: { id: req.query.id as string } });
     if (!pkg) {
       res.status(404).json({ error: 'Shared package not found' });
       return;
     }
+    const previousName = pkg.name;
+    const previousVersion = pkg.version;
 
     const nextName = req.body?.name ? normalizeName(req.body.name) : pkg.name;
     const nextVersion = req.body?.version ? normalizeVersion(req.body.version) : pkg.version;

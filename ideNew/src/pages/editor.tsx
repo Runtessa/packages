@@ -2241,6 +2241,10 @@ export default function EditorPage() {
       showError('Name and version are required.');
       return;
     }
+    if (editMeta?.kind !== 'ui') {
+      showError('Selected item is not a UI entity.');
+      return;
+    }
     try {
       const uiExtension = coerceUiExtension(editUiForm.fileExtension);
       await apiFetch(`/api/ui-entities/${editMeta.backendId}`, {
@@ -3274,9 +3278,8 @@ export default function EditorPage() {
   const activeFileType = useMemo(() => {
     if (!activeFile) return '';
     const metaExt =
-      activeFile.meta?.fileExtension &&
-      typeof activeFile.meta.fileExtension === 'string'
-        ? activeFile.meta.fileExtension
+      activeFile.meta && 'fileExtension' in activeFile.meta
+        ? (activeFile.meta.fileExtension as string | undefined) ?? ''
         : '';
     const nameExt = extractFileExtension(activeFile.name);
     return (metaExt || nameExt || 'text').toUpperCase();
