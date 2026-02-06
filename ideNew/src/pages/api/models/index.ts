@@ -78,7 +78,14 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const normalizedPath = normalizePath(path);
     const normalizedCode = normalizeCode(code);
     const fileExtension = normalizeFileExtension(req.body?.fileExtension);
-    const compiled = compileOrmSource(normalizedCode, fileExtension);
+    let compiled = '';
+    try {
+      compiled = compileOrmSource(normalizedCode, fileExtension);
+    } catch (err) {
+      const error = new Error((err as Error).message || 'Failed to compile model');
+      (error as any).statusCode = 400;
+      throw error;
+    }
 
     const repo = CoreDataSource.getRepository(OrmModel);
     const existing = await repo.findOne({

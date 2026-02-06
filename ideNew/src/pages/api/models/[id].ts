@@ -78,7 +78,14 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const normalizedPath = normalizePath(req.body?.path ?? model.path);
     const normalizedCode = normalizeCode(req.body?.code ?? model.code ?? '');
     const fileExtension = normalizeFileExtension(req.body?.fileExtension ?? model.fileExtension);
-    const compiled = compileOrmSource(normalizedCode, fileExtension);
+    let compiled = '';
+    try {
+      compiled = compileOrmSource(normalizedCode, fileExtension);
+    } catch (err) {
+      const error = new Error((err as Error).message || 'Failed to compile model');
+      (error as any).statusCode = 400;
+      throw error;
+    }
 
     model.path = normalizedPath;
     model.code = normalizedCode;

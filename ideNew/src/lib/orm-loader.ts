@@ -256,6 +256,9 @@ export const loadOrmEntities = (models: OrmModelSource[]) => {
     if (entities.includes(value)) return;
     entities.push(value);
     entityMap[key] = value;
+    if (value.name && !entityMap[value.name]) {
+      entityMap[value.name] = value;
+    }
   };
 
   exportsList.forEach((exports) => {

@@ -20,5 +20,20 @@ export const compileOrmSource = (source: string, fileExtension?: string) => {
     compilerOptions,
     fileName: 'model.js',
   });
+  const diagnostics = result.diagnostics ?? [];
+  const errors = diagnostics.filter(
+    (diag) => diag.category === ts.DiagnosticCategory.Error
+  );
+  if (errors.length) {
+    const host: ts.FormatDiagnosticsHost = {
+      getCanonicalFileName: (fileName) => fileName,
+      getCurrentDirectory: () => process.cwd(),
+      getNewLine: () => '\n',
+    };
+    const formatted = ts
+      .formatDiagnosticsWithColorAndContext(errors, host)
+      .replace(/\x1B\[[0-9;]*m/g, '');
+    throw new Error(`Model compile error:\n${formatted}`);
+  }
   return result.outputText || source;
 };

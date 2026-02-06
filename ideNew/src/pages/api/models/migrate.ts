@@ -149,13 +149,32 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     return;
   }
 
-  const modelSources = models.map((model) => ({
-    path: model.path,
-    code:
-      model.codeBlob ||
-      compileOrmSource(model.code || '', model.fileExtension || 'js'),
-  }));
-  const { entities } = loadOrmEntities(modelSources);
+  const modelSources = models.map((model) => {
+    const code = model.code || '';
+    const ext = model.fileExtension || 'js';
+    if (model.codeBlob) {
+      return { path: model.path, code: model.codeBlob };
+    }
+    try {
+      return { path: model.path, code: compileOrmSource(code, ext) };
+    } catch (err) {
+      const error = new Error(
+        `Failed to compile model ${model.path}: ${(err as Error).message}`
+      );
+      (error as any).statusCode = 400;
+      throw error;
+    }
+  });
+  let entities: any[] = [];
+  try {
+    ({ entities } = loadOrmEntities(modelSources));
+  } catch (err) {
+    const error = new Error(
+      `Failed to load ORM entities: ${(err as Error).message}`
+    );
+    (error as any).statusCode = 400;
+    throw error;
+  }
   if (!entities.length) {
     res.status(400).json({ error: 'No valid TypeORM entities found' });
     return;
