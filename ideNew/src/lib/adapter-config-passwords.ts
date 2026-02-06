@@ -5,6 +5,16 @@ import { Tenant } from '@idp/shared';
 
 const isEncryptedMarker = (value: string) => value.startsWith('enc:');
 
+const parseEncryptedValue = (value: string) => {
+  const parts = value.split(':');
+  if (parts.length !== 4 || parts[0] !== 'enc') return null;
+  return {
+    iv: parts[1],
+    authTag: parts[2],
+    encryptedValue: parts[3],
+  };
+};
+
 const isObject = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
@@ -125,4 +135,35 @@ export const maskPasswordFields = (config: Record<string, unknown>) => {
   };
 
   return mask(config) as Record<string, unknown>;
+};
+
+export const decryptPasswordFields = (config: Record<string, unknown>) => {
+  const decode = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+      return value.map((entry) => decode(entry));
+    }
+    if (isObject(value)) {
+      const next: Record<string, unknown> = {};
+      Object.entries(value).forEach(([key, entry]) => {
+        if (key === 'password' && typeof entry === 'string' && isEncryptedMarker(entry)) {
+          const parsed = parseEncryptedValue(entry);
+          if (!parsed) {
+            next[key] = entry;
+            return;
+          }
+          try {
+            next[key] = decryptSecret(parsed);
+          } catch {
+            next[key] = entry;
+          }
+          return;
+        }
+        next[key] = decode(entry);
+      });
+      return next;
+    }
+    return value;
+  };
+
+  return decode(config) as Record<string, unknown>;
 };

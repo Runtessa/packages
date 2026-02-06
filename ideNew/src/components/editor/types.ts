@@ -65,6 +65,16 @@ export type UIPackageDto = {
   publishedAt?: string;
 };
 
+export type OrmModelDto = {
+  id: string;
+  path: string;
+  code: string;
+  fileExtension?: string;
+  draftVersion?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type SharedProjectDto = {
   id: string;
   name: string;
@@ -131,9 +141,9 @@ export type StagingItem = {
   dirty?: boolean;
 };
 
-export type PanelScope = 'modules' | 'ui' | 'shared';
+export type PanelScope = 'modules' | 'ui' | 'shared' | 'models';
 
-export type ExplorerScope = 'modules' | 'ui';
+export type ExplorerScope = 'modules' | 'ui' | 'models';
 
 export type FolderOverride = {
   scope: ExplorerScope;
@@ -161,6 +171,12 @@ export type UiFormState = {
   version: string;
   fileExtension: string;
   dependencies: string;
+  code: string;
+};
+
+export type ModelFormState = {
+  path: string;
+  fileExtension: string;
   code: string;
 };
 
@@ -196,6 +212,12 @@ export type NodeMeta =
       path: string;
       fileExtension?: string;
       sharedKind?: 'ui' | 'module';
+    }
+  | {
+      kind: 'model';
+      backendId: string;
+      path: string;
+      fileExtension?: string;
     }
   | {
       kind: 'acl';

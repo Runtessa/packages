@@ -15,6 +15,8 @@ type ExplorerPanelProps = {
     position: 'inside' | 'before' | 'after';
     parentPath: ExplorerNode[];
   }) => boolean | void;
+  onMigrateModels?: () => void;
+  migrateBusy?: boolean;
 };
 
 export function EditorExplorerPanel({
@@ -27,6 +29,8 @@ export function EditorExplorerPanel({
   onRenameNode,
   onDeleteNode,
   onMoveNode,
+  onMigrateModels,
+  migrateBusy,
 }: ExplorerPanelProps) {
   if (treeError) {
     return (
@@ -51,14 +55,43 @@ export function EditorExplorerPanel({
   }
 
   return (
-    <FileExplorer
-      key={treeData.id}
-      onOpenFile={onOpenFile}
-      initialTree={treeData}
-      onCreateNode={onCreateNode}
-      onRenameNode={onRenameNode}
-      onDeleteNode={onDeleteNode}
-      onMoveNode={onMoveNode}
-    />
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-[34px] items-center justify-between border-b border-[#2a2d2e] px-3 text-[11px] uppercase text-gray-400">
+        <div>Explorer</div>
+        <div className="flex items-center gap-2">
+          <button
+            className="rounded px-2 py-1 text-[10px] font-semibold text-gray-200 hover:bg-[#2a2d2e]"
+            onClick={onReload}
+            type="button"
+            aria-label="Refresh explorer"
+            title="Refresh explorer"
+          >
+            Refresh
+          </button>
+          {onMigrateModels && (
+            <button
+              className="rounded px-2 py-1 text-[10px] font-semibold text-gray-200 hover:bg-[#2a2d2e] disabled:opacity-60"
+              onClick={onMigrateModels}
+              type="button"
+              disabled={migrateBusy}
+              title="Apply ORM models to database"
+            >
+              {migrateBusy ? 'Migrating…' : 'Migrate'}
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1">
+        <FileExplorer
+          key={treeData.id}
+          onOpenFile={onOpenFile}
+          initialTree={treeData}
+          onCreateNode={onCreateNode}
+          onRenameNode={onRenameNode}
+          onDeleteNode={onDeleteNode}
+          onMoveNode={onMoveNode}
+        />
+      </div>
+    </div>
   );
 }

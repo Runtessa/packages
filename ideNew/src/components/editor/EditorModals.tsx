@@ -9,6 +9,7 @@ import {
   DEFAULT_CSS_CODE,
   DEFAULT_UI_CODE,
   FILE_EXTENSION_OPTIONS,
+  MODEL_EXTENSION_OPTIONS,
   MODULE_METHOD_OPTIONS,
   UI_EXTENSION_OPTIONS,
 } from '@/components/editor/constants';
@@ -16,6 +17,7 @@ import type {
   ActiveFile,
   DeleteTarget,
   FolderFormState,
+  ModelFormState,
   ModuleFormState,
   NodeMeta,
   PanelScope,
@@ -31,6 +33,8 @@ type EditorModalsProps = {
   setFolderForm: React.Dispatch<React.SetStateAction<FolderFormState>>;
   moduleForm: ModuleFormState;
   setModuleForm: React.Dispatch<React.SetStateAction<ModuleFormState>>;
+  modelForm: ModelFormState;
+  setModelForm: React.Dispatch<React.SetStateAction<ModelFormState>>;
   sharedFileForm: SharedFileFormState;
   setSharedFileForm: React.Dispatch<React.SetStateAction<SharedFileFormState>>;
   uiForm: UiFormState;
@@ -48,6 +52,8 @@ type EditorModalsProps = {
   editMeta: NodeMeta | null;
   editModuleForm: ModuleFormState;
   setEditModuleForm: React.Dispatch<React.SetStateAction<ModuleFormState>>;
+  editModelForm: ModelFormState;
+  setEditModelForm: React.Dispatch<React.SetStateAction<ModelFormState>>;
   editUiForm: UiFormState;
   setEditUiForm: React.Dispatch<React.SetStateAction<UiFormState>>;
   editSharedPath: string;
@@ -73,6 +79,8 @@ export function EditorModals({
   setFolderForm,
   moduleForm,
   setModuleForm,
+  modelForm,
+  setModelForm,
   sharedFileForm,
   setSharedFileForm,
   uiForm,
@@ -90,6 +98,8 @@ export function EditorModals({
   editMeta,
   editModuleForm,
   setEditModuleForm,
+  editModelForm,
+  setEditModelForm,
   editUiForm,
   setEditUiForm,
   editSharedPath,
@@ -118,10 +128,14 @@ export function EditorModals({
                   ? 'Shared Project'
                   : createScope === 'modules'
                     ? 'Modules'
+                    : createScope === 'models'
+                      ? 'Models'
                     : 'UI Entities'
               })`
             : createScope === 'modules'
               ? 'Create module'
+              : createScope === 'models'
+                ? 'Create model'
               : createScope === 'shared'
                 ? 'Create shared file'
                 : 'Create UI entity'
@@ -194,6 +208,44 @@ export function EditorModals({
               </div>
             </FormLayout>
           </form>
+        ) : createScope === 'models' ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              onCreateSubmit();
+            }}
+            className="space-y-4"
+          >
+            <FormLayout>
+              <Input
+                label="Model path"
+                value={modelForm.path}
+                onChange={(e) =>
+                  setModelForm((prev) => ({ ...prev, path: e.target.value }))
+                }
+                placeholder="models/ExampleItem.js"
+              />
+              <Select
+                label="File extension"
+                value={modelForm.fileExtension}
+                onChange={(e) =>
+                  setModelForm((prev) => ({ ...prev, fileExtension: e.target.value }))
+                }
+                options={MODEL_EXTENSION_OPTIONS.map((ext) => ({
+                  label: ext,
+                  value: ext,
+                }))}
+              />
+              <TextArea
+                label="Model code"
+                value={modelForm.code}
+                onChange={(e) =>
+                  setModelForm((prev) => ({ ...prev, code: e.target.value }))
+                }
+                rows={8}
+              />
+            </FormLayout>
+          </form>
         ) : createScope === 'shared' ? (
           <form
             onSubmit={(e) => {
@@ -209,7 +261,7 @@ export function EditorModals({
                 onChange={(e) =>
                   setSharedFileForm((prev) => ({ ...prev, path: e.target.value }))
                 }
-                placeholder="src/new-file.tsx"
+                placeholder="src/new-file.jsx"
               />
               <TextArea
                 label="Initial content (optional)"
@@ -335,6 +387,8 @@ export function EditorModals({
         title={
           editMeta?.kind === 'module'
             ? 'Edit module'
+            : editMeta?.kind === 'model'
+              ? 'Edit model'
             : editMeta?.kind === 'shared'
               ? 'Edit shared file'
               : 'Edit UI entity'
@@ -383,13 +437,35 @@ export function EditorModals({
               }))}
             />
           </FormLayout>
+        ) : editMeta?.kind === 'model' ? (
+          <FormLayout>
+            <Input
+              label="Model path"
+              value={editModelForm.path}
+              onChange={(e) =>
+                setEditModelForm({ ...editModelForm, path: e.target.value })
+              }
+              placeholder="models/ExampleItem.js"
+            />
+            <Select
+              label="File extension"
+              value={editModelForm.fileExtension}
+              onChange={(e) =>
+                setEditModelForm({ ...editModelForm, fileExtension: e.target.value })
+              }
+              options={MODEL_EXTENSION_OPTIONS.map((ext) => ({
+                label: ext,
+                value: ext,
+              }))}
+            />
+          </FormLayout>
         ) : editMeta?.kind === 'shared' ? (
           <FormLayout>
             <Input
               label="File path"
               value={editSharedPath}
               onChange={(e) => setEditSharedPath(e.target.value)}
-              placeholder="src/file.tsx"
+              placeholder="src/file.jsx"
             />
           </FormLayout>
         ) : (

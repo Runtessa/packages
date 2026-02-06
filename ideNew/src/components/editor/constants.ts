@@ -25,6 +25,8 @@ export const SHARED_FOLDER_STORAGE_KEY = 'editor-shared-folder-overrides';
 export const MODULE_EXTENSION = 'js';
 export const DEFAULT_UI_EXTENSION = 'jsx';
 export const UI_EXTENSION_OPTIONS = [DEFAULT_UI_EXTENSION, 'js', 'css'];
+export const DEFAULT_MODEL_EXTENSION = 'js';
+export const MODEL_EXTENSION_OPTIONS = [DEFAULT_MODEL_EXTENSION];
 export const MODULE_METHOD_OPTIONS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 export const FILE_EXTENSION_OPTIONS = [MODULE_EXTENSION];
 
@@ -46,6 +48,23 @@ export const DEFAULT_UI_CODE = `export default function NewComponent() {
 `;
 
 export const DEFAULT_CSS_CODE = `/* Add styles for UI entities here */`;
+
+export const DEFAULT_MODEL_CODE = `const { Entity, PrimaryGeneratedColumn, Column } = require('typeorm');
+
+@Entity({ name: 'example_items' })
+class ExampleItem {
+  @PrimaryGeneratedColumn('uuid')
+  id;
+
+  @Column()
+  name;
+
+  @Column({ default: false })
+  isActive;
+}
+
+module.exports = { ExampleItem };
+`;
 
 export const DEFAULT_SHARED_FILE: SharedFileFormState = {
   path: '',

@@ -38,7 +38,11 @@ export function EditorHistoryPanel({
   formatTimestamp,
 }: EditorHistoryPanelProps) {
   const disableRefresh =
-    historyLoading || !activeFile?.meta || activeFile.meta.kind === 'shared' || activeFile.meta.kind === 'acl';
+    historyLoading ||
+    !activeFile?.meta ||
+    activeFile.meta.kind === 'shared' ||
+    activeFile.meta.kind === 'acl' ||
+    activeFile.meta.kind === 'model';
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -67,6 +71,10 @@ export function EditorHistoryPanel({
       ) : activeFile.meta.kind === 'acl' ? (
         <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
           History is not available for ACL files.
+        </div>
+      ) : activeFile.meta.kind === 'model' ? (
+        <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">
+          History is not available for models yet.
         </div>
       ) : historyLoading ? (
         <div className="flex flex-1 items-center justify-center px-4 text-sm text-gray-400">

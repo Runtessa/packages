@@ -12,6 +12,7 @@ import { GlobalModulePackage } from '@idp/shared';
 import { GlobalModulePackageFile } from '@idp/shared';
 import { GlobalUIPackage } from '@idp/shared';
 import { GlobalUIPackageFile } from '@idp/shared';
+import { OrmModel } from '@idp/shared';
 
 const dbType = (process.env.CORE_DB_TYPE ||
   process.env.DB_TYPE ||
@@ -54,6 +55,7 @@ const baseOptions = {
     GlobalUIPackageFile,
     ModuleRevision,
     UIPackageRevision,
+    OrmModel,
   ],
 } as DataSourceOptions;
 
@@ -95,6 +97,7 @@ export const ensureCoreSchema = async () => {
         const hasAclRoles = hasTenantTable && (await queryRunner.hasColumn('tenants', 'aclRoles'));
         const hasAclEndpoints =
           hasTenantTable && (await queryRunner.hasColumn('tenants', 'aclEndpoints'));
+        const hasOrmModels = await queryRunner.hasTable('orm_models');
         const hasAccountsTable = await queryRunner.hasTable('accounts');
         const hasAccountGroups =
           hasAccountsTable && (await queryRunner.hasColumn('accounts', 'groups'));
@@ -111,6 +114,7 @@ export const ensureCoreSchema = async () => {
           !hasAclPermissions ||
           !hasAclRoles ||
           !hasAclEndpoints ||
+          !hasOrmModels ||
           !hasAccountGroups
         ) {
           await CoreDataSource.synchronize();

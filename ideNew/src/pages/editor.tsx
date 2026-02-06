@@ -23,6 +23,8 @@ import { EditorModals } from '@/components/editor/EditorModals';
 import {
   DEFAULT_CSS_CODE,
   DEFAULT_LEFT_PANEL_WIDTH,
+  DEFAULT_MODEL_CODE,
+  DEFAULT_MODEL_EXTENSION,
   DEFAULT_MODULE_CODE,
   DEFAULT_PREVIEW_PORT,
   DEFAULT_SHARED_FILE,
@@ -66,6 +68,7 @@ import {
   getScopeInfo,
   getSharedNodeId,
   getSharedPathFromNodes,
+  normalizeModelPath,
   normalizeSharedPath,
   parseDependencies,
   parseFilterRegex,
@@ -75,6 +78,7 @@ import {
   splitRoutePath,
   splitSharedPath,
   splitUiName,
+  splitModelPath,
 } from '@/components/editor/utils';
 import type {
   ActiveFile,
@@ -83,9 +87,11 @@ import type {
   FolderOverride,
   FolderFormState,
   HistoryItem,
+  ModelFormState,
   ModuleDto,
   ModuleFormState,
   NodeMeta,
+  OrmModelDto,
   PanelScope,
   PreviewTarget,
   SearchMatchRange,
@@ -154,6 +160,7 @@ export default function EditorPage() {
   const [treeError, setTreeError] = useState<string>('');
   const loadTreeInFlightRef = useRef(false);
   const [modulesData, setModulesData] = useState<ModuleDto[]>([]);
+  const [modelsData, setModelsData] = useState<OrmModelDto[]>([]);
   const [uiData, setUiData] = useState<UIPackageDto[]>([]);
   const [aclConfig, setAclConfig] = useState<AclConfigDto | null>(null);
   const [sharedProject, setSharedProject] = useState<SharedProjectDto | null>(null);
@@ -174,6 +181,11 @@ export default function EditorPage() {
     fileExtension: MODULE_EXTENSION,
     code: DEFAULT_MODULE_CODE,
   });
+  const [modelForm, setModelForm] = useState<ModelFormState>({
+    path: 'models/ExampleItem.js',
+    fileExtension: DEFAULT_MODEL_EXTENSION,
+    code: DEFAULT_MODEL_CODE,
+  });
   const [uiForm, setUiForm] = useState<UiFormState>({
     name: 'NewComponent',
     version: '1.0.0',
@@ -190,6 +202,11 @@ export default function EditorPage() {
     routePath: '/',
     method: 'GET',
     fileExtension: MODULE_EXTENSION,
+    code: '',
+  });
+  const [editModelForm, setEditModelForm] = useState<ModelFormState>({
+    path: '',
+    fileExtension: DEFAULT_MODEL_EXTENSION,
     code: '',
   });
   const [editUiForm, setEditUiForm] = useState<UiFormState>({
@@ -234,6 +251,7 @@ export default function EditorPage() {
   >('explorer');
   const [stagingBusy, setStagingBusy] = useState(false);
   const [stagingBusyId, setStagingBusyId] = useState<string | null>(null);
+  const [modelMigrationBusy, setModelMigrationBusy] = useState(false);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
@@ -583,8 +601,8 @@ export default function EditorPage() {
 
   useEffect(() => {
     if (isSharedMode) return;
-    setTreeData(buildExplorerTree(modulesData, uiData, folderOverrides, aclConfig));
-  }, [aclConfig, folderOverrides, isSharedMode, modulesData, uiData]);
+    setTreeData(buildExplorerTree(modulesData, uiData, modelsData, folderOverrides, aclConfig));
+  }, [aclConfig, folderOverrides, isSharedMode, modelsData, modulesData, uiData]);
 
 
   const loadSharedProject = useCallback(async () => {
@@ -601,6 +619,7 @@ export default function EditorPage() {
       setSharedProject(project);
       setSharedFiles(files);
       setModulesData([]);
+      setModelsData([]);
       setUiData([]);
       setAclConfig(null);
       setTreeData(
@@ -624,23 +643,26 @@ export default function EditorPage() {
       setLoadingTree(true);
       setTreeError('');
       try {
-        const [modules, uiPackages, acl] = await Promise.all([
+        const [modules, uiPackages, models, acl] = await Promise.all([
           apiFetch('/api/modules'),
           apiFetch('/api/ui-entities'),
+          apiFetch('/api/models'),
           apiFetch('/api/acl/config'),
         ]);
         const moduleItems = modules as ModuleDto[];
         const uiItems = uiPackages as UIPackageDto[];
+        const modelItems = models as OrmModelDto[];
         const normalizedAcl: AclConfigDto = {
           permissions: (acl as any)?.permissions ?? { permissions: [] },
           roles: (acl as any)?.roles ?? { roles: {} },
           endpoints: (acl as any)?.endpoints ?? {},
         };
         setModulesData(moduleItems);
+        setModelsData(modelItems);
         setUiData(uiItems);
         setAclConfig(normalizedAcl);
-        setTreeData(buildExplorerTree(moduleItems, uiItems, overrides, normalizedAcl));
-        setSavedContents(buildPersistedContentMap(moduleItems, uiItems, normalizedAcl));
+        setTreeData(buildExplorerTree(moduleItems, uiItems, modelItems, overrides, normalizedAcl));
+        setSavedContents(buildPersistedContentMap(moduleItems, uiItems, modelItems, normalizedAcl));
       } catch (err) {
         setTreeError((err as Error).message || 'Failed to load explorer');
       } finally {
@@ -847,7 +869,11 @@ export default function EditorPage() {
       setHistoryTotal(0);
       return;
     }
-    if (activeFile.meta.kind === 'shared' || activeFile.meta.kind === 'acl') {
+    if (
+      activeFile.meta.kind === 'shared' ||
+      activeFile.meta.kind === 'acl' ||
+      activeFile.meta.kind === 'model'
+    ) {
       setHistoryItems([]);
       setHistoryError('History is not available for this file.');
       setHistoryTotal(0);
@@ -969,6 +995,7 @@ export default function EditorPage() {
       if (!candidate) return null;
       if (
         !candidate.startsWith('module-') &&
+        !candidate.startsWith('model-') &&
         !candidate.startsWith('ui-') &&
         !candidate.startsWith('shared-') &&
         !candidate.startsWith('acl-')
@@ -1414,6 +1441,18 @@ export default function EditorPage() {
         setSavedContents((prev) => ({ ...prev, [file.id]: normalizedContent }));
         return;
       }
+      if (meta.kind === 'model') {
+        await apiFetch(`/api/models/${meta.backendId}`, {
+          method: 'PUT',
+          body: {
+            path: normalizeModelPath(meta.path),
+            code: content,
+            fileExtension: DEFAULT_MODEL_EXTENSION,
+          },
+        });
+        setSavedContents((prev) => ({ ...prev, [file.id]: content }));
+        return;
+      }
       if (meta.kind === 'module') {
         await apiFetch(`/api/modules/${meta.backendId}`, {
           method: 'PUT',
@@ -1461,21 +1500,51 @@ export default function EditorPage() {
     ]
   );
 
+  const runModelMigration = useCallback(
+    async (adapterKey?: string, options?: { silent?: boolean }) => {
+      if (modelMigrationBusy) return;
+      setModelMigrationBusy(true);
+      try {
+        await apiFetch('/api/models/migrate', {
+          method: 'POST',
+          body: adapterKey ? { adapterKey } : {},
+        });
+        if (!options?.silent) {
+          success('Database updated');
+        }
+      } catch (err) {
+        const message = (err as Error).message || 'Migration failed';
+        showError(message);
+      } finally {
+        setModelMigrationBusy(false);
+      }
+    },
+    [apiFetch, modelMigrationBusy, showError, success]
+  );
+
   const handleSaveFile = useCallback(
     async (file: ActiveFile) => {
       if (!file.meta) return;
       try {
         await saveFile(file);
+        if (file.meta.kind === 'model') {
+          await runModelMigration(undefined, { silent: true });
+        }
         success('Saved');
         await reloadTree();
-        if (activeFile?.id === file.id && file.meta.kind !== 'shared' && file.meta.kind !== 'acl') {
+        if (
+          activeFile?.id === file.id &&
+          file.meta.kind !== 'shared' &&
+          file.meta.kind !== 'acl' &&
+          file.meta.kind !== 'model'
+        ) {
           loadHistory();
         }
       } catch (err) {
         showError((err as Error).message || 'Save failed');
       }
     },
-    [activeFile?.id, loadHistory, reloadTree, saveFile, showError, success]
+    [activeFile?.id, loadHistory, reloadTree, runModelMigration, saveFile, showError, success]
   );
 
   const handleSaveAll = useCallback(async () => {
@@ -1487,6 +1556,7 @@ export default function EditorPage() {
     }
     let firstError: string | null = null;
     let savedActive = false;
+    const savedModel = dirtyFiles.some((file) => file.meta?.kind === 'model');
     for (const file of dirtyFiles) {
       try {
         await saveFile(file);
@@ -1502,8 +1572,16 @@ export default function EditorPage() {
     } else {
       success('Saved all');
     }
+    if (!firstError && savedModel) {
+      await runModelMigration(undefined, { silent: true });
+    }
     await reloadTree();
-    if (savedActive && activeFile?.meta?.kind !== 'shared' && activeFile?.meta?.kind !== 'acl') {
+    if (
+      savedActive &&
+      activeFile?.meta?.kind !== 'shared' &&
+      activeFile?.meta?.kind !== 'acl' &&
+      activeFile?.meta?.kind !== 'model'
+    ) {
       loadHistory();
     }
   }, [
@@ -1513,6 +1591,7 @@ export default function EditorPage() {
     loadHistory,
     reloadTree,
     openFiles,
+    runModelMigration,
     saveFile,
     showError,
     success,
@@ -1720,7 +1799,7 @@ export default function EditorPage() {
     setCreateParentPath(parentPath);
     if (scope === 'shared') {
       if (type === 'file') {
-        const ext = sharedProject?.fileExtension || 'tsx';
+        const ext = sharedProject?.fileExtension || 'jsx';
         const base = parentPath.length ? `${parentPath.join('/')}/` : '';
         setSharedFileForm({
           path: `${base}new-file.${ext}`,
@@ -1740,6 +1819,13 @@ export default function EditorPage() {
           method: 'GET',
           fileExtension: MODULE_EXTENSION,
           code: DEFAULT_MODULE_CODE,
+        });
+      } else if (scope === 'models') {
+        const prefix = parentPath.length ? `${parentPath.join('/')}/` : '';
+        setModelForm({
+          path: normalizeModelPath(`${prefix}ExampleItem.js`),
+          fileExtension: DEFAULT_MODEL_EXTENSION,
+          code: DEFAULT_MODEL_CODE,
         });
       } else {
         const prefix = parentPath.length ? `${parentPath.join('/')}/` : '';
@@ -1764,6 +1850,11 @@ export default function EditorPage() {
     setCreateParentPath([]);
     setFolderForm({ name: '' });
     setSharedFileForm(DEFAULT_SHARED_FILE);
+    setModelForm({
+      path: 'models/ExampleItem.js',
+      fileExtension: DEFAULT_MODEL_EXTENSION,
+      code: DEFAULT_MODEL_CODE,
+    });
   };
 
   const handleCreateSubmit = async () => {
@@ -1846,7 +1937,7 @@ export default function EditorPage() {
         ? folderOverrides
         : [...folderOverrides, { scope: createScope, path: nextPath }];
       setFolderOverrides(nextOverrides);
-      setTreeData(buildExplorerTree(modulesData, uiData, nextOverrides, aclConfig));
+      setTreeData(buildExplorerTree(modulesData, uiData, modelsData, nextOverrides, aclConfig));
       success('Folder created');
       closeCreateModal();
       return;
@@ -1876,6 +1967,31 @@ export default function EditorPage() {
         await loadTree();
       } catch (err) {
         const message = (err as Error).message || 'Failed to create module';
+        showError(message);
+      }
+      return;
+    }
+
+    if (createScope === 'models') {
+      const normalizedPath = normalizeModelPath(modelForm.path);
+      if (!normalizedPath) {
+        showError('Model path is required.');
+        return;
+      }
+      try {
+        await apiFetch('/api/models', {
+          method: 'POST',
+          body: {
+            path: normalizedPath,
+            code: modelForm.code || DEFAULT_MODEL_CODE,
+            fileExtension: DEFAULT_MODEL_EXTENSION,
+          },
+        });
+        success('Model created');
+        closeCreateModal();
+        await loadTree();
+      } catch (err) {
+        const message = (err as Error).message || 'Failed to create model';
         showError(message);
       }
       return;
@@ -1929,6 +2045,12 @@ export default function EditorPage() {
         routePath: meta.routePath,
         method: meta.method,
         fileExtension: coerceModuleExtension(meta.fileExtension),
+        code: '',
+      });
+    } else if (meta.kind === 'model') {
+      setEditModelForm({
+        path: meta.path,
+        fileExtension: meta.fileExtension || DEFAULT_MODEL_EXTENSION,
         code: '',
       });
     } else {
@@ -2029,6 +2151,30 @@ export default function EditorPage() {
         await loadTree();
       } catch (err) {
         const message = (err as Error).message || 'Failed to update module';
+        showError(message);
+      }
+      return;
+    }
+
+    if (editMeta.kind === 'model') {
+      const normalizedPath = normalizeModelPath(editModelForm.path);
+      if (!normalizedPath) {
+        showError('Model path is required.');
+        return;
+      }
+      try {
+        await apiFetch(`/api/models/${editMeta.backendId}`, {
+          method: 'PUT',
+          body: {
+            path: normalizedPath,
+            fileExtension: DEFAULT_MODEL_EXTENSION,
+          },
+        });
+        success('Model updated');
+        closeEditModal();
+        await loadTree();
+      } catch (err) {
+        const message = (err as Error).message || 'Failed to update model';
         showError(message);
       }
       return;
@@ -2156,6 +2302,21 @@ export default function EditorPage() {
             });
           })
         );
+      } else if (renameFolderScope === 'models') {
+        const updates = modelsData.filter((model) =>
+          pathStartsWith(splitModelPath(model.path || ''), oldPath)
+        );
+        await Promise.all(
+          updates.map((model) => {
+            const segments = splitModelPath(model.path || '');
+            const remainder = segments.slice(oldPath.length);
+            const nextPath = normalizeModelPath([...newPath, ...remainder].join('/'));
+            return apiFetch(`/api/models/${model.id}`, {
+              method: 'PUT',
+              body: { path: nextPath, fileExtension: DEFAULT_MODEL_EXTENSION },
+            });
+          })
+        );
       } else {
         const updates = uiData.filter((pkg) =>
           pathStartsWith(splitUiName(pkg.name || ''), oldPath)
@@ -2250,6 +2411,8 @@ export default function EditorPage() {
         }
         if (meta.kind === 'module') {
           await apiFetch(`/api/modules/${meta.backendId}`, { method: 'DELETE' });
+        } else if (meta.kind === 'model') {
+          await apiFetch(`/api/models/${meta.backendId}`, { method: 'DELETE' });
         } else {
           await apiFetch(`/api/ui-entities/${meta.backendId}`, { method: 'DELETE' });
         }
@@ -2320,6 +2483,15 @@ export default function EditorPage() {
               apiFetch(`/api/modules/${mod.id}`, { method: 'DELETE' })
             )
           );
+        } else if (deleteTarget.scope === 'models') {
+          const removals = modelsData.filter((model) =>
+            pathStartsWith(splitModelPath(model.path || ''), deleteTarget.path)
+          );
+          await Promise.all(
+            removals.map((model) =>
+              apiFetch(`/api/models/${model.id}`, { method: 'DELETE' })
+            )
+          );
         } else {
           const removals = uiData.filter((pkg) =>
             pathStartsWith(splitUiName(pkg.name || ''), deleteTarget.path)
@@ -2364,7 +2536,7 @@ export default function EditorPage() {
       }
       const scopeInfo = getScopeInfo(parentPath);
       if (!scopeInfo.scope) {
-        const message = 'Create items inside Modules or UI Entities.';
+        const message = 'Create items inside Modules, Models, or UI Entities.';
         showError(message);
         return true;
       }
@@ -2403,7 +2575,7 @@ export default function EditorPage() {
         openEditModal(meta);
         return true;
       }
-      if (node.id === 'modules-root' || node.id === 'ui-root') {
+      if (node.id === 'modules-root' || node.id === 'models-root' || node.id === 'ui-root') {
         return true;
       }
       openRenameFolderModal(scopeInfo.scope, scopeInfo.path);
@@ -2608,7 +2780,7 @@ export default function EditorPage() {
         position === 'inside' ? targetPath : targetPath.slice(0, -1);
       const targetScopeInfo = getScopeInfo(targetParentPath);
       if (!targetScopeInfo.scope || targetScopeInfo.scope !== nodeScopeInfo.scope) {
-        const message = 'Cannot move between Modules and UI Entities.';
+        const message = 'Cannot move between sections.';
         showError(message);
         return true;
       }
@@ -2642,6 +2814,20 @@ export default function EditorPage() {
           });
           return true;
         }
+        if (meta.kind === 'model') {
+          const nextPath = normalizeModelPath([...targetScopeInfo.path, node.name].join('/'));
+          if (nextPath === normalizeModelPath(meta.path)) return true;
+          apiFetch(`/api/models/${meta.backendId}`, {
+            method: 'PUT',
+            body: { path: nextPath, fileExtension: DEFAULT_MODEL_EXTENSION },
+          })
+            .then(() => loadTree())
+            .catch((err) => {
+              const message = (err as Error).message || 'Failed to move model';
+              showError(message);
+            });
+          return true;
+        }
         if (meta.kind !== 'ui') return true;
         const nameSegments = splitUiName(meta.name || 'ui');
         const baseName = nameSegments[nameSegments.length - 1] || 'ui';
@@ -2664,7 +2850,7 @@ export default function EditorPage() {
         return true;
       }
 
-      if (node.id === 'modules-root' || node.id === 'ui-root') return true;
+      if (node.id === 'modules-root' || node.id === 'models-root' || node.id === 'ui-root') return true;
 
       const oldPath = nodeScopeInfo.path;
       const newPath = [...targetScopeInfo.path, node.name];
@@ -2684,6 +2870,21 @@ export default function EditorPage() {
                 return apiFetch(`/api/modules/${mod.id}`, {
                   method: 'PUT',
                   body: { routePath: nextRoute, method: mod.method, fileExtension: MODULE_EXTENSION },
+                });
+              })
+            );
+          } else if (nodeScopeInfo.scope === 'models') {
+            const updates = modelsData.filter((model) =>
+              pathStartsWith(splitModelPath(model.path || ''), oldPath)
+            );
+            await Promise.all(
+              updates.map((model) => {
+                const segments = splitModelPath(model.path || '');
+                const remainder = segments.slice(oldPath.length);
+                const nextPath = normalizeModelPath([...newPath, ...remainder].join('/'));
+                return apiFetch(`/api/models/${model.id}`, {
+                  method: 'PUT',
+                  body: { path: nextPath, fileExtension: DEFAULT_MODEL_EXTENSION },
                 });
               })
             );
@@ -2731,6 +2932,7 @@ export default function EditorPage() {
       isSharedMode,
       loadTree,
       reloadTree,
+      modelsData,
       modulesData,
       savedContents,
       sharedBasePath,
@@ -3135,6 +3337,10 @@ export default function EditorPage() {
                   onRenameNode={handleRenameRequest}
                   onDeleteNode={handleDeleteRequest}
                   onMoveNode={handleMoveRequest}
+                  onMigrateModels={
+                    isSharedMode ? undefined : () => runModelMigration()
+                  }
+                  migrateBusy={modelMigrationBusy}
                 />
               ) : leftPanel === 'history' ? (
                 <EditorHistoryPanel
@@ -3305,6 +3511,8 @@ export default function EditorPage() {
         setFolderForm={setFolderForm}
         moduleForm={moduleForm}
         setModuleForm={setModuleForm}
+        modelForm={modelForm}
+        setModelForm={setModelForm}
         sharedFileForm={sharedFileForm}
         setSharedFileForm={setSharedFileForm}
         uiForm={uiForm}
@@ -3322,6 +3530,8 @@ export default function EditorPage() {
         editMeta={editMeta}
         editModuleForm={editModuleForm}
         setEditModuleForm={setEditModuleForm}
+        editModelForm={editModelForm}
+        setEditModelForm={setEditModelForm}
         editUiForm={editUiForm}
         setEditUiForm={setEditUiForm}
         editSharedPath={editSharedPath}

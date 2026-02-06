@@ -4,12 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Server-Driven Micro-Frontend</title>
-  <script src="bundle.js?faf93f451f5b576fd355"></script></head>
+  <script src="bundle.js?8a65e1a015e05ca65582"></script></head>
   <body>
     <div id="root"></div>
     <script defer>
       if (window.Kernel) {
-        window.__IDP_TENANT_HOST__ = window.location.host;
         var kernel = new window.Kernel({});
         kernel.boot("@app/dashboard");
       } else {

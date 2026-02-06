@@ -14,6 +14,8 @@ import { Tenant } from '@idp/shared';
 import { Secret } from '@idp/shared';
 import { CompilerAdapter } from './adapters/CompilerAdapter';
 import { GlobalModulePackage } from '@idp/shared';
+import { OrmModel } from '@idp/shared';
+import { loadOrmEntitiesFromModels } from '../core/orm-loader';
 import { resolveGlobalDataSource } from '../core/globalDatasource';
 
 type AsyncFactory<T> = (envKey: string) => Promise<T>;
@@ -56,6 +58,12 @@ export interface SharedModuleAdapter {
   require: (name: string, version?: string) => Promise<unknown>;
 }
 
+export interface OrmAdapter {
+  dataSource: DataSource;
+  entities: Record<string, any>;
+  getRepository: (name: string) => any;
+}
+
 export interface HttpRequestOptions {
   method?: string;
   headers?: Record<string, string>;
@@ -73,6 +81,7 @@ export interface SandboxAdapters {
   postgres: ReadWriteFactory<PostgresAdapter>;
   mysql: ReadWriteFactory<MysqlAdapter>;
   mssql: ReadWriteFactory<MssqlAdapter>;
+  orm: ReadWriteFactory<OrmAdapter>;
   redis: AsyncFactory<RedisAdapter>;
   kafka: AsyncFactory<KafkaAdapter>;
   s3: AsyncFactory<S3Adapter>;
@@ -91,6 +100,8 @@ export class AdapterFactory {
   private kafkaProducers: Map<string, Producer> = new Map();
   private s3Clients: Map<string, S3Client> = new Map();
   private sharedModuleCache: Map<string, unknown> = new Map();
+  private ormCache: Map<string, { dataSource: DataSource; entities: Record<string, any>; key: string }> =
+    new Map();
 
   private breakers: Map<string, CircuitBreaker> = new Map();
   private compilerAdapter: CompilerAdapter;
@@ -114,6 +125,9 @@ export class AdapterFactory {
     const mssql = ((key: string) => this.buildMssql(tenant, key, 'write')) as ReadWriteFactory<MssqlAdapter>;
     mssql.readOnly = (key: string) => this.buildMssql(tenant, key, 'read');
     mssql.readWrite = (key: string) => this.buildMssql(tenant, key, 'write');
+    const orm = ((key: string) => this.buildOrm(tenant, key, 'write')) as ReadWriteFactory<OrmAdapter>;
+    orm.readOnly = (key: string) => this.buildOrm(tenant, key, 'read');
+    orm.readWrite = (key: string) => this.buildOrm(tenant, key, 'write');
     const allowDraftSharedModules = Boolean(options?.allowDraftSharedModules);
     const shared: SharedModuleAdapter = {
       require: (name: string, version?: string) =>
@@ -124,6 +138,7 @@ export class AdapterFactory {
       postgres,
       mysql,
       mssql,
+      orm,
       redis: (envKey) => this.buildRedis(tenant, envKey),
       kafka: (envKey) => this.buildKafka(tenant, envKey),
       s3: (envKey) => this.buildS3(tenant, envKey),
@@ -324,14 +339,47 @@ export class AdapterFactory {
         const writeVal = (parsed as any).write;
         const selected = mode === 'read' ? (readVal ?? writeVal) : (writeVal ?? readVal);
         if (Array.isArray(selected)) {
-          return selected[0] ?? secretVal;
+          return this.decryptPasswordMarkers(selected[0] ?? secretVal);
         }
-        return selected ?? secretVal;
+        return this.decryptPasswordMarkers(selected ?? secretVal);
       }
-      return parsed;
+      return this.decryptPasswordMarkers(parsed);
     } catch {
       return secretVal;
     }
+  }
+
+  private decryptPasswordMarkers(value: unknown): unknown {
+    const decode = (entry: unknown): unknown => {
+      if (Array.isArray(entry)) {
+        return entry.map((item) => decode(item));
+      }
+      if (entry && typeof entry === 'object') {
+        const next: Record<string, unknown> = {};
+        Object.entries(entry as Record<string, unknown>).forEach(([key, val]) => {
+          if (key === 'password' && typeof val === 'string' && val.startsWith('enc:')) {
+            const parts = val.split(':');
+            if (parts.length === 4) {
+              try {
+                next[key] = this.cryptoService.decryptSecret({
+                  iv: parts[1],
+                  authTag: parts[2],
+                  encryptedValue: parts[3],
+                });
+                return;
+              } catch {
+                next[key] = val;
+                return;
+              }
+            }
+          }
+          next[key] = decode(val);
+        });
+        return next;
+      }
+      return entry;
+    };
+    return decode(value);
   }
 
   private normalizeDbConfig(config: Record<string, unknown>) {
@@ -340,6 +388,123 @@ export class AdapterFactory {
       normalized.user = normalized.username;
     }
     return normalized;
+  }
+
+  private parseOrmAdapterKey(raw: string | undefined | null) {
+    const trimmed = String(raw || '').trim();
+    if (!trimmed) {
+      return { adapter: 'postgres', key: '' };
+    }
+    if (trimmed.includes(':')) {
+      const [adapter, ...rest] = trimmed.split(':');
+      return { adapter: adapter.toLowerCase(), key: rest.join(':') };
+    }
+    return { adapter: 'postgres', key: trimmed };
+  }
+
+  private async loadOrmModels(tenant: Tenant) {
+    const repo = this.dataSource.getRepository(OrmModel);
+    return repo.find({
+      where: { tenant: { id: tenant.id } },
+      order: { path: 'ASC' },
+    });
+  }
+
+  private async buildOrm(
+    tenant: Tenant,
+    rawKey: string | undefined,
+    mode: 'read' | 'write',
+  ): Promise<OrmAdapter> {
+    const parsed = this.parseOrmAdapterKey(rawKey);
+    const adapter = parsed.adapter;
+    let key = parsed.key;
+    if (!key) {
+      const access = tenant.adapterAccess ?? {};
+      const rule = (access as Record<string, { allow?: string[] } | undefined>)[adapter];
+      const allow = rule?.allow ?? [];
+      if (!allow.length) {
+        throw new Error(`Access denied: ${adapter} adapter is not enabled for tenant`);
+      }
+      key = allow[0];
+    }
+    if (!['postgres', 'mysql', 'mssql'].includes(adapter)) {
+      throw new Error(`Unsupported ORM adapter: ${adapter}`);
+    }
+    this.ensureAdapterAccess(tenant, adapter, key);
+
+    const models = await this.loadOrmModels(tenant);
+    if (!models.length) {
+      throw new Error('No ORM models defined for tenant');
+    }
+
+    const modelsKey = models
+      .map((model) => `${model.id}:${model.updatedAt?.getTime?.() ?? ''}`)
+      .join('|');
+
+    const secretVal = await this.resolveSecretValue(tenant, adapter, key);
+    const config = this.selectReadWriteConfig(secretVal, mode);
+    const configKey = typeof config === 'string' ? config : JSON.stringify(config ?? {});
+
+    const cacheKey = `${tenant.id}:orm:${adapter}:${key}:${mode}`;
+    const cacheEntry = this.ormCache.get(cacheKey);
+    const combinedKey = `${modelsKey}:${configKey}`;
+    if (cacheEntry && cacheEntry.key === combinedKey) {
+      const getRepository = (name: string) => {
+        const entity = cacheEntry.entities[name];
+        if (!entity) {
+          throw new Error(`ORM entity not found: ${name}`);
+        }
+        return cacheEntry.dataSource.getRepository(entity);
+      };
+      return {
+        dataSource: cacheEntry.dataSource,
+        entities: cacheEntry.entities,
+        getRepository,
+      };
+    }
+    if (cacheEntry) {
+      try {
+        await cacheEntry.dataSource.destroy();
+      } catch {
+        // ignore
+      }
+      this.ormCache.delete(cacheKey);
+    }
+
+    const { entities, entityMap } = loadOrmEntitiesFromModels(models);
+    if (!entities.length) {
+      throw new Error('No valid TypeORM entities found in models');
+    }
+
+    const dataSource = new DataSource({
+      type: adapter as 'postgres' | 'mysql' | 'mssql',
+      ...(typeof config === 'string'
+        ? { url: config }
+        : this.normalizeDbConfig(config as Record<string, unknown>)),
+      entities,
+      synchronize: false,
+      logging: false,
+    } as any);
+
+    if (!dataSource.isInitialized) {
+      await dataSource.initialize();
+    }
+
+    const getRepository = (name: string) => {
+      const entity = entityMap[name];
+      if (!entity) {
+        throw new Error(`ORM entity not found: ${name}`);
+      }
+      return dataSource.getRepository(entity);
+    };
+
+    this.ormCache.set(cacheKey, {
+      dataSource,
+      entities: entityMap,
+      key: combinedKey,
+    });
+
+    return { dataSource, entities: entityMap, getRepository };
   }
 
   private ensureAdapterAccess(tenant: Tenant, adapter: string, adapterKey: string) {

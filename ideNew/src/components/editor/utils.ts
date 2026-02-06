@@ -5,6 +5,7 @@ import type {
   FolderOverride,
   HistoryItem,
   ModuleDto,
+  OrmModelDto,
   NodeMeta,
   SearchPattern,
   SearchResult,
@@ -94,6 +95,13 @@ export const getScopeInfo = (pathNodes: ExplorerNode[]) => {
       path: pathNodes.slice(moduleIndex + 1).map((node) => node.name),
     };
   }
+  const modelIndex = pathNodes.findIndex((node) => node.id === 'models-root');
+  if (modelIndex >= 0) {
+    return {
+      scope: 'models' as ExplorerScope,
+      path: pathNodes.slice(modelIndex + 1).map((node) => node.name),
+    };
+  }
   const uiIndex = pathNodes.findIndex((node) => node.id === 'ui-root');
   if (uiIndex >= 0) {
     return {
@@ -131,6 +139,23 @@ export const normalizeSharedPath = (value: string) =>
 
 export const splitSharedPath = (value: string) => {
   const normalized = normalizeSharedPath(value);
+  return normalized ? normalized.split('/').filter(Boolean) : [];
+};
+
+export const normalizeModelPath = (value: string) => {
+  const trimmed = value.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!trimmed) return '';
+  const extMatch = trimmed.match(/\.([^.\/]+)$/);
+  if (!extMatch) return `${trimmed}.js`;
+  const ext = extMatch[1]?.toLowerCase();
+  if (ext !== 'js') {
+    return trimmed.replace(/\.[^.\/]+$/, '.js');
+  }
+  return trimmed;
+};
+
+export const splitModelPath = (value: string) => {
+  const normalized = normalizeModelPath(value);
   return normalized ? normalized.split('/').filter(Boolean) : [];
 };
 
@@ -214,12 +239,19 @@ export const buildSharedContentMap = (files: SharedFileDto[]) => {
 export const buildExplorerTree = (
   modules: ModuleDto[],
   uiPackages: UIPackageDto[],
+  models: OrmModelDto[],
   overrides: FolderOverride[],
   aclConfig?: AclConfigDto | null
 ): ExplorerNode => {
   const modulesRoot: ExplorerNode = {
     id: 'modules-root',
     name: 'Modules',
+    type: 'folder',
+    children: [],
+  };
+  const modelsRoot: ExplorerNode = {
+    id: 'models-root',
+    name: 'Models',
     type: 'folder',
     children: [],
   };
@@ -314,6 +346,27 @@ export const buildExplorerTree = (
     ];
   });
 
+  models.forEach((model) => {
+    const segments = splitModelPath(model.path || '');
+    const fileName = segments.pop() || model.path || 'model.js';
+    const parent = ensureFolderPath(modelsRoot, 'models', segments);
+    parent.children = [
+      ...(parent.children ?? []),
+      {
+        id: `model-${model.id}`,
+        name: fileName,
+        type: 'file',
+        meta: {
+          kind: 'model',
+          backendId: model.id,
+          path: model.path,
+          fileExtension: model.fileExtension,
+        } as NodeMeta,
+        content: model.code,
+      },
+    ];
+  });
+
   uiPackages.forEach((pkg) => {
     const nameSegments = splitUiName(pkg.name || 'ui');
     const folderSegments = nameSegments.slice(0, -1);
@@ -338,7 +391,12 @@ export const buildExplorerTree = (
   });
 
   overrides.forEach((override) => {
-    const root = override.scope === 'modules' ? modulesRoot : uiRoot;
+    const root =
+      override.scope === 'modules'
+        ? modulesRoot
+        : override.scope === 'models'
+          ? modelsRoot
+          : uiRoot;
     ensureFolderPath(root, override.scope, override.path);
   });
 
@@ -348,18 +406,22 @@ export const buildExplorerTree = (
     id: 'root',
     name: 'PROJECT',
     type: 'folder',
-    children: [modulesRoot, uiRoot],
+    children: [modulesRoot, modelsRoot, uiRoot],
   };
 };
 
 export const buildPersistedContentMap = (
   modules: ModuleDto[],
   uiPackages: UIPackageDto[],
+  models: OrmModelDto[],
   aclConfig?: AclConfigDto | null
 ): Record<string, string> => {
   const next: Record<string, string> = {};
   modules.forEach((mod) => {
     next[`module-${mod.id}`] = mod.code ?? '';
+  });
+  models.forEach((model) => {
+    next[`model-${model.id}`] = model.code ?? '';
   });
   uiPackages.forEach((pkg) => {
     next[`ui-${pkg.id}`] = pkg.code ?? pkg.codeBlob ?? '';
@@ -478,7 +540,7 @@ export const resolveSharedExtension = (path: string, explicit?: string) => {
   if (idx !== -1 && idx < path.length - 1) {
     return path.slice(idx + 1).toLowerCase();
   }
-  return 'tsx';
+  return 'jsx';
 };
 
 export const buildCssModuleSource = (path: string, cssText: string) => {
@@ -525,13 +587,13 @@ export const buildSharedBundle = (project: SharedProjectDto, files: SharedFileDt
     );
   });
 
-  const entryPath = normalizeSharedPath(project.entryPath || 'src/index.tsx');
+  const entryPath = normalizeSharedPath(project.entryPath || 'src/index.jsx');
   const bundleLines = [
     'const __modules = {',
     moduleEntries.join(',\n'),
     '};',
     'const __cache = {};',
-    "const __extensions = ['.tsx', '.ts', '.jsx', '.js', '.json', '.css'];",
+    "const __extensions = ['.jsx', '.js', '.json', '.css'];",
     'const __externalRequire = require;',
     'const __normalize = (value) => {',
     "  const parts = String(value || '').split('/').filter(Boolean);",

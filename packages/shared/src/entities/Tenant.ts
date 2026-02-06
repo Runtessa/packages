@@ -10,6 +10,7 @@ import {
 import { Account } from "./Account";
 import { Secret } from "./Secret";
 import { ModuleEntity } from "./Module";
+import { OrmModel } from "./OrmModel";
 
 @Entity({ name: "tenants" })
 @Unique(["hostname"])
@@ -64,6 +65,9 @@ export class Tenant {
 
   @OneToMany(() => ModuleEntity, (module) => module.tenant, { cascade: true })
   modules!: ModuleEntity[];
+
+  @OneToMany(() => OrmModel, (model) => model.tenant, { cascade: true })
+  ormModels!: OrmModel[];
 
   @CreateDateColumn()
   createdAt!: Date;
