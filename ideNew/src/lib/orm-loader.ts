@@ -7,7 +7,6 @@ import * as typeorm from 'typeorm';
 const getNodeRequire = () => {
   const nonWebpack = (globalThis as any).__non_webpack_require__;
   if (typeof nonWebpack === 'function') return nonWebpack as (id: string) => any;
-  if (typeof require === 'function') return require as (id: string) => any;
   return null;
 };
 
@@ -133,14 +132,6 @@ const resolveModule = (request: string, from: string, moduleMap: Map<string, str
 };
 
 export const loadOrmEntities = (models: OrmModelSource[]) => {
-  try {
-    // Ensure reflect-metadata is loaded before evaluating entity decorators
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    require('reflect-metadata');
-  } catch {
-    // ignore
-  }
-
   const rootRequire = (() => {
     const candidates: Array<(id: string) => any> = [];
     const nodeRequire = getNodeRequire();
@@ -159,7 +150,8 @@ export const loadOrmEntities = (models: OrmModelSource[]) => {
       }
     });
     return (id: string) => {
-      if (id === 'typeorm' || id.startsWith('typeorm/')) {
+      const loweredId = String(id).toLowerCase();
+      if (loweredId === 'typeorm' || loweredId.startsWith('typeorm/')) {
         return typeorm;
       }
       for (const candidate of candidates) {
@@ -172,6 +164,12 @@ export const loadOrmEntities = (models: OrmModelSource[]) => {
       throw new Error(`External require not available: ${id}`);
     };
   })();
+
+  try {
+    rootRequire('reflect-metadata');
+  } catch {
+    // ignore
+  }
 
   const moduleMap = new Map<string, string>();
   models.forEach((model) => {
@@ -206,6 +204,13 @@ export const loadOrmEntities = (models: OrmModelSource[]) => {
         resolved = fallback;
       }
     }
+    if (!moduleMap.has(resolved)) {
+      const trimmed = normalizedRequest.replace(/^\.\/+/, '');
+      const fallback = findByBasename(trimmed, moduleMap);
+      if (fallback) {
+        resolved = fallback;
+      }
+    }
     const isBare =
       !normalizedRequest.startsWith('.') && !normalizedRequest.startsWith('/');
     const isScoped = normalizedRequest.startsWith('@');
@@ -218,7 +223,10 @@ export const loadOrmEntities = (models: OrmModelSource[]) => {
       throw new Error(`Cannot find module ${normalizedRequest}`);
     }
     if (!moduleMap.has(resolved)) {
-      throw new Error(`Cannot find module ${normalizedRequest}`);
+      const available = Array.from(moduleMap.keys()).slice(0, 5).join(', ');
+      throw new Error(
+        `Cannot find module ${normalizedRequest}. Known models: ${available || 'none'}`
+      );
     }
     if (cache.has(resolved)) return cache.get(resolved);
     const code = moduleMap.get(resolved) || '';
