@@ -1841,6 +1841,37 @@ export default function EditorPage() {
 
   const resetActionFeedback = () => {};
 
+  const createDefaultModel = useCallback(
+    async (parentPath: string[]) => {
+      const prefix = parentPath.length ? `${parentPath.join('/')}/` : '';
+      const existing = new Set(
+        modelsData.map((model) => normalizeModelPath(model.path)).filter(Boolean)
+      );
+      let candidate = normalizeModelPath(`${prefix}NewModel.js`);
+      let counter = 2;
+      while (existing.has(candidate)) {
+        candidate = normalizeModelPath(`${prefix}NewModel${counter}.js`);
+        counter += 1;
+      }
+      try {
+        await apiFetch('/api/models', {
+          method: 'POST',
+          body: {
+            path: candidate,
+            code: DEFAULT_MODEL_CODE,
+            fileExtension: DEFAULT_MODEL_EXTENSION,
+          },
+        });
+        success('Model created');
+        await loadTree();
+      } catch (err) {
+        const message = (err as Error).message || 'Failed to create model';
+        showError(message);
+      }
+    },
+    [apiFetch, loadTree, modelsData, showError, success]
+  );
+
   const openCreateModal = (
     scope: PanelScope,
     type: 'file' | 'folder',
@@ -1849,6 +1880,10 @@ export default function EditorPage() {
     resetActionFeedback();
     if (scope === 'modules' && parentPath[0] === 'acl') {
       showError('ACL folder is read-only.');
+      return;
+    }
+    if (scope === 'models' && type === 'file') {
+      void createDefaultModel(parentPath);
       return;
     }
     setCreateScope(scope);
