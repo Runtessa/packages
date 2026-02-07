@@ -6,6 +6,25 @@ const monacoBasePath = `${publicBase}/monaco`;
 type MonacoWithTypes = typeof import('monaco-editor/esm/vs/editor/editor.api');
 
 const configureMonaco = () => {
+  if (typeof window !== 'undefined') {
+    (window as any).MonacoEnvironment = (window as any).MonacoEnvironment ?? {
+      getWorkerUrl: (_moduleId: string, label: string) => {
+        const base = `${monacoBasePath}/vs`;
+        if (label === 'typescript' || label === 'javascript') {
+          return `${base}/language/typescript/ts.worker.js`;
+        }
+        if (label === 'json') return `${base}/language/json/json.worker.js`;
+        if (label === 'css' || label === 'scss' || label === 'less') {
+          return `${base}/language/css/css.worker.js`;
+        }
+        if (label === 'html' || label === 'handlebars' || label === 'razor') {
+          return `${base}/language/html/html.worker.js`;
+        }
+        return `${base}/editor/editor.worker.js`;
+      },
+    };
+  }
+
   // Point Monaco at the bundled assets in /public/monaco instead of the default CDN.
   loader.config({
     paths: {
@@ -182,6 +201,10 @@ declare module 'typeorm' {
       allowSyntheticDefaultImports: true,
       resolveJsonModule: true,
     });
+    typescript.javascriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: false,
+      noSyntaxValidation: false,
+    });
     typescript.javascriptDefaults.setEagerModelSync(true);
     typescript.typescriptDefaults.setCompilerOptions({
       allowNonTsExtensions: true,
@@ -192,6 +215,10 @@ declare module 'typeorm' {
       esModuleInterop: true,
       allowSyntheticDefaultImports: true,
       resolveJsonModule: true,
+    });
+    typescript.typescriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: false,
+      noSyntaxValidation: false,
     });
     typescript.typescriptDefaults.setEagerModelSync(true);
   });
