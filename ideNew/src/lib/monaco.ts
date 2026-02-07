@@ -201,7 +201,7 @@ declare module 'typeorm' {
     typescript.javascriptDefaults.setCompilerOptions({
       allowJs: true,
       allowNonTsExtensions: true,
-      checkJs: true,
+      checkJs: false,
       jsx: typescript.JsxEmit.ReactJSX,
       module: typescript.ModuleKind.ESNext,
       moduleResolution: typescript.ModuleResolutionKind.NodeJs,
@@ -211,6 +211,7 @@ declare module 'typeorm' {
       resolveJsonModule: true,
       experimentalDecorators: true,
       emitDecoratorMetadata: true,
+      useDefineForClassFields: false,
     });
     typescript.javascriptDefaults.setDiagnosticsOptions({
       noSemanticValidation: false,
@@ -228,6 +229,7 @@ declare module 'typeorm' {
       resolveJsonModule: true,
       experimentalDecorators: true,
       emitDecoratorMetadata: true,
+      useDefineForClassFields: false,
     });
     typescript.typescriptDefaults.setDiagnosticsOptions({
       noSemanticValidation: false,

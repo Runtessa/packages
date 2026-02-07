@@ -1,6 +1,8 @@
 import vm from 'vm';
+import path from 'path';
+import { Worker } from 'worker_threads';
 import { SandboxAdapters } from './AdapterFactory';
-import { AccountRole } from '@idp/shared';
+import { AccountRole, Tenant } from '@idp/shared';
 import { AppError } from '../common/AppError';
 
 export interface SandboxRequestContext {
@@ -28,6 +30,8 @@ export interface SandboxRequestContext {
 export interface SandboxContext {
   request: SandboxRequestContext;
   adapters: SandboxAdapters;
+  tenant?: Tenant;
+  allowDraftSharedModules?: boolean;
 }
 
 export interface SandboxResult {
@@ -37,11 +41,16 @@ export interface SandboxResult {
 }
 
 export class SandboxRunner {
-  constructor(private readonly maxTimeoutMs = 30_000) {}
+  constructor(private readonly maxTimeoutMs = 30_000, private readonly maxMemoryMb = 2048) {}
 
   async run(code: string, context: SandboxContext): Promise<SandboxResult> {
     const safeRequest = this.sanitizeRequest(context.request);
     const effectiveTimeout = this.resolveTimeout(safeRequest.tenant.resourceConfig);
+    const effectiveMemory = this.resolveMemory(safeRequest.tenant.resourceConfig);
+
+    if (effectiveMemory && context.tenant) {
+      return this.runInWorker(code, { ...context, request: safeRequest }, effectiveTimeout, effectiveMemory);
+    }
 
     const frozenAdapters: SandboxAdapters = context.adapters;
     const frozenRequest = Object.freeze({ ...safeRequest }) as SandboxRequestContext;
@@ -138,5 +147,68 @@ export class SandboxRunner {
   private resolveTimeout(resourceConfig: { memory: number; timeout: number }): number {
     const configured = resourceConfig?.timeout ?? 5_000;
     return Math.min(configured, this.maxTimeoutMs);
+  }
+
+  private resolveMemory(resourceConfig: { memory: number; timeout: number }): number {
+    const configured = resourceConfig?.memory ?? 512;
+    if (!Number.isFinite(configured) || configured <= 0) {
+      return 0;
+    }
+    return Math.min(configured, this.maxMemoryMb);
+  }
+
+  private runInWorker(
+    code: string,
+    context: SandboxContext,
+    timeoutMs: number,
+    memoryMb: number,
+  ): Promise<SandboxResult> {
+    const workerPath = path.join(__dirname, 'sandboxWorker.js');
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(workerPath, {
+        resourceLimits: { maxOldGenerationSizeMb: memoryMb },
+      });
+
+      const cleanup = () => {
+        worker.removeAllListeners();
+      };
+
+      const timeout = setTimeout(() => {
+        worker.terminate().finally(() => {
+          cleanup();
+          reject(new AppError('Execution timed out', 500));
+        });
+      }, timeoutMs + 50);
+
+      worker.on('message', (message) => {
+        if (message?.type === 'result') {
+          clearTimeout(timeout);
+          cleanup();
+          worker.terminate().finally(() => resolve(message.result as SandboxResult));
+        } else if (message?.type === 'error') {
+          clearTimeout(timeout);
+          cleanup();
+          worker.terminate().finally(() => {
+            const status = Number(message.statusCode) || 500;
+            reject(new AppError(message.message || 'Sandbox failed', status));
+          });
+        }
+      });
+
+      worker.on('error', (err) => {
+        clearTimeout(timeout);
+        cleanup();
+        worker.terminate().finally(() => reject(new AppError(err.message, 500)));
+      });
+
+      worker.postMessage({
+        type: 'run',
+        code,
+        request: context.request,
+        tenant: context.tenant,
+        allowDraftSharedModules: context.allowDraftSharedModules ?? false,
+        timeoutMs,
+      });
+    });
   }
 }

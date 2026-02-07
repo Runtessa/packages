@@ -155,6 +155,8 @@ export class Dispatcher {
         : await this.sandboxRunner.run(module.code, {
             request: requestContext,
             adapters,
+            tenant: req.tenant as Tenant,
+            allowDraftSharedModules: isDev,
           });
 
       res.status(sandboxResult.statusCode ?? 200);
