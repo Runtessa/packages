@@ -22,6 +22,7 @@ type TenantSummary = {
   resourceConfig?: { memory: number; timeout: number };
   adapterAccess?: Record<string, { allow: string[] }>;
   adapterConfig?: Record<string, unknown>;
+  authDbConfig?: { mode?: 'shared' | 'dedicated'; secretKey?: string | null };
   createdAt?: string;
   updatedAt?: string;
 };
@@ -39,12 +40,15 @@ type TenantEditState = {
   allowRegistration: boolean;
   memory: string;
   timeout: string;
+  authDbMode: 'shared' | 'dedicated';
+  authDbSecretKey: string;
 };
 
 type TenantFormErrors = {
   hostname: string;
   memory: string;
   timeout: string;
+  authDbSecretKey: string;
 };
 
 const DEFAULT_FORM: TenantEditState = {
@@ -55,6 +59,8 @@ const DEFAULT_FORM: TenantEditState = {
   allowRegistration: true,
   memory: '512',
   timeout: '5000',
+  authDbMode: 'shared',
+  authDbSecretKey: '',
 };
 
 const DEFAULT_CONFIG_TEXT = JSON.stringify(
@@ -103,7 +109,7 @@ const parseConfigJson = (value: string) => {
 };
 
 const validateTenantForm = (values: TenantEditState): TenantFormErrors => {
-  const errors: TenantFormErrors = { hostname: '', memory: '', timeout: '' };
+  const errors: TenantFormErrors = { hostname: '', memory: '', timeout: '', authDbSecretKey: '' };
 
   if (!values.hostname.trim()) {
     errors.hostname = 'Hostname is required';
@@ -119,11 +125,15 @@ const validateTenantForm = (values: TenantEditState): TenantFormErrors => {
     errors.timeout = 'Timeout must be a positive number';
   }
 
+  if (values.authDbMode === 'dedicated' && !values.authDbSecretKey.trim()) {
+    errors.authDbSecretKey = 'Secret key is required for dedicated auth DB';
+  }
+
   return errors;
 };
 
 const hasErrors = (errors: TenantFormErrors) =>
-  Boolean(errors.hostname || errors.memory || errors.timeout);
+  Boolean(errors.hostname || errors.memory || errors.timeout || errors.authDbSecretKey);
 
 export default function AdminTenantEditPage() {
   const router = useRouter();
@@ -141,6 +151,7 @@ export default function AdminTenantEditPage() {
     hostname: '',
     memory: '',
     timeout: '',
+    authDbSecretKey: '',
   });
   const [editorExpanded, setEditorExpanded] = useState(false);
 
@@ -176,6 +187,11 @@ export default function AdminTenantEditPage() {
           allowRegistration: tenant.allowRegistration ?? true,
           memory: String(tenant.resourceConfig?.memory ?? Number(DEFAULT_FORM.memory)),
           timeout: String(tenant.resourceConfig?.timeout ?? Number(DEFAULT_FORM.timeout)),
+          authDbMode:
+            tenant.authDbConfig?.mode === 'dedicated'
+              ? 'dedicated'
+              : 'shared',
+          authDbSecretKey: tenant.authDbConfig?.secretKey ?? '',
         });
         const access = tenant.adapterAccess ?? {};
         const storedConfig = tenant.adapterConfig ?? {};
@@ -209,6 +225,10 @@ export default function AdminTenantEditPage() {
     resourceConfig: {
       memory: Number(values.memory),
       timeout: Number(values.timeout),
+    },
+    authDbConfig: {
+      mode: values.authDbMode,
+      secretKey: values.authDbMode === 'dedicated' ? values.authDbSecretKey.trim() : null,
     },
     adapterConfig: configText ? parseConfigJson(configText) : undefined,
   });
@@ -344,6 +364,30 @@ export default function AdminTenantEditPage() {
               value={form.timeout}
               onChange={(e) => setForm({ ...form, timeout: e.target.value })}
               error={validationErrors.timeout}
+            />
+            <div>
+              <label className="mb-1 block text-sm font-medium text-textPrimary">Auth DB mode</label>
+              <select
+                value={form.authDbMode}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    authDbMode: e.target.value === 'dedicated' ? 'dedicated' : 'shared',
+                  })
+                }
+                className="w-full rounded-md border border-borderSubtle bg-bgSurface px-3 py-2 text-sm text-textPrimary focus:border-accent focus:outline-none"
+              >
+                <option value="shared">Shared (use global USER_DB_*)</option>
+                <option value="dedicated">Dedicated (use tenant secret key)</option>
+              </select>
+            </div>
+            <Input
+              label="Auth DB secret key"
+              placeholder="userdb:tenant-a"
+              value={form.authDbSecretKey}
+              onChange={(e) => setForm({ ...form, authDbSecretKey: e.target.value })}
+              error={validationErrors.authDbSecretKey}
+              disabled={form.authDbMode !== 'dedicated'}
             />
             <div className="md:col-span-2 space-y-2">
               <div className="flex items-center justify-between">

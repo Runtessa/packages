@@ -9,6 +9,7 @@ import { parseAdapterConfig } from '@/lib/tenant-adapter-config';
 import { Tenant } from '@idp/shared';
 
 const DEFAULT_RESOURCE_CONFIG = { memory: 512, timeout: 5000 };
+const DEFAULT_AUTH_DB_CONFIG = { mode: 'shared' as const, secretKey: null as string | null };
 
 const getTenantId = (req: NextApiRequest) => {
   const raw = req.query.id;
@@ -67,6 +68,38 @@ const normalizeBoolean = (raw: unknown, fallback: boolean) => {
   throw err;
 };
 
+const normalizeAuthDbConfig = (
+  raw: unknown,
+  fallback: { mode: 'shared' | 'dedicated'; secretKey?: string | null }
+) => {
+  if (raw === undefined || raw === null) return fallback;
+  if (typeof raw !== 'object') {
+    const err = new Error('authDbConfig must be an object');
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  const values = raw as { mode?: unknown; secretKey?: unknown };
+  const modeRaw = values.mode ?? fallback.mode;
+  if (modeRaw !== 'shared' && modeRaw !== 'dedicated') {
+    const err = new Error("authDbConfig.mode must be 'shared' or 'dedicated'");
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  const secretKey =
+    typeof values.secretKey === 'string' && values.secretKey.trim()
+      ? values.secretKey.trim()
+      : null;
+  if (modeRaw === 'dedicated' && !secretKey) {
+    const err = new Error('authDbConfig.secretKey is required when mode is dedicated');
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  return {
+    mode: modeRaw,
+    secretKey: modeRaw === 'shared' ? null : secretKey,
+  } as { mode: 'shared' | 'dedicated'; secretKey?: string | null };
+};
+
 const parseAdapterConfigObject = (raw: unknown): Record<string, unknown> | null => {
   if (raw === undefined || raw === null) return null;
   if (typeof raw === 'string') {
@@ -100,6 +133,7 @@ const serializeTenant = (tenant: Tenant) => ({
   resourceConfig: tenant.resourceConfig,
   adapterAccess: tenant.adapterAccess ?? {},
   adapterConfig: tenant.adapterConfig ?? {},
+  authDbConfig: tenant.authDbConfig ?? DEFAULT_AUTH_DB_CONFIG,
   createdAt: tenant.createdAt,
   updatedAt: tenant.updatedAt,
 });
@@ -143,6 +177,10 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       req.body?.allowRegistration,
       tenant.allowRegistration ?? true
     );
+    const nextAuthDbConfig = normalizeAuthDbConfig(
+      req.body?.authDbConfig,
+      tenant.authDbConfig ?? DEFAULT_AUTH_DB_CONFIG
+    );
     const nextResourceConfig = normalizeResourceConfig(
       req.body?.resourceConfig,
       tenant.resourceConfig ?? DEFAULT_RESOURCE_CONFIG
@@ -169,6 +207,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     tenant.isSuspended = nextSuspended;
     tenant.allowRegistration = nextAllowRegistration;
     tenant.resourceConfig = nextResourceConfig;
+    tenant.authDbConfig = nextAuthDbConfig;
     tenant.adapterAccess = nextAdapterAccess;
     tenant.adapterConfig = resolvedConfig ? maskPasswordFields(resolvedConfig) : tenant.adapterConfig ?? {};
     await repo.save(tenant);

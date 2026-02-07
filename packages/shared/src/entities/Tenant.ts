@@ -33,6 +33,12 @@ export class Tenant {
   @Column({ type: "jsonb", default: () => "'{}'" })
   adapterConfig!: Record<string, unknown>;
 
+  @Column({ type: "jsonb", default: () => '\'{"mode":"shared","secretKey":null}\'' })
+  authDbConfig!: {
+    mode: 'shared' | 'dedicated';
+    secretKey?: string | null;
+  };
+
   @Column({ type: "jsonb", default: () => "'{}'" })
   aclPermissions!: { permissions?: Array<{ key: string; label?: string }> };
 
@@ -84,6 +90,7 @@ export type TenantDTO = Pick<
   | 'resourceConfig'
   | 'adapterAccess'
   | 'adapterConfig'
+  | 'authDbConfig'
   | 'aclPermissions'
   | 'aclRoles'
   | 'aclEndpoints'

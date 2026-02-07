@@ -9,6 +9,7 @@ import { maskPasswordFields, resolveMaskedPasswords } from '@/lib/adapter-config
 import { parseAdapterConfig } from '@/lib/tenant-adapter-config';
 
 const DEFAULT_RESOURCE_CONFIG = { memory: 512, timeout: 5000 };
+const DEFAULT_AUTH_DB_CONFIG = { mode: 'shared' as const, secretKey: null as string | null };
 
 const normalizeHostname = (raw: unknown) => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -56,6 +57,38 @@ const normalizeBoolean = (raw: unknown, fallback: boolean) => {
   throw err;
 };
 
+const normalizeAuthDbConfig = (
+  raw: unknown,
+  fallback: { mode: 'shared' | 'dedicated'; secretKey?: string | null }
+) => {
+  if (raw === undefined || raw === null) return fallback;
+  if (typeof raw !== 'object') {
+    const err = new Error('authDbConfig must be an object');
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  const values = raw as { mode?: unknown; secretKey?: unknown };
+  const modeRaw = values.mode ?? fallback.mode;
+  if (modeRaw !== 'shared' && modeRaw !== 'dedicated') {
+    const err = new Error("authDbConfig.mode must be 'shared' or 'dedicated'");
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  const secretKey =
+    typeof values.secretKey === 'string' && values.secretKey.trim()
+      ? values.secretKey.trim()
+      : null;
+  if (modeRaw === 'dedicated' && !secretKey) {
+    const err = new Error('authDbConfig.secretKey is required when mode is dedicated');
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  return {
+    mode: modeRaw,
+    secretKey: modeRaw === 'shared' ? null : secretKey,
+  } as { mode: 'shared' | 'dedicated'; secretKey?: string | null };
+};
+
 const parseAdapterConfigObject = (raw: unknown): Record<string, unknown> | null => {
   if (raw === undefined || raw === null) return null;
   if (typeof raw === 'string') {
@@ -89,6 +122,7 @@ const serializeTenant = (tenant: Tenant) => ({
   resourceConfig: tenant.resourceConfig,
   adapterAccess: tenant.adapterAccess ?? {},
   adapterConfig: tenant.adapterConfig ?? {},
+  authDbConfig: tenant.authDbConfig ?? DEFAULT_AUTH_DB_CONFIG,
   createdAt: tenant.createdAt,
   updatedAt: tenant.updatedAt,
 });
@@ -133,6 +167,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const isSuspended = normalizeBoolean(req.body?.isSuspended, false);
     const allowRegistration = normalizeBoolean(req.body?.allowRegistration, true);
     const resourceConfig = normalizeResourceConfig(req.body?.resourceConfig, DEFAULT_RESOURCE_CONFIG);
+    const authDbConfig = normalizeAuthDbConfig(req.body?.authDbConfig, DEFAULT_AUTH_DB_CONFIG);
     const configObject = parseAdapterConfigObject(req.body?.adapterConfig);
     const resolvedConfig = configObject
       ? await resolveMaskedPasswords(configObject, CoreDataSource)
@@ -152,6 +187,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       isSuspended,
       allowRegistration,
       resourceConfig,
+      authDbConfig,
       adapterAccess,
       adapterConfig: resolvedConfig ? maskPasswordFields(resolvedConfig) : {},
     });

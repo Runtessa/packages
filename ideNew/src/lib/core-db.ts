@@ -92,6 +92,8 @@ export const ensureCoreSchema = async () => {
           hasTenantTable && (await queryRunner.hasColumn('tenants', 'adapterAccess'));
         const hasAdapterConfig =
           hasTenantTable && (await queryRunner.hasColumn('tenants', 'adapterConfig'));
+        const hasAuthDbConfig =
+          hasTenantTable && (await queryRunner.hasColumn('tenants', 'authDbConfig'));
         const hasAclPermissions =
           hasTenantTable && (await queryRunner.hasColumn('tenants', 'aclPermissions'));
         const hasAclRoles = hasTenantTable && (await queryRunner.hasColumn('tenants', 'aclRoles'));
@@ -111,6 +113,7 @@ export const ensureCoreSchema = async () => {
           !hasModuleDraft ||
           !hasAdapterAccess ||
           !hasAdapterConfig ||
+          !hasAuthDbConfig ||
           !hasAclPermissions ||
           !hasAclRoles ||
           !hasAclEndpoints ||
