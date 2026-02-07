@@ -191,7 +191,8 @@ export const loadOrmEntities = (models: OrmModelSource[]) => {
   const cache = new Map<string, any>();
 
   const localRequire = (request: string, from: string) => {
-    const normalizedRequest = String(request || '').replace(/\0/g, '').trim();
+    const rawRequest = String(request || '').replace(/\0/g, '').trim();
+    const normalizedRequest = rawRequest.replace(/\.(ts|tsx)$/i, '.js');
     const lowered = normalizedRequest.toLowerCase();
     if (lowered === 'typeorm' || lowered.startsWith('typeorm/')) {
       return typeorm;
