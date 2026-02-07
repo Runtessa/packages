@@ -40,9 +40,7 @@ type ProjectFormErrors = {
 
 const FILE_EXTENSION_OPTIONS = [
   { label: 'JSX', value: 'jsx' },
-  { label: 'TSX', value: 'tsx' },
   { label: 'JS', value: 'js' },
-  { label: 'TS', value: 'ts' },
   { label: 'JSON', value: 'json' },
   { label: 'CSS', value: 'css' },
 ];
@@ -50,7 +48,7 @@ const FILE_EXTENSION_OPTIONS = [
 const DEFAULT_FORM: ProjectFormState = {
   name: '',
   version: '1.0.0',
-    entryPath: 'src/index.jsx',
+  entryPath: 'src/index.jsx',
   fileExtension: 'jsx',
   dependencies: '',
 };

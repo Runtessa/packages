@@ -11,13 +11,19 @@ import {
 } from '@/lib/tailwindBuilder';
 
 const normalizeSharedExtension = (path: string, explicit?: string) => {
+  const normalize = (value: string) => {
+    const cleaned = value.replace(/^\./, '').toLowerCase();
+    if (cleaned === 'ts') return 'js';
+    if (cleaned === 'tsx') return 'jsx';
+    return cleaned;
+  };
   const normalized = explicit?.replace(/^\./, '').toLowerCase();
-  if (normalized) return normalized;
+  if (normalized) return normalize(normalized);
   const idx = path.lastIndexOf('.');
   if (idx !== -1 && idx < path.length - 1) {
-    return path.slice(idx + 1).toLowerCase();
+    return normalize(path.slice(idx + 1).toLowerCase());
   }
-  return 'tsx';
+  return 'jsx';
 };
 
 export const buildTailwindSourcesFromFiles = (files: GlobalUIPackageFile[]) => {

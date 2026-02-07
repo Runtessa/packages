@@ -29,7 +29,7 @@ export const isTailwindConfigPath = (path: string) =>
   TAILWIND_CONFIG_NAMES.includes(normalizeConfigName(path));
 
 export const shouldBuildTailwind = (fileExtension?: string) =>
-  (fileExtension ?? 'tsx').toLowerCase() !== 'css';
+  (fileExtension ?? 'jsx').toLowerCase() !== 'css';
 
 export const ensureTailwindDependency = (deps: string[], tailwindName: string) => {
   const filtered = deps.filter((dep) => dep !== tailwindName);

@@ -33,12 +33,19 @@ const normalizeSharedPath = (path: string) => path.replace(/\\/g, '/').replace(/
 
 const resolveSharedExtension = (path: string, explicit?: string | null) => {
   const normalized = normalizeExtension(explicit);
-  if (normalized) return normalized;
+  if (normalized) {
+    if (normalized === 'ts') return 'js';
+    if (normalized === 'tsx') return 'jsx';
+    return normalized;
+  }
   const idx = path.lastIndexOf('.');
   if (idx !== -1 && idx < path.length - 1) {
-    return path.slice(idx + 1).toLowerCase();
+    const ext = path.slice(idx + 1).toLowerCase();
+    if (ext === 'ts') return 'js';
+    if (ext === 'tsx') return 'jsx';
+    return ext;
   }
-  return 'tsx';
+  return 'jsx';
 };
 
 const buildCssModuleSource = (path: string, cssText: string) => {

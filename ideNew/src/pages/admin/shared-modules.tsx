@@ -69,17 +69,14 @@ const METHOD_OPTIONS = [
 
 const FILE_EXTENSION_OPTIONS = [
   { label: 'JS', value: 'js' },
-  { label: 'TS', value: 'ts' },
-  { label: 'JSX', value: 'jsx' },
-  { label: 'TSX', value: 'tsx' },
   { label: 'JSON', value: 'json' },
 ];
 
 const DEFAULT_FORM: ProjectFormState = {
   name: '',
   version: '1.0.0',
-    entryPath: 'src/index.js',
-  fileExtension: 'ts',
+  entryPath: 'src/index.js',
+  fileExtension: 'js',
   dependencies: '',
 };
 
@@ -230,7 +227,7 @@ export default function AdminSharedModulesPage() {
       name: project.name,
       version: project.version,
       entryPath: project.entryPath || 'src/index.js',
-      fileExtension: project.fileExtension || 'ts',
+      fileExtension: project.fileExtension || 'js',
       dependencies: formatDeps(project.dependencies),
     });
     setEditValidationErrors({ name: '', version: '', entryPath: '' });

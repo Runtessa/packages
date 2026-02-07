@@ -144,7 +144,7 @@ export function EditorSearchPanel({
             <input
               value={searchIncludePattern}
               onChange={(event) => onSearchIncludeChange(event.target.value)}
-              placeholder="e.g. \\.tsx$"
+              placeholder="e.g. \\.jsx$"
               className="flex-1 rounded border border-[#2a2d2e] bg-[#1b1b1b] px-2 py-1 text-[11px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-[#0b5b96]"
             />
             <span className="text-[10px] text-red-300">{searchIncludeFilter.error}</span>

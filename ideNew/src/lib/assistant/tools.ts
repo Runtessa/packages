@@ -91,17 +91,17 @@ const normalizeDependencies = (raw: unknown): string[] => {
 };
 
 const normalizeModuleExtension = (raw: unknown): string => {
-  const allowed = new Set(['ts', 'js', 'jsx', 'tsx']);
-  if (!raw || typeof raw !== 'string') return 'ts';
+  const allowed = new Set(['js']);
+  if (!raw || typeof raw !== 'string') return 'js';
   const normalized = raw.replace(/^\./, '').toLowerCase();
-  return allowed.has(normalized) ? normalized : 'ts';
+  return allowed.has(normalized) ? normalized : 'js';
 };
 
 const normalizeUiExtension = (raw: unknown): string => {
-  const allowed = new Set(['tsx', 'jsx', 'ts', 'js', 'json', 'css']);
-  if (!raw || typeof raw !== 'string') return 'tsx';
+  const allowed = new Set(['jsx', 'js', 'json', 'css']);
+  if (!raw || typeof raw !== 'string') return 'jsx';
   const normalized = raw.replace(/^\./, '').toLowerCase();
-  return allowed.has(normalized) ? normalized : 'tsx';
+  return allowed.has(normalized) ? normalized : 'jsx';
 };
 
 const normalizeSharedPath = (raw: unknown): string => {
@@ -110,11 +110,17 @@ const normalizeSharedPath = (raw: unknown): string => {
 };
 
 const normalizeSharedExtension = (path: string, raw?: unknown): string => {
+  const normalize = (value: string) => {
+    const cleaned = value.replace(/^\./, '').toLowerCase();
+    if (cleaned === 'ts') return 'js';
+    if (cleaned === 'tsx') return 'jsx';
+    return cleaned;
+  };
   if (typeof raw === 'string' && raw.trim()) {
-    return raw.replace(/^\./, '').toLowerCase();
+    return normalize(raw);
   }
   const ext = path.split('.').pop();
-  return ext ? ext.toLowerCase() : 'tsx';
+  return ext ? normalize(ext) : 'jsx';
 };
 
 const ensureAclEndpoint = async (tenant: Tenant, routePath: string) => {
