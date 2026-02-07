@@ -5,7 +5,7 @@ type DataCardProps = {
   subtitle?: string;
   description?: string;
   actions?: React.ReactNode;
-  children: React.ReactNode;
+  children?: React.ReactNode;
   className?: string;
 };
 
@@ -22,7 +22,7 @@ export const DataCard = ({ title, subtitle, description, actions, children, clas
           {actions && <div className="flex flex-row flex-wrap gap-2">{actions}</div>}
         </div>
       )}
-      <div className="text-left text-textPrimary">{children}</div>
+      {children !== undefined && <div className="text-left text-textPrimary">{children}</div>}
     </section>
   );
 };

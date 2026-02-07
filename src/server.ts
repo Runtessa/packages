@@ -20,6 +20,7 @@ import { ApiRouter } from "./app/routers/api";
 import { TenantAclController } from "./app/controllers/TenantAclController";
 import { UIPackage } from "@idp/shared";
 import { TenantRequest } from "./types/RequestContext";
+import { MonitoringService } from "./core/monitoring/MonitoringService";
 
 const app = express();
 
@@ -183,6 +184,8 @@ const renderLoginShell = ({
 
 const bootstrap = async () => {
   await initializeDataSource();
+  const monitoringService = new MonitoringService();
+  monitoringService.start();
   const cryptoService = buildCryptoService();
 
   const adapterFactory = new AdapterFactory(AppDataSource, cryptoService);
@@ -203,6 +206,9 @@ const bootstrap = async () => {
   const optionalContextMiddleware = OptionalContextMiddleware(AppDataSource);
   const authGuard = AuthGuard(AppDataSource, cryptoService);
   const optionalAuthGuard = OptionalAuthGuard(AppDataSource, cryptoService);
+
+  // Monitoring runs out-of-band and must never block request processing.
+  app.use(monitoringService.middleware());
 
   app.post("/admin/tenants", adminController.createTenant);
   app.post("/auth/register", contextMiddleware, authController.register);
