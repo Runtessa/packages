@@ -31,7 +31,6 @@ import {
   DEFAULT_SPLIT_RATIO,
   DEFAULT_UI_EXTENSION,
   DEFAULT_UI_CODE,
-  EDITOR_NAV_ITEMS,
   FOLDER_STORAGE_KEY,
   HISTORY_PAGE_SIZE,
   LANGUAGE_OPTIONS,
@@ -263,6 +262,9 @@ export default function EditorPage() {
   const splitRatioRef = useRef(splitRatio);
   const splitResizeRef = useRef<{ active: boolean }>({ active: false });
   const dragTabIdRef = useRef<string | null>(null);
+  const [editorDropTarget, setEditorDropTarget] = useState<'left' | 'right' | null>(
+    null
+  );
   const [leftPanel, setLeftPanel] = useState<
     'explorer' | 'history' | 'search' | 'staging' | 'assistant'
   >('explorer');
@@ -332,6 +334,12 @@ export default function EditorPage() {
     : tenantHost
       ? 'text-gray-200'
       : 'text-red-200';
+  const exitHref =
+    sharedMode === 'module'
+      ? '/admin/shared-modules'
+      : sharedMode === 'ui'
+      ? '/admin/shared-packages'
+      : '/admin/tenants';
   const rightPaneSet = useMemo(() => new Set(rightPaneIds), [rightPaneIds]);
   const leftTabs = useMemo(
     () => openFiles.filter((file) => !rightPaneSet.has(file.id)),
@@ -1341,6 +1349,34 @@ export default function EditorPage() {
     event.dataTransfer.dropEffect = 'move';
   };
 
+  const handleEditorDragOver = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const sourceId = getDraggedTabId(event);
+      if (!sourceId || !editorAreaRef.current) {
+        setEditorDropTarget(null);
+        return;
+      }
+      const rect = editorAreaRef.current.getBoundingClientRect();
+      const isRightSide = event.clientX > rect.left + rect.width * 0.55;
+      setEditorDropTarget(isRightSide ? 'right' : 'left');
+      event.dataTransfer.dropEffect = 'move';
+    },
+    []
+  );
+
+  const handleEditorDragLeave = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      const next = event.relatedTarget as Node | null;
+      if (editorAreaRef.current && next && editorAreaRef.current.contains(next)) {
+        return;
+      }
+      setEditorDropTarget(null);
+    },
+    []
+  );
+
   const getDraggedTabId = (event: React.DragEvent<HTMLDivElement>) =>
     dragTabIdRef.current ||
     event.dataTransfer.getData('application/x-editor-tab') ||
@@ -1370,6 +1406,7 @@ export default function EditorPage() {
 
   const handleTabDragEnd = () => {
     dragTabIdRef.current = null;
+    setEditorDropTarget(null);
   };
 
   const handleTabBarDrop = (
@@ -1389,6 +1426,7 @@ export default function EditorPage() {
     event.stopPropagation();
     const sourceId = getDraggedTabId(event);
     dragTabIdRef.current = null;
+    setEditorDropTarget(null);
     if (!sourceId || !editorAreaRef.current) return;
     const rect = editorAreaRef.current.getBoundingClientRect();
     const isRightSide = event.clientX > rect.left + rect.width * 0.55;
@@ -3387,8 +3425,6 @@ export default function EditorPage() {
       <div className="flex h-screen flex-col bg-[#1e1e1e] text-gray-100">
         <EditorHeader
           branding={branding}
-          navItems={EDITOR_NAV_ITEMS}
-          pathname={router.pathname}
           editorView={editorView}
           previewPort={previewPort}
           defaultPreviewPort={DEFAULT_PREVIEW_PORT}
@@ -3414,6 +3450,7 @@ export default function EditorPage() {
             }}
             sidebarLabel={sidebarLabel}
             sidebarLabelTone={sidebarLabelTone}
+            exitHref={exitHref}
           />
 
           {leftPanelOpen && (
@@ -3538,6 +3575,7 @@ export default function EditorPage() {
 
             <EditorWorkspace
               editorView={editorView}
+              editorDropTarget={editorDropTarget}
               showDiff={showDiff}
               showSplitEditor={showSplitEditor}
               splitRatio={splitRatio}
@@ -3564,7 +3602,8 @@ export default function EditorPage() {
                 editor.addCommand(command, () => handleSaveRef.current());
               }}
               onSplitResizeStart={handleSplitResizeStart}
-              onTabDragOver={handleTabDragOver}
+              onEditorDragOver={handleEditorDragOver}
+              onEditorDragLeave={handleEditorDragLeave}
               onEditorDrop={handleEditorDrop}
               previewTarget={previewTarget}
               previewSrc={previewSrc}

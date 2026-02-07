@@ -12,6 +12,7 @@ const MonacoDiffEditor = dynamic(
 
 type EditorWorkspaceProps = {
   editorView: 'code' | 'preview';
+  editorDropTarget: 'left' | 'right' | null;
   showDiff: boolean;
   showSplitEditor: boolean;
   splitRatio: number;
@@ -42,7 +43,8 @@ type EditorWorkspaceProps = {
     monacoInstance: typeof monaco | typeof monacoApi
   ) => void;
   onSplitResizeStart: (event: React.MouseEvent<HTMLDivElement>) => void;
-  onTabDragOver: (event: React.DragEvent<HTMLDivElement>) => void;
+  onEditorDragOver: (event: React.DragEvent<HTMLDivElement>) => void;
+  onEditorDragLeave: (event: React.DragEvent<HTMLDivElement>) => void;
   onEditorDrop: (event: React.DragEvent<HTMLDivElement>) => void;
   previewTarget: PreviewTarget | null;
   previewSrc: string;
@@ -54,6 +56,7 @@ type EditorWorkspaceProps = {
 
 export function EditorWorkspace({
   editorView,
+  editorDropTarget,
   showDiff,
   showSplitEditor,
   splitRatio,
@@ -72,7 +75,8 @@ export function EditorWorkspace({
   onMainEditorMount,
   onSideEditorMount,
   onSplitResizeStart,
-  onTabDragOver,
+  onEditorDragOver,
+  onEditorDragLeave,
   onEditorDrop,
   previewTarget,
   previewSrc,
@@ -85,17 +89,18 @@ export function EditorWorkspace({
     <div
       ref={editorAreaRef}
       className="relative flex flex-1 min-h-0 min-w-0 overflow-hidden bg-[#1e1e1e]"
-      onDragOverCapture={onTabDragOver}
+      onDragOverCapture={onEditorDragOver}
+      onDragLeaveCapture={onEditorDragLeave}
       onDropCapture={onEditorDrop}
-      onDragOver={onTabDragOver}
+      onDragOver={onEditorDragOver}
+      onDragLeave={onEditorDragLeave}
       onDrop={onEditorDrop}
     >
-      <div
-        className={`flex flex-1 min-h-0 min-w-0 ${editorView === 'preview' ? 'hidden' : ''}`}
-      >
-        <div className={`flex min-h-0 min-w-0 flex-1 ${showDiff ? 'hidden' : ''}`}>
-          <div
-            className="flex min-w-0 flex-col"
+      {editorView === 'code' && activeFile && (
+        <div className="flex flex-1 min-h-0 min-w-0">
+          <div className={`flex min-h-0 min-w-0 flex-1 ${showDiff ? 'hidden' : ''}`}>
+            <div
+              className="flex min-w-0 flex-col"
             style={
               showSplitEditor
                 ? {
@@ -191,7 +196,9 @@ export function EditorWorkspace({
           />
         </div>
       </div>
-      <div className={`flex min-h-0 flex-1 ${editorView === 'preview' ? '' : 'hidden'}`}>
+      )}
+      {editorView === 'preview' && (
+        <div className="flex min-h-0 flex-1">
         {!previewTarget ? (
           <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
             {isSharedMode
@@ -214,11 +221,77 @@ export function EditorWorkspace({
           />
         )}
       </div>
+      )}
+      {editorDropTarget && editorView === 'code' && (
+        <div className="pointer-events-none absolute inset-0">
+          <div
+            className={`absolute inset-y-0 ${
+              editorDropTarget === 'right' ? 'right-0' : 'left-0'
+            } w-1/2 border border-[#3c3c3c] bg-[#2a2d2e]/30`}
+          >
+            <div className="absolute inset-2 rounded-sm border border-[#3c3c3c]/70" />
+          </div>
+        </div>
+      )}
       {!activeFile && editorView === 'code' && (
-        <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">
-          {isSharedMode
-            ? 'Select a file from the shared project to start editing.'
-            : 'Select a module or UI entity from the explorer to start editing.'}
+        <div className="absolute inset-0 flex items-center justify-center text-gray-400">
+          <div className="flex flex-col items-center gap-8">
+            <img
+              src="/images/lm.png"
+              alt="Empty editor"
+              className="h-32 w-auto object-contain opacity-30 grayscale brightness-50"
+            />
+            <div className="text-xs text-gray-500">
+              <div className="grid grid-cols-[auto_auto] items-center gap-x-6 gap-y-3">
+                <div className="text-[11px] uppercase tracking-wide text-gray-400">
+                  Save File
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="rounded border border-gray-700/60 bg-gray-900/60 px-2 py-0.5">
+                    Ctrl
+                  </span>
+                  <span className="text-gray-600">+</span>
+                  <span className="rounded border border-gray-700/60 bg-gray-900/60 px-2 py-0.5">
+                    S
+                  </span>
+                </div>
+
+                <div className="text-[11px] uppercase tracking-wide text-gray-400">
+                  Reload Preview
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="rounded border border-gray-700/60 bg-gray-900/60 px-2 py-0.5">
+                    F5
+                  </span>
+                  <span className="text-gray-600">/</span>
+                  <span className="rounded border border-gray-700/60 bg-gray-900/60 px-2 py-0.5">
+                    Ctrl
+                  </span>
+                  <span className="text-gray-600">+</span>
+                  <span className="rounded border border-gray-700/60 bg-gray-900/60 px-2 py-0.5">
+                    R
+                  </span>
+                </div>
+
+                <div className="text-[11px] uppercase tracking-wide text-gray-400">
+                  Reload Tree + History
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="rounded border border-gray-700/60 bg-gray-900/60 px-2 py-0.5">
+                    Ctrl
+                  </span>
+                  <span className="text-gray-600">+</span>
+                  <span className="rounded border border-gray-700/60 bg-gray-900/60 px-2 py-0.5">
+                    Shift
+                  </span>
+                  <span className="text-gray-600">+</span>
+                  <span className="rounded border border-gray-700/60 bg-gray-900/60 px-2 py-0.5">
+                    R
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

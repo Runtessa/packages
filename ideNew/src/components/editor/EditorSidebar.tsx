@@ -1,5 +1,13 @@
 import type { ReactNode } from 'react';
-import { FiClock, FiFlag, FiFolder, FiMessageSquare, FiSearch } from 'react-icons/fi';
+import Link from 'next/link';
+import {
+  FiArrowLeftCircle,
+  FiClock,
+  FiFlag,
+  FiFolder,
+  FiMessageSquare,
+  FiSearch,
+} from 'react-icons/fi';
 
 type LeftPanelKey = 'explorer' | 'search' | 'history' | 'staging' | 'assistant';
 
@@ -9,6 +17,7 @@ type EditorSidebarProps = {
   onTogglePanel: (panel: LeftPanelKey) => void;
   sidebarLabel: string;
   sidebarLabelTone: string;
+  exitHref: string;
 };
 
 export function EditorSidebar({
@@ -17,6 +26,7 @@ export function EditorSidebar({
   onTogglePanel,
   sidebarLabel,
   sidebarLabelTone,
+  exitHref,
 }: EditorSidebarProps) {
   const makeButton = (panel: LeftPanelKey, title: string, icon: ReactNode) => (
     <button
@@ -52,6 +62,13 @@ export function EditorSidebar({
             {sidebarLabel}
           </span>
         </div>
+        <Link
+          href={exitHref}
+          title="Exit editor"
+          className="mt-2 flex h-8 w-8 items-center justify-center rounded-lg text-base text-gray-400 transition hover:bg-[#2a2d2e] hover:text-gray-200"
+        >
+          <FiArrowLeftCircle />
+        </Link>
       </div>
     </div>
   );

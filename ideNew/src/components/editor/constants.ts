@@ -1,14 +1,5 @@
 import type { EditorLanguage, SharedFileFormState } from '@/components/editor/types';
 
-export const EDITOR_NAV_ITEMS = [
-  { label: 'Editor', href: '/editor', match: '/editor' },
-  { label: 'Dashboard', href: '/dashboard', match: '/dashboard' },
-  { label: 'Docs', href: '/docs', match: '/docs' },
-  { label: 'Shared Projects', href: '/admin/shared-packages', match: '/admin/shared-packages' },
-  { label: 'Shared Backends', href: '/admin/shared-modules', match: '/admin/shared-modules' },
-  { label: 'Tenants', href: '/admin/tenants', match: '/admin/tenants' },
-];
-
 export const LANGUAGE_OPTIONS: { value: EditorLanguage; label: string }[] = [
   { value: 'javascript', label: 'JavaScript' },
   { value: 'jsx', label: 'JSX' },

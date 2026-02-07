@@ -1,16 +1,8 @@
 import Image from 'next/image';
 import Link from 'next/link';
 
-export type EditorNavItem = {
-  label: string;
-  href: string;
-  match: string;
-};
-
 type EditorHeaderProps = {
   branding: { logo_lm: string; brand_name: string };
-  navItems: EditorNavItem[];
-  pathname: string;
   editorView: 'code' | 'preview';
   previewPort: string;
   defaultPreviewPort: string;
@@ -21,8 +13,6 @@ type EditorHeaderProps = {
 
 export function EditorHeader({
   branding,
-  navItems,
-  pathname,
   editorView,
   previewPort,
   defaultPreviewPort,
@@ -49,25 +39,6 @@ export function EditorHeader({
             <div className="text-[12px] font-semibold text-gray-100">Editor Studio</div>
           </div>
         </Link>
-
-        <nav className="hidden lg:flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-400">
-          {navItems.map((item) => {
-            const isActive = pathname === item.match || pathname.startsWith(`${item.match}/`);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`rounded-full border px-3 py-1 transition ${
-                  isActive
-                    ? 'border-[#0f72be] bg-[#0b5b96] text-white'
-                    : 'border-transparent text-gray-400 hover:border-[#2a2d2e] hover:bg-[#1f1f1f] hover:text-gray-200'
-                }`}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
       </div>
 
       <div className="ml-auto flex items-center gap-2 text-[11px]">
