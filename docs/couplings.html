@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IdpCore Couplings</title>
+    <link rel="stylesheet" href="./assets/docs.css" />
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({ startOnLoad: true, theme: "dark" });
+    </script>
+  </head>
+  <body>
+    <header>
+      <div class="wrap">
+        <h1 class="title">IdpCore Coupling Map</h1>
+        <p class="subtitle">Dependency directions and concentration hotspots.</p>
+        <nav class="nav">
+  <a href="./index.html">Index</a>
+  <a href="./architecture.html">Architecture</a>
+  <a href="./couplings.html">Couplings</a>
+  <a href="./metrics.html">Code Metrics</a>
+  <a href="./code-reference.html">Code Reference</a>
+  <a href="./api-reference.html">API Reference</a>
+  <a href="./entities-reference.html">Entities</a>
+</nav>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <section>
+        <h2>Domain Coupling Diagram</h2>
+        <p class="muted">
+          Edge labels are import-link counts from current source snapshot (191 files, 972 import/require links).
+        </p>
+        <div class="mermaid">
+flowchart LR
+    IP[ide:pages] -->|245| IL[ide:lib]
+    IP -->|156| IC[ide:components]
+    IP -->|46| SE[shared:entities]
+    IL -->|26| SE
+    CC[core:core] -->|20| SE
+    CA[core:app] -->|12| SE
+    CROOT[core:root] -->|10| CA
+    IC -->|35| IC
+    IL -->|29| IL
+        </div>
+      </section>
+
+      <section>
+        <h2>Top Coupling Edges</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Edge</th>
+              <th>Count</th>
+              <th>Interpretation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>ide:pages -&gt; ide:lib</code></td><td>245</td><td>Page layer heavily routes all API/state logic through lib wrappers.</td></tr>
+            <tr><td><code>ide:pages -&gt; ide:components</code></td><td>156</td><td>View composition is component-centric, as expected for Next.js pages.</td></tr>
+            <tr><td><code>ide:pages -&gt; external</code></td><td>96</td><td>Direct framework/library imports from pages remain high.</td></tr>
+            <tr><td><code>ide:components -&gt; external</code></td><td>53</td><td>UI components rely on third-party libraries and icon packages.</td></tr>
+            <tr><td><code>ide:pages -&gt; shared:entities</code></td><td>46</td><td>Cross-boundary entity sharing is actively used in IDE APIs.</td></tr>
+            <tr><td><code>ide:lib -&gt; shared:entities</code></td><td>26</td><td>Shared entities are central in IDE server-side data paths.</td></tr>
+            <tr><td><code>core:core -&gt; shared:entities</code></td><td>20</td><td>Core runtime data model is coupled to shared package by design.</td></tr>
+            <tr><td><code>core:app -&gt; shared:entities</code></td><td>12</td><td>Controllers/middleware are also consuming shared entities directly.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Coupling Risk Notes</h2>
+        <ul>
+          <li><span class="badge-warn">High concentration:</span> IDE pages are strongly coupled to IDE lib; keep service contracts stable to avoid broad page churn.</li>
+          <li><span class="badge-ok">Healthy boundary:</span> shared entities package is used across core/IDE, reducing duplicated ORM/entity contracts.</li>
+          <li><span class="badge-warn">Watch area:</span> self-coupling in <code>ide:components</code> and <code>ide:lib</code> can create circular utility dependencies over time.</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>
