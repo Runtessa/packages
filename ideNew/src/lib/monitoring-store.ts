@@ -156,7 +156,7 @@ export const monitoringStore = {
       .map(normalizeAlert);
   },
 
-  async ingestSnapshot(snapshot: MonitoringSnapshot, retention = 1440) {
+  async ingestSnapshot(snapshot: MonitoringSnapshot, retention = 21600) {
     const instanceKey = `${snapshot.serverName}::${snapshot.instanceId}`;
     const ttlSec = 30;
     await redis

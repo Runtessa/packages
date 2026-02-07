@@ -76,7 +76,9 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   await requireAdmin(req);
 
   const minutes = toMinutes(req.query.minutes);
-  const pointLimit = toLimit(req.query.pointLimit, 360, 3000);
+  const sampleIntervalSec = 4;
+  const defaultPointLimit = Math.max(Math.ceil((minutes * 60) / sampleIntervalSec), 360);
+  const pointLimit = toLimit(req.query.pointLimit, defaultPointLimit, 30000);
   const alertLimit = toLimit(req.query.alertLimit, 50, 500);
   const serverName = str(req.query.serverName).trim();
   const instanceId = str(req.query.instanceId).trim();
@@ -84,7 +86,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   const sinceTs = Date.now() - minutes * 60_000;
 
   const instanceKeys = await monitoringStore.listInstanceKeys();
-  const fetchPerInstance = Math.min(Math.max(pointLimit, 100), 1000);
+  const fetchPerInstance = Math.min(Math.max(pointLimit, 100), 30000);
 
   const snapshotsByInstance = await Promise.all(
     instanceKeys.map(async (key) => ({ key, rows: await monitoringStore.readSnapshots(key, fetchPerInstance) }))

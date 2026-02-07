@@ -76,8 +76,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
 
   const snapshotRetentionRaw = Number(payload.snapshotRetention);
   const snapshotRetention = Number.isFinite(snapshotRetentionRaw)
-    ? Math.min(Math.max(Math.floor(snapshotRetentionRaw), 100), 20_000)
-    : 1440;
+    ? Math.min(Math.max(Math.floor(snapshotRetentionRaw), 100), 30_000)
+    : 21600;
 
   const alertRetentionRaw = Number(payload.alertRetention);
   const alertRetention = Number.isFinite(alertRetentionRaw)
