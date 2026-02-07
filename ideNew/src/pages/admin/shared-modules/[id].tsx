@@ -317,7 +317,9 @@ export default function AdminSharedModuleEditPage() {
     return (
       <div className="space-y-6">
         <PageHeader title="Edit shared backend" subtitle="You do not have access to shared backend projects." />
-        <DataCard title="Permission Denied" subtitle="Please contact an administrator." />
+        <DataCard title="Permission Denied" subtitle="Please contact an administrator.">
+          <div className="text-sm text-textMuted">Access requires an admin account.</div>
+        </DataCard>
       </div>
     );
   }
