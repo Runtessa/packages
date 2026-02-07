@@ -69,10 +69,10 @@ const normalizeDependencies = (raw: unknown): string[] => {
 };
 
 const normalizeFileExtension = (raw: unknown): string => {
-  const allowed = new Set(['tsx', 'jsx', 'ts', 'js', 'json', 'css']);
-  if (!raw || typeof raw !== 'string') return 'tsx';
+  const allowed = new Set(['jsx', 'js', 'json', 'css']);
+  if (!raw || typeof raw !== 'string') return 'jsx';
   const normalized = raw.replace(/^\./, '').toLowerCase();
-  return allowed.has(normalized) ? normalized : 'tsx';
+  return allowed.has(normalized) ? normalized : 'jsx';
 };
 
 const serialize = (pkg: UIPackage) => ({

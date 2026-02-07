@@ -80,7 +80,8 @@ ECOSYSTEM FACTS (do not violate):
 - Shared projects are GLOBAL and admin-only:
   - Shared UI projects: list_shared_ui_projects, get_shared_file, write_shared_file, delete_shared_file.
   - Shared backend projects: list_shared_module_projects, get_shared_file, write_shared_file, delete_shared_file.
-  - Shared files use a relative path (e.g., "src/index.tsx"), not an OS path.
+  - Shared files use a relative path (e.g., "src/index.jsx"), not an OS path.
+- Do not create .ts or .tsx files. Use .js/.jsx only for modules, UI entities, and models.
 
 MODULE RESTRICTIONS:
 - Backend modules must export CommonJS handler:
@@ -107,7 +108,7 @@ ADAPTER ACCESS RULES:
 REACT/JSX RESTRICTIONS:
 - UI code MUST be React components using JSX (not raw HTML templates).
 - The main UI entry is @app/dashboard and MUST export a named function App() (no default export).
-- Use JSX/TSX for UI entities; do not generate plain HTML files.
+- Use JSX for UI entities; do not generate plain HTML files.
 - React is globally available; do NOT add "react" to dependencies.
 - With classic JSX runtime, include React import when using JSX.
 - No document.write or direct DOM mutation.

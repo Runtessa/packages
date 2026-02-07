@@ -78,7 +78,7 @@ const FILE_EXTENSION_OPTIONS = [
 const DEFAULT_FORM: ProjectFormState = {
   name: '',
   version: '1.0.0',
-  entryPath: 'src/index.ts',
+    entryPath: 'src/index.js',
   fileExtension: 'ts',
   dependencies: '',
 };
@@ -229,7 +229,7 @@ export default function AdminSharedModulesPage() {
     setEditForm({
       name: project.name,
       version: project.version,
-      entryPath: project.entryPath || 'src/index.ts',
+      entryPath: project.entryPath || 'src/index.js',
       fileExtension: project.fileExtension || 'ts',
       dependencies: formatDeps(project.dependencies),
     });
@@ -572,7 +572,7 @@ export default function AdminSharedModulesPage() {
             value={form.entryPath}
             onChange={(event) => setForm({ ...form, entryPath: event.target.value })}
             error={validationErrors.entryPath}
-            placeholder="src/index.ts"
+            placeholder="src/index.js"
           />
           <Select
             label="File extension"

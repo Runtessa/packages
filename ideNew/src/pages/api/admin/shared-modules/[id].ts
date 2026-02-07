@@ -53,11 +53,23 @@ const normalizeDependencies = (raw: unknown): string[] => {
   return raw.map((item) => String(item));
 };
 
+const normalizeEntryPath = (raw: string) => {
+  const trimmed = raw.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!trimmed) return 'src/index.js';
+  const extMatch = trimmed.match(/\.([^.\/]+)$/);
+  if (!extMatch) return `${trimmed}.js`;
+  const ext = extMatch[1]?.toLowerCase();
+  if (ext !== 'js') {
+    return trimmed.replace(/\.[^.\/]+$/, '.js');
+  }
+  return trimmed;
+};
+
 const normalizeFileExtension = (raw: unknown): string => {
-  const allowed = new Set(['ts', 'js', 'tsx', 'jsx', 'json']);
-  if (!raw || typeof raw !== 'string') return 'ts';
+  const allowed = new Set(['js', 'json']);
+  if (!raw || typeof raw !== 'string') return 'js';
   const normalized = raw.replace(/^\./, '').toLowerCase();
-  return allowed.has(normalized) ? normalized : 'ts';
+  return allowed.has(normalized) ? normalized : 'js';
 };
 
 const serialize = (pkg: GlobalModulePackage) => ({
@@ -107,7 +119,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const nextVersion = req.body?.version ? normalizeVersion(req.body.version) : pkg.version;
     const nextEntry =
       req.body?.entryPath !== undefined && typeof req.body.entryPath === 'string'
-        ? req.body.entryPath.trim() || pkg.entryPath
+        ? normalizeEntryPath(req.body.entryPath) || pkg.entryPath
         : pkg.entryPath;
     const nextSource =
       req.body?.code !== undefined ? normalizeSourceCode(req.body.code) : pkg.code;

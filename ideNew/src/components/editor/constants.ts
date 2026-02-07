@@ -50,7 +50,12 @@ export const DEFAULT_UI_CODE = `export default function NewComponent() {
 
 export const DEFAULT_CSS_CODE = `/* Add styles for UI entities here */`;
 
-export const DEFAULT_MODEL_CODE = `const { Entity, PrimaryGeneratedColumn, Column } = require('typeorm');
+export const DEFAULT_MODEL_CODE = `// Usage in a module:
+// const orm = await adapters.orm('postgres:pga1');
+// const repo = orm.getRepository('ExampleItem');
+// const rows = await repo.find();
+
+const { Entity, PrimaryGeneratedColumn, Column } = require('typeorm');
 
 @Entity({ name: 'example_items' })
 class ExampleItem {

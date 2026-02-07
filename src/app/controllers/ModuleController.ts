@@ -276,10 +276,10 @@ export class ModuleController {
   }
 
   private normalizeFileExtension(raw: unknown): string {
-    const allowed = new Set(["ts", "js", "jsx", "tsx"]);
-    if (!raw || typeof raw !== "string") return "ts";
-    const normalized = raw.replace(/^\./, "").toLowerCase();
-    return allowed.has(normalized) ? normalized : "ts";
+    const allowed = new Set(['js']);
+    if (!raw || typeof raw !== 'string') return 'js';
+    const normalized = raw.replace(/^\./, '').toLowerCase();
+    return allowed.has(normalized) ? normalized : 'js';
   }
 
   private async createRevision(req: TenantRequest, mod: ModuleEntity, action: string) {

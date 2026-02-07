@@ -54,11 +54,23 @@ const normalizeDependencies = (raw: unknown): string[] => {
   return raw.map((item) => String(item));
 };
 
+const normalizeEntryPath = (raw: string) => {
+  const trimmed = raw.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!trimmed) return 'src/index.js';
+  const extMatch = trimmed.match(/\.([^.\/]+)$/);
+  if (!extMatch) return `${trimmed}.js`;
+  const ext = extMatch[1]?.toLowerCase();
+  if (ext !== 'js') {
+    return trimmed.replace(/\.[^.\/]+$/, '.js');
+  }
+  return trimmed;
+};
+
 const normalizeFileExtension = (raw: unknown): string => {
-  const allowed = new Set(['ts', 'js', 'tsx', 'jsx', 'json']);
-  if (!raw || typeof raw !== 'string') return 'ts';
+  const allowed = new Set(['js', 'json']);
+  if (!raw || typeof raw !== 'string') return 'js';
   const normalized = raw.replace(/^\./, '').toLowerCase();
-  return allowed.has(normalized) ? normalized : 'ts';
+  return allowed.has(normalized) ? normalized : 'js';
 };
 
 const serialize = (pkg: GlobalModulePackage) => ({
@@ -103,8 +115,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const fileExtension = normalizeFileExtension(req.body?.fileExtension);
     const normalizedEntry =
       typeof entryPath === 'string' && entryPath.trim()
-        ? entryPath.trim()
-        : 'src/index.ts';
+        ? normalizeEntryPath(entryPath)
+        : 'src/index.js';
 
     const repo = CoreDataSource.getRepository(GlobalModulePackage);
     const fileRepo = CoreDataSource.getRepository(GlobalModulePackageFile);

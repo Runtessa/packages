@@ -30,11 +30,17 @@ const normalizeContent = (raw: unknown) => {
 };
 
 const normalizeFileExtension = (path: string, raw: unknown) => {
+  const normalize = (value?: string) => {
+    if (!value) return 'jsx';
+    const cleaned = value.replace(/^\./, '').toLowerCase();
+    if (cleaned === 'ts' || cleaned === 'tsx') return 'jsx';
+    return cleaned;
+  };
   if (typeof raw === 'string' && raw.trim()) {
-    return raw.replace(/^\./, '').toLowerCase();
+    return normalize(raw);
   }
   const ext = path.split('.').pop();
-  return ext ? ext.toLowerCase() : 'tsx';
+  return normalize(ext);
 };
 
 const serialize = (file: GlobalUIPackageFile) => ({

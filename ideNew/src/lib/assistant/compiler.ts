@@ -85,13 +85,13 @@ export const buildSharedBundle = (
     );
   });
 
-  const entryPath = normalizeSharedPath(project.entryPath || 'src/index.tsx');
+  const entryPath = normalizeSharedPath(project.entryPath || 'src/index.jsx');
   const bundleLines = [
     'const __modules = {',
     moduleEntries.join(',\n'),
     '};',
     'const __cache = {};',
-    "const __extensions = ['.tsx', '.ts', '.jsx', '.js', '.json', '.css'];",
+    "const __extensions = ['.jsx', '.js', '.json', '.css'];",
     'const __externalRequire = require;',
     'const __normalize = (value) => {',
     "  const parts = String(value || '').split('/').filter(Boolean);",

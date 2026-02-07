@@ -19,7 +19,7 @@ export class GlobalModulePackage {
   @Column()
   version!: string;
 
-  @Column({ name: 'entry_path', default: 'src/index.ts' })
+  @Column({ name: 'entry_path', default: 'src/index.js' })
   entryPath!: string;
 
   @Column({ type: 'text', default: '' })

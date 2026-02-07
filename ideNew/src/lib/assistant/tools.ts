@@ -160,7 +160,7 @@ const snapshotSharedProject = (
   id: pkg.id,
   name: pkg.name,
   version: pkg.version,
-  entryPath: pkg.entryPath ?? 'src/index.ts',
+  entryPath: pkg.entryPath ?? (kind === 'ui' ? 'src/index.jsx' : 'src/index.js'),
   code: pkg.code ?? '',
   codeBlob: pkg.codeBlob ?? '',
   dependencies: pkg.dependencies ?? [],
@@ -333,7 +333,9 @@ const updateSharedBundle = async (
   project: GlobalUIPackage | GlobalModulePackage,
   files: Array<GlobalUIPackageFile | GlobalModulePackageFile>
 ) => {
-  const entryPath = project.entryPath || 'src/index.ts';
+  const entryPath =
+    project.entryPath ||
+    (project.fileExtension === 'jsx' ? 'src/index.jsx' : 'src/index.js');
   const entryFile = files.find((file) => (file.path || '') === entryPath);
   const entrySource = entryFile?.content ?? '';
   const bundle = buildSharedBundle(

@@ -24,11 +24,17 @@ const normalizeContent = (raw: unknown) => {
 };
 
 const normalizeFileExtension = (path: string, raw: unknown) => {
+  const normalize = (value?: string) => {
+    if (!value) return 'js';
+    const cleaned = value.replace(/^\./, '').toLowerCase();
+    if (cleaned === 'ts' || cleaned === 'tsx') return 'js';
+    return cleaned;
+  };
   if (typeof raw === 'string' && raw.trim()) {
-    return raw.replace(/^\./, '').toLowerCase();
+    return normalize(raw);
   }
   const ext = path.split('.').pop();
-  return ext ? ext.toLowerCase() : 'ts';
+  return normalize(ext);
 };
 
 const serialize = (file: GlobalModulePackageFile) => ({

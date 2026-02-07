@@ -19,7 +19,7 @@ export class GlobalUIPackage {
   @Column()
   version!: string;
 
-  @Column({ name: 'entry_path', default: 'src/index.tsx' })
+  @Column({ name: 'entry_path', default: 'src/index.jsx' })
   entryPath!: string;
 
   @Column({ type: 'text', default: '' })

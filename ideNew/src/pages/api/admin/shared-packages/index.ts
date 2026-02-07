@@ -62,11 +62,21 @@ const normalizeDependencies = (raw: unknown): string[] => {
   return raw.map((item) => String(item));
 };
 
+const normalizeEntryPath = (raw: string) => {
+  const trimmed = raw.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!trimmed) return 'src/index.jsx';
+  const extMatch = trimmed.match(/\.([^.\/]+)$/);
+  if (!extMatch) return `${trimmed}.jsx`;
+  const ext = extMatch[1]?.toLowerCase();
+  if (ext === 'js' || ext === 'jsx') return trimmed;
+  return trimmed.replace(/\.[^.\/]+$/, '.jsx');
+};
+
 const normalizeFileExtension = (raw: unknown): string => {
-  const allowed = new Set(['tsx', 'jsx', 'ts', 'js', 'json', 'css']);
-  if (!raw || typeof raw !== 'string') return 'tsx';
+  const allowed = new Set(['jsx', 'js', 'json', 'css']);
+  if (!raw || typeof raw !== 'string') return 'jsx';
   const normalized = raw.replace(/^\./, '').toLowerCase();
-  return allowed.has(normalized) ? normalized : 'tsx';
+  return allowed.has(normalized) ? normalized : 'jsx';
 };
 
 const serialize = (pkg: GlobalUIPackage) => ({
@@ -113,8 +123,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const fileExtension = normalizeFileExtension(req.body?.fileExtension);
     const normalizedEntry =
       typeof entryPath === 'string' && entryPath.trim()
-        ? entryPath.trim()
-        : 'src/index.tsx';
+        ? normalizeEntryPath(entryPath)
+        : 'src/index.jsx';
     const isTwPackage = isTailwindPackageName(normalizedName);
     const usesTailwind = shouldBuildTailwind(fileExtension) && !isTwPackage;
     const tailwindName = getTailwindPackageName(normalizedName);
@@ -147,7 +157,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const entryFile = fileRepo.create({
       project: pkg,
       path: normalizedEntry,
-      fileExtension: normalizedEntry.split('.').pop() || 'tsx',
+      fileExtension: normalizedEntry.split('.').pop() || 'jsx',
       content: normalizedCode,
     });
     await fileRepo.save(entryFile);

@@ -67,11 +67,21 @@ const normalizeDependencies = (raw: unknown): string[] => {
   return raw.map((item) => String(item));
 };
 
+const normalizeEntryPath = (raw: string) => {
+  const trimmed = raw.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!trimmed) return 'src/index.jsx';
+  const extMatch = trimmed.match(/\.([^.\/]+)$/);
+  if (!extMatch) return `${trimmed}.jsx`;
+  const ext = extMatch[1]?.toLowerCase();
+  if (ext === 'js' || ext === 'jsx') return trimmed;
+  return trimmed.replace(/\.[^.\/]+$/, '.jsx');
+};
+
 const normalizeFileExtension = (raw: unknown): string => {
-  const allowed = new Set(['tsx', 'jsx', 'ts', 'js', 'json', 'css']);
-  if (!raw || typeof raw !== 'string') return 'tsx';
+  const allowed = new Set(['jsx', 'js', 'json', 'css']);
+  if (!raw || typeof raw !== 'string') return 'jsx';
   const normalized = raw.replace(/^\./, '').toLowerCase();
-  return allowed.has(normalized) ? normalized : 'tsx';
+  return allowed.has(normalized) ? normalized : 'jsx';
 };
 
 const serialize = (pkg: GlobalUIPackage) => ({
@@ -127,7 +137,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const nextVersion = req.body?.version ? normalizeVersion(req.body.version) : pkg.version;
     const nextEntry =
       req.body?.entryPath !== undefined && typeof req.body.entryPath === 'string'
-        ? req.body.entryPath.trim() || pkg.entryPath
+        ? normalizeEntryPath(req.body.entryPath) || pkg.entryPath
         : pkg.entryPath;
     const nextSource =
       req.body?.code !== undefined ? normalizeSourceCode(req.body.code) : pkg.code;

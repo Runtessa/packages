@@ -50,7 +50,7 @@ const FILE_EXTENSION_OPTIONS = [
 const DEFAULT_FORM: ProjectFormState = {
   name: '',
   version: '1.0.0',
-  entryPath: 'src/index.tsx',
+    entryPath: 'src/index.jsx',
   fileExtension: 'jsx',
   dependencies: '',
 };
@@ -154,7 +154,7 @@ export default function AdminSharedPackagesPage() {
     setEditForm({
       name: project.name,
       version: project.version,
-      entryPath: project.entryPath || 'src/index.tsx',
+      entryPath: project.entryPath || 'src/index.jsx',
       fileExtension: project.fileExtension || 'jsx',
       dependencies: formatDeps(project.dependencies),
     });
@@ -381,7 +381,7 @@ export default function AdminSharedPackagesPage() {
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, entryPath: e.target.value }))
                 }
-                placeholder="src/index.tsx"
+                placeholder="src/index.jsx"
               />
             </div>
             <div className="md:col-span-2">
@@ -463,7 +463,7 @@ export default function AdminSharedPackagesPage() {
                 onChange={(e) =>
                   setEditForm((prev) => ({ ...prev, entryPath: e.target.value }))
                 }
-                placeholder="src/index.tsx"
+                placeholder="src/index.jsx"
               />
             </div>
             <div className="md:col-span-2">

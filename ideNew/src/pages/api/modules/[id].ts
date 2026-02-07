@@ -43,10 +43,10 @@ const normalizeCode = (raw: unknown): string => {
 };
 
 const normalizeFileExtension = (raw: unknown): string => {
-  const allowed = new Set(['ts', 'js', 'jsx', 'tsx']);
-  if (!raw || typeof raw !== 'string') return 'ts';
+  const allowed = new Set(['js']);
+  if (!raw || typeof raw !== 'string') return 'js';
   const normalized = raw.replace(/^\./, '').toLowerCase();
-  return allowed.has(normalized) ? normalized : 'ts';
+  return allowed.has(normalized) ? normalized : 'js';
 };
 
 const ensureAclEndpoint = async (tenant: Tenant, routePath: string) => {
