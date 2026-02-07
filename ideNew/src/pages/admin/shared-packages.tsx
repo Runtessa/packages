@@ -355,29 +355,18 @@ export default function AdminSharedPackagesPage() {
         onClose={() => setModalOpen(false)}
         title="Create shared project"
         footer={
-          <div className="flex justify-end gap-2">
+          <>
             <Button variant="secondary" onClick={() => setModalOpen(false)}>
               Cancel
             </Button>
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-              }}
-              aria-hidden
-              className="hidden"
-            />
-          </div>
+            <Button type="submit" variant="primary" form="create-shared-project-form">
+              Create project
+            </Button>
+          </>
         }
       >
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <FormLayout
-            gridClassName="grid gap-4 md:grid-cols-2"
-            actions={
-              <Button type="submit" variant="primary">
-                Create project
-              </Button>
-            }
-          >
+        <form id="create-shared-project-form" onSubmit={handleSubmit} className="space-y-4">
+          <FormLayout gridClassName="grid gap-4 md:grid-cols-2">
             <div className="md:col-span-2">
               <Input
                 label="Project name"
@@ -433,29 +422,18 @@ export default function AdminSharedPackagesPage() {
         onClose={() => setEditModalOpen(false)}
         title="Edit shared project"
         footer={
-          <div className="flex justify-end gap-2">
+          <>
             <Button variant="secondary" onClick={() => setEditModalOpen(false)}>
               Cancel
             </Button>
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-              }}
-              aria-hidden
-              className="hidden"
-            />
-          </div>
+            <Button type="submit" variant="primary" form="edit-shared-project-form">
+              Save changes
+            </Button>
+          </>
         }
       >
-        <form onSubmit={handleEditSubmit} className="space-y-4">
-          <FormLayout
-            gridClassName="grid gap-4 md:grid-cols-2"
-            actions={
-              <Button type="submit" variant="primary">
-                Save changes
-              </Button>
-            }
-          >
+        <form id="edit-shared-project-form" onSubmit={handleEditSubmit} className="space-y-4">
+          <FormLayout gridClassName="grid gap-4 md:grid-cols-2">
             <div className="md:col-span-2">
               <Input
                 label="Project name"

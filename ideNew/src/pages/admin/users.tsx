@@ -221,21 +221,17 @@ export default function AdminUsersPage() {
         onClose={() => setModalOpen(false)}
         title="Create / Edit user"
         footer={
-          <div className="flex justify-end gap-2">
+          <>
             <Button variant="secondary" onClick={() => setModalOpen(false)}>
               Cancel
             </Button>
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-              }}
-              aria-hidden
-              className="hidden"
-            />
-          </div>
+            <Button type="submit" variant="primary" form="create-user-form">
+              Save
+            </Button>
+          </>
         }
       >
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form id="create-user-form" onSubmit={handleSubmit} className="space-y-4">
             <FormLayout>
             <Input
               label="Email"
@@ -276,11 +272,6 @@ export default function AdminUsersPage() {
               options={roleOptions}
             />
 
-            <div className="flex justify-end">
-              <Button type="submit" variant="primary">
-                Save
-              </Button>
-            </div>
           </FormLayout>
         </form>
       </Modal>
@@ -290,21 +281,17 @@ export default function AdminUsersPage() {
         onClose={() => setEditModalOpen(false)}
         title="Edit user"
         footer={
-          <div className="flex justify-end gap-2">
+          <>
             <Button variant="secondary" onClick={() => setEditModalOpen(false)}>
               Cancel
             </Button>
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-              }}
-              aria-hidden
-              className="hidden"
-            />
-          </div>
+            <Button type="submit" variant="primary" form="edit-user-form">
+              Save changes
+            </Button>
+          </>
         }
       >
-        <form onSubmit={handleEditSubmit} className="space-y-4">
+        <form id="edit-user-form" onSubmit={handleEditSubmit} className="space-y-4">
           <FormLayout>
             <Input
               label="Email"
@@ -345,11 +332,6 @@ export default function AdminUsersPage() {
               options={roleOptions}
             />
 
-            <div className="flex justify-end">
-              <Button type="submit" variant="primary">
-                Save changes
-              </Button>
-            </div>
           </FormLayout>
         </form>
       </Modal>

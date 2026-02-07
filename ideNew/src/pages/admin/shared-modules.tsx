@@ -263,6 +263,12 @@ export default function AdminSharedModulesPage() {
     setEndpointModalOpen(true);
   };
 
+  const openEndpointCreateForProject = (projectId: string) => {
+    setEndpointForm({ routePath: '/api/auth', method: 'GET', packageId: projectId });
+    setEndpointErrors({ routePath: '', packageId: '' });
+    setEndpointModalOpen(true);
+  };
+
   const openEndpointEdit = (endpoint: SharedEndpoint) => {
     setEndpointEditTargetId(endpoint.id);
     setEndpointEditForm({
@@ -518,55 +524,6 @@ export default function AdminSharedModulesPage() {
         </div>
       </DataCard>
 
-      <DataCard
-        title="Shared backend routes"
-        subtitle="Map routes to shared backend projects (same URL across tenants)."
-        actions={
-          <Button onClick={openEndpointCreate} variant="secondary" size="sm">
-            New shared route
-          </Button>
-        }
-      >
-        <div className="space-y-4">
-          <DataTable
-            headers={['Route', 'Method', 'Package', 'Updated', 'Actions']}
-            loading={endpointLoading}
-            emptyMessage="No shared routes yet."
-          >
-            {endpoints.map((endpoint) => (
-              <tr key={endpoint.id} className="text-sm hover:bg-bgApp transition">
-                <td className="px-4 py-3 text-textPrimary">{endpoint.routePath}</td>
-                <td className="px-4 py-3 text-textMuted">{endpoint.method}</td>
-                <td className="px-4 py-3 text-textMuted">
-                  {endpoint.packageName ? `${endpoint.packageName}@${endpoint.packageVersion}` : '—'}
-                </td>
-                <td className="px-4 py-3 text-textMuted">
-                  {endpoint.updatedAt ? new Date(endpoint.updatedAt).toLocaleString() : '—'}
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => openEndpointEdit(endpoint)}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => confirmEndpointDelete(endpoint)}
-                    >
-                      Delete
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </DataTable>
-        </div>
-      </DataCard>
-
       <Modal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
@@ -665,6 +622,58 @@ export default function AdminSharedModulesPage() {
             }
             rows={4}
           />
+          <div className="rounded-lg border border-borderSubtle bg-bgApp/40 p-3">
+            <div className="flex items-center justify-between">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-textMuted">
+                Shared routes
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => editTargetId && openEndpointCreateForProject(editTargetId)}
+                disabled={!editTargetId}
+              >
+                Add route
+              </Button>
+            </div>
+            <div className="mt-3 space-y-2">
+              {endpoints.filter((endpoint) => endpoint.packageId === editTargetId).length === 0 ? (
+                <p className="text-xs text-textMuted">No routes mapped yet.</p>
+              ) : (
+                endpoints
+                  .filter((endpoint) => endpoint.packageId === editTargetId)
+                  .map((endpoint) => (
+                    <div
+                      key={endpoint.id}
+                      className="flex items-center justify-between rounded-md border border-borderSubtle bg-bgSurface px-3 py-2 text-xs"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="rounded border border-borderSubtle bg-bgApp px-2 py-0.5 uppercase text-[10px] text-textMuted">
+                          {endpoint.method}
+                        </span>
+                        <span className="text-textPrimary">{endpoint.routePath}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => openEndpointEdit(endpoint)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => confirmEndpointDelete(endpoint)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
         </FormLayout>
       </Modal>
 

@@ -495,7 +495,7 @@ export function EditorAiPanel({
         title="Assistant settings"
         size="md"
         footer={
-          <div className="flex justify-between gap-2">
+          <>
             <Button
               variant="secondary"
               onClick={() => {
@@ -507,7 +507,7 @@ export function EditorAiPanel({
             <Button variant="primary" onClick={() => setSettingsOpen(false)}>
               Done
             </Button>
-          </div>
+          </>
         }
       >
         <div className="space-y-4">

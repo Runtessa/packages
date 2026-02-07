@@ -496,29 +496,18 @@ export default function AdminTenantsPage() {
         onClose={closeCreateModal}
         title="Create tenant"
         footer={
-          <div className="flex justify-end gap-2">
+          <>
             <Button variant="secondary" onClick={closeCreateModal}>
               Cancel
             </Button>
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-              }}
-              aria-hidden
-              className="hidden"
-            />
-          </div>
+            <Button type="submit" variant="primary" form="create-tenant-form">
+              Create tenant
+            </Button>
+          </>
         }
       >
-        <form onSubmit={handleCreateSubmit} className="space-y-4">
-          <FormLayout
-            gridClassName="grid gap-4 md:grid-cols-2"
-            actions={
-              <Button type="submit" variant="primary">
-                Create tenant
-              </Button>
-            }
-          >
+        <form id="create-tenant-form" onSubmit={handleCreateSubmit} className="space-y-4">
+          <FormLayout gridClassName="grid gap-4 md:grid-cols-2">
             <div className="md:col-span-2">
               <Input
                 label="Hostname"
