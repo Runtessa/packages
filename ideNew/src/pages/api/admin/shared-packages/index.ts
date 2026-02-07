@@ -4,6 +4,7 @@ import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
 import { GlobalUIPackage } from '@idp/shared';
 import { GlobalUIPackageFile } from '@idp/shared';
+import { Like, Not } from 'typeorm';
 import { generateVersion } from '@/lib/version';
 import {
   ensureTailwindDependency,
@@ -95,16 +96,35 @@ const serialize = (pkg: GlobalUIPackage) => ({
   updatedAt: pkg.updatedAt,
 });
 
+const parsePagination = (rawPage: unknown, rawLimit: unknown) => {
+  const pageValue = Array.isArray(rawPage) ? rawPage[0] : rawPage;
+  const limitValue = Array.isArray(rawLimit) ? rawLimit[0] : rawLimit;
+  const pageNum = Number(pageValue ?? 1);
+  const limitNum = Number(limitValue ?? 20);
+  const page = Number.isFinite(pageNum) && pageNum > 0 ? Math.floor(pageNum) : 1;
+  const limit = Number.isFinite(limitNum) && limitNum > 0 ? Math.min(100, Math.floor(limitNum)) : 20;
+  return { page, limit, skip: (page - 1) * limit };
+};
+
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method === 'GET') {
     await requireAdmin(req);
     await ensureCoreSchema();
 
     const repo = CoreDataSource.getRepository(GlobalUIPackage);
-    const packages = await repo.find({ order: { name: 'ASC', version: 'DESC' } });
-    res
-      .status(200)
-      .json({ packages: packages.filter((pkg) => !isTailwindPackageName(pkg.name)).map(serialize) });
+    const { page, limit, skip } = parsePagination(req.query.page, req.query.limit);
+    const [packages, total] = await repo.findAndCount({
+      where: { name: Not(Like('%__tw')) },
+      order: { name: 'ASC', version: 'DESC' },
+      skip,
+      take: limit,
+    });
+    res.status(200).json({
+      packages: packages.map(serialize),
+      page,
+      limit,
+      total,
+    });
     return;
   }
 

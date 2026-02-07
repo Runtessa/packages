@@ -135,6 +135,10 @@ export default function AdminTenantsPage() {
   const [error, setError] = useState('');
   const [tenants, setTenants] = useState<TenantSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const pageSize = 20;
   const [selectedTenant, setSelectedTenant] = useState('');
   const [form, setForm] = useState<TenantFormState>(DEFAULT_FORM);
   const [adapterConfigText, setAdapterConfigText] = useState(DEFAULT_CONFIG_TEXT);
@@ -162,20 +166,34 @@ export default function AdminTenantsPage() {
     setSelectedTenant(getSelectedTenantHost());
   }, []);
 
-  const loadTenants = async () => {
+  const loadTenants = async (targetPage = 1, append = false) => {
     if (!token) return;
-    setLoading(true);
+    if (append) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
     setError('');
     try {
-      const data = await fetchJson('/api/admin/tenants', { token });
-      setTenants(data.tenants || []);
+      const data = await fetchJson(
+        `/api/admin/tenants?page=${targetPage}&limit=${pageSize}`,
+        { token }
+      );
+      const nextTenants = data.tenants || [];
+      setTenants((prev) => (append ? [...prev, ...nextTenants] : nextTenants));
+      setPage(data.page ?? targetPage);
+      setTotal(typeof data.total === 'number' ? data.total : nextTenants.length);
     } catch (err: any) {
       setError(err.message);
       if (err.message?.toLowerCase().includes('unauthorized')) {
         setToken('');
       }
     } finally {
-      setLoading(false);
+      if (append) {
+        setLoadingMore(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
@@ -194,7 +212,7 @@ export default function AdminTenantsPage() {
           router.replace('/dashboard');
           return;
         }
-        await loadTenants();
+        await loadTenants(1, false);
       } catch (err: any) {
         setError(err.message);
         if (err.message?.toLowerCase().includes('unauthorized')) {
@@ -312,7 +330,7 @@ export default function AdminTenantsPage() {
       });
       success(`Created tenant ${data?.tenant?.hostname || payload.hostname}`);
       closeCreateModal();
-      await loadTenants();
+      await loadTenants(1, false);
     } catch (err: any) {
       setError(err.message);
     }
@@ -342,7 +360,7 @@ export default function AdminTenantsPage() {
         }
       }
       closeEditModal();
-      await loadTenants();
+      await loadTenants(1, false);
     } catch (err: any) {
       setError(err.message);
     }
@@ -362,7 +380,7 @@ export default function AdminTenantsPage() {
         setSelectedTenant('');
       }
       closeDeleteModal();
-      await loadTenants();
+      await loadTenants(1, false);
     } catch (err: any) {
       setError(err.message);
     }
@@ -412,7 +430,7 @@ export default function AdminTenantsPage() {
 
       <DataCard
         title="Tenant list"
-        subtitle="Choose a tenant, update settings, or open the editor for that tenant."
+        subtitle={`Showing ${tenants.length} of ${total} tenants`}
       >
         <DataTable
           headers={['Hostname', 'Status', 'Resources', 'Updated', 'Actions']}
@@ -458,6 +476,19 @@ export default function AdminTenantsPage() {
             </tr>
           ))}
         </DataTable>
+        <div className="mt-4 flex items-center justify-between text-xs text-textMuted">
+          <span>
+            Page {page} · {total} total
+          </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={loadingMore || tenants.length >= total}
+            onClick={() => loadTenants(page + 1, true)}
+          >
+            {loadingMore ? 'Loading…' : tenants.length >= total ? 'No more' : 'Load more'}
+          </Button>
+        </div>
       </DataCard>
 
       <Modal

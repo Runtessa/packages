@@ -79,6 +79,10 @@ export default function AdminSharedPackagesPage() {
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const pageSize = 20;
   const [projects, setProjects] = useState<SharedProject[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -98,20 +102,34 @@ export default function AdminSharedPackagesPage() {
     entryPath: '',
   });
 
-  const loadProjects = async () => {
+  const loadProjects = async (targetPage = 1, append = false) => {
     if (!token) return;
-    setLoading(true);
+    if (append) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
     setError('');
     try {
-      const data = await fetchJson('/api/admin/shared-packages', { token });
-      setProjects(data.packages || []);
+      const data = await fetchJson(
+        `/api/admin/shared-packages?page=${targetPage}&limit=${pageSize}`,
+        { token }
+      );
+      const nextProjects = data.packages || [];
+      setProjects((prev) => (append ? [...prev, ...nextProjects] : nextProjects));
+      setPage(data.page ?? targetPage);
+      setTotal(typeof data.total === 'number' ? data.total : nextProjects.length);
     } catch (err: any) {
       setError(err.message);
       if (err.message?.toLowerCase().includes('unauthorized')) {
         setToken('');
       }
     } finally {
-      setLoading(false);
+      if (append) {
+        setLoadingMore(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
@@ -130,7 +148,7 @@ export default function AdminSharedPackagesPage() {
           router.replace('/dashboard');
           return;
         }
-        await loadProjects();
+        await loadProjects(1, false);
       } catch (err: any) {
         setError(err.message);
         if (err.message?.toLowerCase().includes('unauthorized')) {
@@ -183,7 +201,7 @@ export default function AdminSharedPackagesPage() {
       success('Shared project created');
       setModalOpen(false);
       setForm(DEFAULT_FORM);
-      await loadProjects();
+      await loadProjects(1, false);
     } catch (err: any) {
       showError(err.message || 'Failed to create shared project');
     }
@@ -212,7 +230,7 @@ export default function AdminSharedPackagesPage() {
       success('Shared project updated');
       setEditModalOpen(false);
       setEditTargetId('');
-      await loadProjects();
+      await loadProjects(1, false);
     } catch (err: any) {
       showError(err.message || 'Failed to update shared project');
     }
@@ -233,7 +251,7 @@ export default function AdminSharedPackagesPage() {
       success('Shared project deleted');
       setDeleteModalOpen(false);
       setDeleteTarget(null);
-      await loadProjects();
+      await loadProjects(1, false);
     } catch (err: any) {
       showError(err.message || 'Failed to delete shared project');
     }
@@ -272,7 +290,7 @@ export default function AdminSharedPackagesPage() {
 
       <DataCard
         title="Shared projects"
-        subtitle={`Total ${projects.length} project${projects.length === 1 ? '' : 's'}`}
+        subtitle={`Showing ${projects.length} of ${total} projects`}
       >
         <div className="space-y-4">
           <DataTable
@@ -316,6 +334,19 @@ export default function AdminSharedPackagesPage() {
               </tr>
             ))}
           </DataTable>
+          <div className="flex items-center justify-between text-xs text-textMuted">
+            <span>
+              Page {page} · {total} total
+            </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={loadingMore || projects.length >= total}
+              onClick={() => loadProjects(page + 1, true)}
+            >
+              {loadingMore ? 'Loading…' : projects.length >= total ? 'No more' : 'Load more'}
+            </Button>
+          </div>
         </div>
       </DataCard>
 
