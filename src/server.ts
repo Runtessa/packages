@@ -67,9 +67,11 @@ const getKeyFromEnv = (envName: string, expectedBytes: number): Buffer => {
 const renderLoginShell = ({
   allowRegistration,
   useKernel,
+  tenantHost,
 }: {
   allowRegistration: boolean;
   useKernel: boolean;
+  tenantHost: string;
 }) => {
   if (useKernel) {
     return `<!DOCTYPE html>
@@ -84,6 +86,7 @@ const renderLoginShell = ({
     <div id="root"></div>
     <script>
       window.__ALLOW_REGISTRATION__ = ${allowRegistration ? "true" : "false"};
+      window.__TENANT_HOST__ = ${JSON.stringify(tenantHost)};
       if (window.Kernel) {
         var kernel = new window.Kernel({ registryUrl: "/api/registry-tenant" });
         kernel.boot("${LOGIN_PACKAGE_NAME}");
@@ -223,9 +226,21 @@ const bootstrap = async () => {
 
       const allowRegistration = tenantReq.tenant.allowRegistration ?? true;
       if (hasPublished) {
-        return res.send(renderLoginShell({ allowRegistration, useKernel: true }));
+        return res.send(
+          renderLoginShell({
+            allowRegistration,
+            useKernel: true,
+            tenantHost: tenantReq.tenant.hostname,
+          })
+        );
       }
-      return res.send(renderLoginShell({ allowRegistration, useKernel: false }));
+      return res.send(
+        renderLoginShell({
+          allowRegistration,
+          useKernel: false,
+          tenantHost: tenantReq.tenant.hostname,
+        })
+      );
     } catch (error) {
       next(error);
     }
