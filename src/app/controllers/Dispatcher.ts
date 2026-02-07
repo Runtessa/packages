@@ -101,11 +101,17 @@ export class Dispatcher {
       const params =
         matchResult?.params ?? this.matchPath(module.routePath, req.path) ?? {};
 
-      const endpointConfig = this.resolveEndpointConfig(
+      let endpointConfig = this.resolveEndpointConfig(
         req.tenant as Tenant,
         module.routePath,
         req.path
       );
+      if (!endpointConfig) {
+        endpointConfig = await this.ensureEndpointConfig(
+          req.tenant as Tenant,
+          module.routePath
+        );
+      }
       const allowAnonymous = Boolean((endpointConfig as any)?.allowAnonymous);
       if (!req.account && !allowAnonymous) {
         throw new AppError('Authentication required', 401);
@@ -324,6 +330,31 @@ export class Dispatcher {
       if (endpoints[trimmed]) return endpoints[trimmed];
     }
     return undefined;
+  }
+
+  private async ensureEndpointConfig(tenant: Tenant, routePath: string) {
+    const endpoints = (tenant.aclEndpoints || {}) as Record<
+      string,
+      {
+        read?: string[];
+        write?: string[];
+        edit?: string[];
+        delete?: string[];
+        allowAnonymous?: boolean;
+      }
+    >;
+    if (!endpoints[routePath]) {
+      endpoints[routePath] = {
+        read: [],
+        write: [],
+        edit: [],
+        delete: [],
+        allowAnonymous: false,
+      };
+      tenant.aclEndpoints = endpoints as Tenant['aclEndpoints'];
+      await this.dataSource.getRepository(Tenant).save(tenant);
+    }
+    return endpoints[routePath];
   }
 
   private checkEndpointAccess(
