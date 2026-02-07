@@ -400,14 +400,43 @@ const FolderIcon = ({ open }: { open: boolean }) => (
   </svg>
 );
 
-const FileIcon = () => (
-  <svg className="h-4 w-4 text-blue-300" viewBox="0 0 24 24" aria-hidden>
-    <path
-      fill="currentColor"
-      d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm0 2v16h12V9h-5V4z"
-    />
-  </svg>
-);
+const FILE_ICON_BY_EXT: Record<string, string> = {
+  js: "text-yellow-300",
+  jsx: "text-yellow-300",
+  ts: "text-blue-300",
+  tsx: "text-blue-300",
+  json: "text-emerald-300",
+  md: "text-slate-300",
+  html: "text-orange-300",
+  css: "text-violet-300",
+  scss: "text-pink-300",
+  env: "text-lime-300",
+  sql: "text-teal-300",
+  yml: "text-amber-300",
+  yaml: "text-amber-300",
+};
+
+const FILE_ICON_BY_NAME: Record<string, string> = {
+  dockerfile: "text-sky-300",
+  makefile: "text-amber-300",
+};
+
+const FileTypeIcon = ({ name }: { name?: string }) => {
+  const lower = (name ?? "").toLowerCase();
+  const ext = lower.includes(".") ? lower.split(".").pop() ?? "" : "";
+  const color =
+    FILE_ICON_BY_NAME[lower] ||
+    FILE_ICON_BY_EXT[ext] ||
+    (lower.startsWith(".env") ? "text-lime-300" : "text-blue-300");
+  return (
+    <svg className={`h-4 w-4 ${color}`} viewBox="0 0 24 24" aria-hidden>
+      <path
+        fill="currentColor"
+        d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm0 2v16h12V9h-5V4z"
+      />
+    </svg>
+  );
+};
 
 const NewFileIcon = () => (
   <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden>
@@ -527,7 +556,7 @@ const NodeRow = React.memo(function NodeRow({
         )}
       </span>
       <span className="flex items-center gap-2">
-        {isFolder ? <FolderIcon open={isExpanded} /> : <FileIcon />}
+        {isFolder ? <FolderIcon open={isExpanded} /> : <FileTypeIcon name={node.name} />}
       </span>
       {isRenaming ? (
         <div className="flex flex-1 items-center gap-2">
