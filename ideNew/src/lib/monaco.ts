@@ -200,6 +200,8 @@ declare module 'typeorm' {
       esModuleInterop: true,
       allowSyntheticDefaultImports: true,
       resolveJsonModule: true,
+      experimentalDecorators: true,
+      emitDecoratorMetadata: true,
     });
     typescript.javascriptDefaults.setDiagnosticsOptions({
       noSemanticValidation: false,
@@ -215,6 +217,8 @@ declare module 'typeorm' {
       esModuleInterop: true,
       allowSyntheticDefaultImports: true,
       resolveJsonModule: true,
+      experimentalDecorators: true,
+      emitDecoratorMetadata: true,
     });
     typescript.typescriptDefaults.setDiagnosticsOptions({
       noSemanticValidation: false,
