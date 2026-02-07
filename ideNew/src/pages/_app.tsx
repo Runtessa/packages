@@ -10,7 +10,9 @@ import Head from "next/head";
 export default function App({ Component, pageProps }: AppProps) {
   const router = useRouter();
   const isLogin = router.pathname === "/login";
-  const hideShell = isLogin || router.pathname === "/editor";
+  const isEditor = router.pathname === "/editor";
+  const isStandaloneMonitoring = router.pathname.startsWith("/admin/monitoring");
+  const hideShell = isLogin || isEditor || isStandaloneMonitoring;
 
   return (
     <ToastProvider>

@@ -61,6 +61,11 @@ type TenantPoint = {
   networkOutBytes: number;
 };
 
+const normalizeTenantHostname = (value: unknown) => {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase();
+};
+
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method !== 'GET') {
     res.setHeader('Allow', ['GET']);
@@ -172,16 +177,46 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     avgErrorRatePct: server.instanceCount ? server.avgErrorRatePct / server.instanceCount : 0,
   }));
 
+  // Build a host->tenantId map so host-only samples are merged into tenant-id groups.
+  const tenantHostToId = new Map<string, string>();
+  snapshots.forEach((snapshot) => {
+    (snapshot.tenantSamples || []).forEach((sample) => {
+      const sampleTenantId =
+        typeof sample.tenantId === 'string' && sample.tenantId.trim() ? sample.tenantId.trim() : '';
+      const sampleTenantHost = normalizeTenantHostname(sample.tenantHostname);
+      if (sampleTenantId && sampleTenantHost && !tenantHostToId.has(sampleTenantHost)) {
+        tenantHostToId.set(sampleTenantHost, sampleTenantId);
+      }
+    });
+  });
+
+  const resolveTenantIdentity = (sample: {
+    tenantId: string | null;
+    tenantHostname: string | null;
+  }) => {
+    const sampleTenantHost = normalizeTenantHostname(sample.tenantHostname);
+    const explicitTenantId =
+      typeof sample.tenantId === 'string' && sample.tenantId.trim() ? sample.tenantId.trim() : null;
+    const resolvedTenantId = explicitTenantId || (sampleTenantHost ? tenantHostToId.get(sampleTenantHost) || null : null);
+    const key = resolvedTenantId ? `id:${resolvedTenantId}` : `host:${sampleTenantHost || 'unknown'}`;
+    return {
+      key,
+      tenantId: resolvedTenantId,
+      tenantHostname: sampleTenantHost || null,
+    };
+  };
+
   const tenantMap = new Map<string, TenantAgg>();
   snapshots.forEach((snapshot) => {
     (snapshot.tenantSamples || []).forEach((sample) => {
-      if (tenantId && sample.tenantId !== tenantId) return;
-      const key = `${sample.tenantId || ''}::${sample.tenantHostname || ''}`;
+      const identity = resolveTenantIdentity(sample);
+      if (tenantId && identity.tenantId !== tenantId) return;
+      const key = identity.key;
       const existing = tenantMap.get(key);
       if (!existing) {
         tenantMap.set(key, {
-          tenantId: sample.tenantId || null,
-          tenantHostname: sample.tenantHostname || null,
+          tenantId: identity.tenantId,
+          tenantHostname: identity.tenantHostname,
           requestCount: sample.requestCount || 0,
           errorCount: sample.errorCount || 0,
           latencyWeightedSum: (sample.avgLatencyMs || 0) * Math.max(sample.requestCount || 0, 1),
@@ -303,8 +338,9 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
 
   snapshots.forEach((snapshot) => {
     (snapshot.tenantSamples || []).forEach((sample) => {
-      if (tenantId && sample.tenantId !== tenantId) return;
-      const key = `${sample.tenantId || ''}::${sample.tenantHostname || ''}`;
+      const identity = resolveTenantIdentity(sample);
+      if (tenantId && identity.tenantId !== tenantId) return;
+      const key = identity.key;
       const point: TenantPoint = {
         createdAt: snapshot.createdAt,
         requestCount: sample.requestCount || 0,
@@ -320,8 +356,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       if (!existing) {
         tenantSeriesMap.set(key, {
           key,
-          tenantId: sample.tenantId || null,
-          tenantHostname: sample.tenantHostname || null,
+          tenantId: identity.tenantId,
+          tenantHostname: identity.tenantHostname,
           points: [point],
         });
         return;
