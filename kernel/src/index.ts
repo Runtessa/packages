@@ -25,6 +25,26 @@ type ApiClient = {
   del: (path: string, options?: Omit<ApiRequestOptions, "method" | "body">) => Promise<Response>;
 };
 
+type KernelDataContext = {
+  api: ApiClient;
+  tenantHost: string | null;
+  previewMode: boolean;
+  getToken: () => string | null;
+};
+
+const DATA_CONTEXT_PACKAGE_NAMES = new Set([
+  "@app/datacontext",
+  "@idp/datacontext",
+  "idp/datacontext",
+]);
+const KERNEL_BUILTIN_MODULES = new Set([
+  "react",
+  "React",
+  "react-dom",
+  "react-dom/client",
+  ...Array.from(DATA_CONTEXT_PACKAGE_NAMES),
+]);
+
 export class Kernel {
   registryUrl: string;
   apiBaseUrl: string;
@@ -33,6 +53,7 @@ export class Kernel {
   cache: Map<string, any>;
   api: ApiClient;
   private appliedStyles: Map<string, HTMLStyleElement>;
+  private dataContextExports: any | null;
 
   constructor(options: Options = {}) {
     this.registryUrl = (options && options.registryUrl) || "/api/registry";
@@ -41,6 +62,7 @@ export class Kernel {
     this.previewMode = Boolean(options && options.preview);
     this.cache = new Map(); // key: name@version -> exports or Promise<exports>
     this.appliedStyles = new Map();
+    this.dataContextExports = null;
     this.api = this.createApiClient();
     this.initGlobalContext();
   }
@@ -92,6 +114,9 @@ export class Kernel {
 
     // Pre-load dependencies
     for (const dep of dependencies) {
+      if (KERNEL_BUILTIN_MODULES.has(dep)) {
+        continue;
+      }
       if (shouldAttachTailwind && dep === tailwindName) {
         try {
           await this.load(dep);
@@ -147,6 +172,7 @@ export class Kernel {
     win.IDP.kernel = this;
     win.IDP.api = this.api;
     win.IDP.getToken = () => this.getToken();
+    win.IDP.datacontext = this.getDataContextModule();
   }
 
   private getToken() {
@@ -232,8 +258,60 @@ export class Kernel {
     return style;
   }
 
+  private buildDataContextValue(): KernelDataContext {
+    return {
+      api: this.api,
+      tenantHost: this.getTenantHost(),
+      previewMode: this.previewMode,
+      getToken: () => this.getToken(),
+    };
+  }
+
+  private getDataContextModule() {
+    if (this.dataContextExports) return this.dataContextExports;
+
+    const DataContext = React.createContext<KernelDataContext>(
+      this.buildDataContextValue()
+    );
+
+    const DataProvider = ({ children }: { children?: React.ReactNode }) =>
+      React.createElement(
+        DataContext.Provider,
+        { value: this.buildDataContextValue() },
+        children
+      );
+
+    const useDataContext = () => React.useContext(DataContext);
+    const useApiClient = () => useDataContext().api;
+    const getApiClient = () => this.api;
+
+    const exportsObject = {
+      DataContext,
+      DataProvider,
+      useDataContext,
+      useApiClient,
+      getApiClient,
+      api: this.api,
+      default: {
+        DataContext,
+        DataProvider,
+        useDataContext,
+        useApiClient,
+        getApiClient,
+        api: this.api,
+      },
+    };
+    this.dataContextExports = exportsObject;
+    return this.dataContextExports;
+  }
+
   requireLocal(name: string) {
     if (name === "react" || name === "React") return React;
+    if (name === "react-dom/client") return { createRoot };
+    if (name === "react-dom") return { createRoot };
+    if (DATA_CONTEXT_PACKAGE_NAMES.has(name)) {
+      return this.getDataContextModule();
+    }
     const entryKey = Array.from(this.cache.keys()).find((key) =>
       key.startsWith(`${name}@`),
     );

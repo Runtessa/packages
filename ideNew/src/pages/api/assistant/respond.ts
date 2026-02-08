@@ -1,22 +1,917 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { spawn } from 'node:child_process';
+import { promises as fs } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireUser } from '@/lib/auth';
 import { resolveTenant } from '@/lib/tenancy';
+import { CODEX_SYSTEM_INSTRUCTIONS, resolveCodexModelFromEnv } from '@/lib/assistant/codex';
 import { buildAssistantTools } from '@/lib/assistant/tools';
-import { buildAssistantModelConfig, createAssistantAgent } from '@/lib/assistant/agent';
+import {
+  buildAssistantModelConfig,
+  createAssistantAgent,
+} from '@/lib/assistant/agent';
 import type { AssistantChange } from '@/lib/assistant/types';
 import type { MastraModelConfig } from '@mastra/core/llm';
+import { executeAssistantRun, type AssistantRunEvent } from '@/lib/assistant/orchestrator';
+import {
+  buildAssistantIdempotencyKey,
+  completeAssistantRun,
+  getAssistantRun,
+  getAssistantRunSummary,
+  reserveAssistantRun,
+  startAssistantRun,
+  appendAssistantEvent,
+} from '@/lib/assistant/state-store';
 
-type ClientContext = {
-  activeFile?: {
-    id: string;
-    name: string;
-    meta?: Record<string, unknown>;
-    content?: string;
-  } | null;
+const MAX_CONTEXT_CHARS = 240000;
+
+const resolveAgentType = () => (process.env.AGENT_TYPE || '').trim().toLowerCase();
+const isCodexAgentMode = () => resolveAgentType() === 'codex';
+
+const resolveCodexCwd = () => {
+  const fromEnv = (process.env.AGENT_CODEX_CWD || '').trim();
+  if (fromEnv) return fromEnv;
+  const cwd = process.cwd().replace(/\\/g, '/');
+  if (cwd.endsWith('/ideNew')) return cwd.slice(0, -'/ideNew'.length);
+  return cwd;
 };
 
-const MAX_CONTEXT_CHARS = 8000;
+const resolveCodexTimeoutMs = () => {
+  const raw = Number(process.env.AGENT_CODEX_TIMEOUT_MS || '0');
+  if (Number.isFinite(raw) && raw > 0) return Math.floor(raw);
+  return 10 * 60 * 1000;
+};
+
+const resolveCodexModel = (_config: { model?: string } | undefined, _allowClientConfig: boolean) => {
+  const codexOnly = resolveCodexModelFromEnv();
+  return codexOnly;
+};
+
+const createRunEvent = (
+  runId: string,
+  type: AssistantRunEvent['type'],
+  phase: AssistantRunEvent['phase'],
+  payload?: Record<string, unknown>
+): AssistantRunEvent => ({
+  id:
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `evt-${Math.random().toString(36).slice(2, 12)}`,
+  runId,
+  type,
+  phase,
+  timestamp: new Date().toISOString(),
+  payload,
+});
+
+const buildCodexPrompt = (
+  messages: Array<{ role: string; content: string }>,
+  contextText: string
+) => {
+  const history = messages
+    .map((msg) => `[${msg.role}] ${msg.content}`)
+    .join('\n\n');
+  return `${CODEX_SYSTEM_INSTRUCTIONS}
+
+RUNTIME MODE:
+- You are running in codex-cli mode for chat output.
+- Return ONLY valid JSON (no markdown, no code fences).
+- Prefer concise, direct output.
+- If file changes are requested, produce tool operations to apply them.
+
+OUTPUT CONTRACT (strict JSON object):
+{
+  "summary": "short human summary",
+  "operations": [
+    { "tool": "<tool_id>", "input": { ... }, "reason": "optional short note" }
+  ]
+}
+
+ALLOWED TOOL IDS:
+- create_module, update_module, delete_module
+- create_model, update_model, delete_model
+- create_ui_package, update_ui_package, delete_ui_package
+- update_acl_file
+- write_shared_file, delete_shared_file
+- get_module, get_model, get_ui_package, get_shared_file
+
+FULL WORKSPACE CONTEXT:
+${contextText}
+
+CHAT HISTORY:
+${history}
+
+TASK:
+Respond to the latest user request using the context above.`;
+};
+
+const executeCodexCli = async (input: {
+  runId: string;
+  messages: Array<{ role: string; content: string }>;
+  contextText: string;
+  model?: string;
+  onLine?: (line: string) => void;
+}) => {
+  const outputFile = path.join(tmpdir(), `idp-codex-last-${input.runId}.txt`);
+  const prompt = buildCodexPrompt(input.messages, input.contextText);
+  const runOnce = async (model?: string) =>
+    new Promise<{
+      stdoutText: string;
+      stderrText: string;
+      exitCode: number;
+    }>((resolve, reject) => {
+      const args = [
+        'exec',
+        '--json',
+        '--skip-git-repo-check',
+        '-C',
+        resolveCodexCwd(),
+        '--output-last-message',
+        outputFile,
+      ];
+      if (model) {
+        args.push('-m', model);
+      }
+      args.push('-');
+      const child = spawn('codex', args, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      const timeoutMs = resolveCodexTimeoutMs();
+      let stdoutText = '';
+      let stderrText = '';
+      let lineBuffer = '';
+      let stderrLineBuffer = '';
+      let timedOut = false;
+      const timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        input.onLine?.(`[codex] timed out after ${Math.floor(timeoutMs / 1000)}s`);
+        child.kill('SIGTERM');
+        setTimeout(() => child.kill('SIGKILL'), 3000).unref?.();
+      }, timeoutMs);
+
+      child.stdout.on('data', (chunk: Buffer | string) => {
+        const text = String(chunk);
+        stdoutText += text;
+        lineBuffer += text;
+        let idx = lineBuffer.indexOf('\n');
+        while (idx !== -1) {
+          const line = lineBuffer.slice(0, idx).trim();
+          lineBuffer = lineBuffer.slice(idx + 1);
+          if (line) input.onLine?.(line);
+          idx = lineBuffer.indexOf('\n');
+        }
+      });
+
+      child.stderr.on('data', (chunk: Buffer | string) => {
+        const text = String(chunk);
+        stderrText += text;
+        stderrLineBuffer += text;
+        let idx = stderrLineBuffer.indexOf('\n');
+        while (idx !== -1) {
+          const line = stderrLineBuffer.slice(0, idx).trim();
+          stderrLineBuffer = stderrLineBuffer.slice(idx + 1);
+          if (line) input.onLine?.(`[stderr] ${line}`);
+          idx = stderrLineBuffer.indexOf('\n');
+        }
+      });
+
+      child.on('error', (error) => reject(error));
+      child.on('close', (code) => {
+        clearTimeout(timeoutHandle);
+        const pendingStdout = lineBuffer.trim();
+        if (pendingStdout) input.onLine?.(pendingStdout);
+        const pendingStderr = stderrLineBuffer.trim();
+        if (pendingStderr) input.onLine?.(`[stderr] ${pendingStderr}`);
+        resolve({
+          stdoutText,
+          stderrText,
+          exitCode: timedOut ? 124 : typeof code === 'number' ? code : 1,
+        });
+      });
+
+      child.stdin.write(prompt);
+      child.stdin.end();
+    });
+
+  const isUnsupportedModelError = (text: string) =>
+    /model is not supported when using codex with a chatgpt account/i.test(text) ||
+    /unsupported model/i.test(text);
+
+  let result = await runOnce(input.model);
+  if (input.model) {
+    const detail = `${result.stderrText}\n${result.stdoutText}`;
+    if (isUnsupportedModelError(detail)) {
+      // Retry once without explicit model so Codex can select an account-compatible default.
+      result = await runOnce(undefined);
+    }
+  }
+
+  const { stdoutText, stderrText, exitCode } = result;
+  if (exitCode !== 0) {
+    const detail = (stderrText || stdoutText || '').trim();
+    throw new Error(detail || `codex exec failed with exit code ${exitCode}`);
+  }
+
+  let message = '';
+  try {
+    message = (await fs.readFile(outputFile, 'utf8')).trim();
+  } catch {
+    message = '';
+  } finally {
+    await fs.unlink(outputFile).catch(() => undefined);
+  }
+
+  if (!message) {
+    message = stdoutText.trim();
+  }
+  if (!message) {
+    message = 'Codex completed with no response text.';
+  }
+  return { message };
+};
+
+type CodexOperation = {
+  tool?: string;
+  name?: string;
+  action?: string;
+  toolId?: string;
+  args?: Record<string, unknown>;
+  parameters?: Record<string, unknown>;
+  input?: Record<string, unknown>;
+  reason?: string;
+};
+
+type CodexPlan = {
+  summary?: string;
+  operations?: CodexOperation[];
+};
+
+type FileDirective = {
+  path: string;
+  action: 'create' | 'edit' | 'delete';
+  content?: string;
+};
+
+const CODEX_MUTATION_TOOLS = new Set([
+  'create_module',
+  'update_module',
+  'delete_module',
+  'create_model',
+  'update_model',
+  'delete_model',
+  'create_ui_package',
+  'update_ui_package',
+  'delete_ui_package',
+  'update_acl_file',
+  'write_shared_file',
+  'delete_shared_file',
+]);
+
+const parseJsonObject = (candidate: string): Record<string, unknown> | null => {
+  try {
+    const parsed = JSON.parse(candidate);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // no-op
+  }
+  return null;
+};
+
+const parseCodexPlan = (raw: string): CodexPlan | null => {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const candidates: string[] = [trimmed];
+  const fenceMatches = [...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)];
+  for (const match of fenceMatches) {
+    if (match[1]?.trim()) candidates.push(match[1].trim());
+  }
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
+  }
+
+  for (const candidate of candidates) {
+    const parsed = parseJsonObject(candidate);
+    if (!parsed) continue;
+    const summary =
+      typeof parsed.summary === 'string'
+        ? parsed.summary
+        : typeof parsed.message === 'string'
+          ? parsed.message
+          : undefined;
+    const operationsRaw = Array.isArray(parsed.operations)
+      ? parsed.operations
+      : Array.isArray(parsed.actions)
+        ? parsed.actions
+        : Array.isArray(parsed.steps)
+          ? parsed.steps
+          : parsed.tool && typeof parsed.tool === 'string'
+            ? [parsed]
+            : [];
+    const operations = operationsRaw
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const rawTool =
+          (item as any).tool ??
+          (item as any).name ??
+          (item as any).action ??
+          (item as any).toolId;
+        const tool = typeof rawTool === 'string' ? rawTool.trim() : '';
+        if (!tool) return null;
+        const input =
+          ((item as any).input && typeof (item as any).input === 'object' && !Array.isArray((item as any).input)
+            ? ((item as any).input as Record<string, unknown>)
+            : (item as any).args && typeof (item as any).args === 'object' && !Array.isArray((item as any).args)
+              ? ((item as any).args as Record<string, unknown>)
+              : (item as any).parameters &&
+                  typeof (item as any).parameters === 'object' &&
+                  !Array.isArray((item as any).parameters)
+                ? ((item as any).parameters as Record<string, unknown>)
+                : {}) as Record<string, unknown>;
+        const reason = typeof (item as any).reason === 'string' ? (item as any).reason : undefined;
+        return { tool, input, reason } as CodexOperation;
+      })
+      .filter(Boolean) as CodexOperation[];
+    return { summary, operations };
+  }
+  return null;
+};
+
+const parseDirectiveAction = (value: unknown): FileDirective['action'] | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'create' || normalized === 'edit' || normalized === 'delete') return normalized;
+  if (normalized === 'update') return 'edit';
+  if (normalized === 'remove') return 'delete';
+  return null;
+};
+
+const parseCodexFileDirectives = (raw: string): FileDirective[] => {
+  const directives: FileDirective[] = [];
+  const trimmed = raw.trim();
+  if (!trimmed) return directives;
+
+  const parsedRoot = parseJsonObject(trimmed);
+  if (parsedRoot) {
+    const candidates = ['files', 'changes', 'edits']
+      .map((key) => (parsedRoot as Record<string, unknown>)[key])
+      .find((value) => Array.isArray(value));
+    if (Array.isArray(candidates)) {
+      for (const item of candidates) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+        const obj = item as Record<string, unknown>;
+        const path = typeof obj.path === 'string' ? obj.path.trim() : '';
+        const action = parseDirectiveAction(obj.action);
+        if (!path || !action) continue;
+        directives.push({
+          path,
+          action,
+          content: typeof obj.content === 'string' ? obj.content : undefined,
+        });
+      }
+    }
+  }
+
+  const fileBlockRegex =
+    /###\s*FILE:\s*(.+?)\r?\n###\s*ACTION:\s*(CREATE|EDIT|UPDATE|DELETE|REMOVE)\s*\r?\n```[\w-]*\r?\n([\s\S]*?)```/gim;
+  let match: RegExpExecArray | null;
+  while ((match = fileBlockRegex.exec(raw)) !== null) {
+    const path = String(match[1] || '').trim();
+    const action = parseDirectiveAction(match[2]);
+    if (!path || !action) continue;
+    directives.push({
+      path,
+      action,
+      content: match[3] ?? '',
+    });
+  }
+
+  return directives;
+};
+
+const pickString = (value: unknown): string | null => {
+  if (typeof value === 'string' && value.length > 0) return value;
+  return null;
+};
+
+const getNested = (obj: Record<string, unknown>, path: string[]): unknown => {
+  let cursor: unknown = obj;
+  for (const key of path) {
+    if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)) return undefined;
+    cursor = (cursor as Record<string, unknown>)[key];
+  }
+  return cursor;
+};
+
+const formatCodexProgressLine = (
+  line: string
+): { text: string; appendNewline: boolean } | null => {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const parsed = parseJsonObject(trimmed);
+  if (!parsed) {
+    // Keep plain text output visible for users when Codex emits non-JSON lines.
+    return { text: trimmed, appendNewline: true };
+  }
+
+  const deltaCandidates: unknown[] = [
+    parsed.delta,
+    parsed.content,
+    parsed.output_text,
+    parsed.reasoning,
+    getNested(parsed, ['item', 'text']),
+    getNested(parsed, ['item', 'delta']),
+    getNested(parsed, ['item', 'content']),
+    getNested(parsed, ['output_text', 'delta']),
+    getNested(parsed, ['output_text', 'text']),
+    getNested(parsed, ['reasoning', 'delta']),
+    getNested(parsed, ['reasoning', 'text']),
+    getNested(parsed, ['response', 'output_text', 'delta']),
+    getNested(parsed, ['response', 'output_text', 'text']),
+    getNested(parsed, ['response', 'reasoning', 'delta']),
+    getNested(parsed, ['response', 'reasoning', 'text']),
+  ];
+  for (const candidate of deltaCandidates) {
+    const value = pickString(candidate);
+    if (value) {
+      return { text: value, appendNewline: false };
+    }
+  }
+
+  // Some providers send array-based parts.
+  if (Array.isArray(parsed.content)) {
+    for (const part of parsed.content) {
+      if (!part || typeof part !== 'object') continue;
+      const text = pickString((part as Record<string, unknown>).text);
+      if (text) return { text, appendNewline: false };
+    }
+  }
+
+  const messageCandidates = [
+    parsed.message,
+    parsed.summary,
+    parsed.detail,
+    parsed.text,
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  if (messageCandidates.length > 0) {
+    return { text: messageCandidates[0].trim(), appendNewline: true };
+  }
+
+  const type = typeof parsed.type === 'string' ? parsed.type.trim() : '';
+  const itemType = String(getNested(parsed, ['item', 'type']) ?? '').trim();
+  const itemText = pickString(getNested(parsed, ['item', 'text']));
+  if (type === 'item.completed' || type === 'item.started') {
+    if (itemText) {
+      if (itemType === 'reasoning') {
+        return { text: `[thinking] ${itemText.trim()}`, appendNewline: true };
+      }
+      if (itemType === 'agent_message') {
+        return { text: itemText, appendNewline: true };
+      }
+      return { text: `[codex:${itemType || 'item'}] ${itemText.trim()}`, appendNewline: true };
+    }
+    if (itemType) {
+      const verb = type === 'item.started' ? 'started' : 'completed';
+      return { text: `[codex] ${itemType} ${verb}`, appendNewline: true };
+    }
+  }
+
+  if (type === 'turn.completed') {
+    const inTokens = getNested(parsed, ['usage', 'input_tokens']);
+    const outTokens = getNested(parsed, ['usage', 'output_tokens']);
+    const cachedTokens = getNested(parsed, ['usage', 'cached_input_tokens']);
+    const usageParts: string[] = [];
+    if (typeof inTokens === 'number') usageParts.push(`in:${inTokens}`);
+    if (typeof outTokens === 'number') usageParts.push(`out:${outTokens}`);
+    if (typeof cachedTokens === 'number') usageParts.push(`cached:${cachedTokens}`);
+    return {
+      text: usageParts.length ? `[codex] turn completed (${usageParts.join(' ')})` : '[codex] turn completed',
+      appendNewline: true,
+    };
+  }
+
+  const event = typeof parsed.event === 'string' ? parsed.event.trim() : '';
+  const status = typeof parsed.status === 'string' ? parsed.status.trim() : '';
+  const label = [type, event, status]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/^thread\.started$/i, 'thread started')
+    .replace(/^turn\.started$/i, 'turn started');
+  if (label) return { text: `[codex] ${label}`, appendNewline: true };
+  return null;
+};
+
+const CODEX_TOOL_ALIASES: Record<string, string> = {
+  'create-module': 'create_module',
+  createModule: 'create_module',
+  'update-module': 'update_module',
+  updateModule: 'update_module',
+  'delete-module': 'delete_module',
+  deleteModule: 'delete_module',
+  'create-model': 'create_model',
+  createModel: 'create_model',
+  'update-model': 'update_model',
+  updateModel: 'update_model',
+  'delete-model': 'delete_model',
+  deleteModel: 'delete_model',
+  'create-ui-package': 'create_ui_package',
+  createUiPackage: 'create_ui_package',
+  'update-ui-package': 'update_ui_package',
+  updateUiPackage: 'update_ui_package',
+  'delete-ui-package': 'delete_ui_package',
+  deleteUiPackage: 'delete_ui_package',
+  'update-acl-file': 'update_acl_file',
+  updateAclFile: 'update_acl_file',
+  'write-shared-file': 'write_shared_file',
+  writeSharedFile: 'write_shared_file',
+  'delete-shared-file': 'delete_shared_file',
+  deleteSharedFile: 'delete_shared_file',
+  'get-shared-file': 'get_shared_file',
+  getSharedFile: 'get_shared_file',
+  'get-module': 'get_module',
+  getModule: 'get_module',
+  'get-model': 'get_model',
+  getModel: 'get_model',
+  'get-ui-package': 'get_ui_package',
+  getUiPackage: 'get_ui_package',
+};
+
+const toToolId = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  const direct = CODEX_TOOL_ALIASES[trimmed];
+  if (direct) return direct;
+  const lower = trimmed.toLowerCase();
+  if (CODEX_TOOL_ALIASES[lower]) return CODEX_TOOL_ALIASES[lower];
+  return lower;
+};
+
+const pickInput = (input: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    if (input[key] !== undefined) return input[key];
+  }
+  return undefined;
+};
+
+const putIfDefined = (target: Record<string, unknown>, key: string, value: unknown) => {
+  if (value === undefined || value === null) return;
+  target[key] = value;
+};
+
+const normalizeModelPathInput = (value: unknown) => {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!trimmed) return trimmed;
+  const withPrefix = trimmed.includes('/') ? trimmed : `models/${trimmed}`;
+  const hasExt = /\.[a-zA-Z0-9]+$/.test(withPrefix);
+  return hasExt ? withPrefix : `${withPrefix}.js`;
+};
+
+const normalizeProjectKind = (value: unknown) => {
+  if (typeof value !== 'string') return value;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'ui' || normalized === 'shared-ui' || normalized === 'shared_ui') return 'ui';
+  if (
+    normalized === 'module' ||
+    normalized === 'modules' ||
+    normalized === 'shared-module' ||
+    normalized === 'shared_module' ||
+    normalized === 'backend'
+  )
+    return 'module';
+  return value;
+};
+
+const normalizeOperationInput = (toolId: string, input: Record<string, unknown>) => {
+  const next: Record<string, unknown> = {};
+  if (toolId === 'create_module' || toolId === 'update_module' || toolId === 'delete_module') {
+    putIfDefined(next, 'id', pickInput(input, ['id', 'moduleId', 'module_id']));
+    putIfDefined(
+      next,
+      'routePath',
+      pickInput(input, ['routePath', 'route', 'path', 'route_path', 'endpoint'])
+    );
+    const method = pickInput(input, ['method', 'httpMethod', 'http_method', 'verb']);
+    putIfDefined(next, 'method', typeof method === 'string' ? method.toUpperCase() : method);
+    putIfDefined(next, 'code', pickInput(input, ['code', 'content', 'source', 'body']));
+    putIfDefined(next, 'fileExtension', pickInput(input, ['fileExtension', 'extension', 'ext']));
+    return next;
+  }
+
+  if (toolId === 'create_model' || toolId === 'update_model' || toolId === 'delete_model') {
+    putIfDefined(next, 'id', pickInput(input, ['id', 'modelId', 'model_id']));
+    putIfDefined(next, 'path', normalizeModelPathInput(pickInput(input, ['path', 'modelPath', 'filePath', 'file', 'name'])));
+    putIfDefined(next, 'newPath', normalizeModelPathInput(pickInput(input, ['newPath', 'new_path', 'targetPath', 'toPath'])));
+    putIfDefined(next, 'code', pickInput(input, ['code', 'content', 'source', 'body']));
+    putIfDefined(next, 'fileExtension', pickInput(input, ['fileExtension', 'extension', 'ext']));
+    return next;
+  }
+
+  if (toolId === 'create_ui_package' || toolId === 'update_ui_package' || toolId === 'delete_ui_package' || toolId === 'get_ui_package') {
+    putIfDefined(next, 'id', pickInput(input, ['id', 'uiId', 'packageId', 'package_id']));
+    putIfDefined(next, 'name', pickInput(input, ['name', 'package', 'packageName', 'uiName']));
+    putIfDefined(next, 'version', pickInput(input, ['version', 'packageVersion', 'pkgVersion']));
+    putIfDefined(next, 'code', pickInput(input, ['code', 'content', 'source', 'body']));
+    putIfDefined(next, 'fileExtension', pickInput(input, ['fileExtension', 'extension', 'ext']));
+    putIfDefined(next, 'dependencies', pickInput(input, ['dependencies', 'deps']));
+    return next;
+  }
+
+  if (toolId === 'update_acl_file') {
+    putIfDefined(next, 'file', pickInput(input, ['file', 'name', 'target', 'aclFile']));
+    putIfDefined(next, 'content', pickInput(input, ['content', 'value', 'data', 'json']));
+    return next;
+  }
+
+  if (toolId === 'write_shared_file' || toolId === 'delete_shared_file' || toolId === 'get_shared_file') {
+    putIfDefined(next, 'projectId', pickInput(input, ['projectId', 'project_id', 'sharedProjectId']));
+    putIfDefined(next, 'fileId', pickInput(input, ['fileId', 'file_id']));
+    putIfDefined(next, 'path', pickInput(input, ['path', 'filePath', 'file']));
+    putIfDefined(next, 'content', pickInput(input, ['content', 'code', 'source', 'body']));
+    putIfDefined(next, 'fileExtension', pickInput(input, ['fileExtension', 'extension', 'ext']));
+    putIfDefined(next, 'projectKind', normalizeProjectKind(pickInput(input, ['projectKind', 'kind', 'type'])));
+    return next;
+  }
+
+  if (toolId === 'get_module') {
+    putIfDefined(next, 'id', pickInput(input, ['id', 'moduleId', 'module_id']));
+    putIfDefined(next, 'routePath', pickInput(input, ['routePath', 'route', 'path']));
+    const method = pickInput(input, ['method', 'httpMethod', 'verb']);
+    putIfDefined(next, 'method', typeof method === 'string' ? method.toUpperCase() : method);
+    return next;
+  }
+
+  if (toolId === 'get_model') {
+    putIfDefined(next, 'id', pickInput(input, ['id', 'modelId', 'model_id']));
+    putIfDefined(next, 'path', normalizeModelPathInput(pickInput(input, ['path', 'modelPath', 'filePath', 'file'])));
+    return next;
+  }
+
+  return input;
+};
+
+const normalizePath = (value: string) =>
+  value
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/\/+/g, '/');
+
+const stripPathSegment = (pathValue: string, segment: string) => {
+  const normalized = normalizePath(pathValue);
+  if (normalized.toLowerCase().startsWith(`${segment.toLowerCase()}/`)) {
+    return normalized.slice(segment.length + 1);
+  }
+  return normalized;
+};
+
+const asJsonObject = (value: string) => {
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch {
+    return null;
+  }
+  return null;
+};
+
+const buildOperationsFromDirectives = (
+  directives: FileDirective[],
+  workspace: WorkspaceContext
+): CodexOperation[] => {
+  const operations: CodexOperation[] = [];
+  const modulesByKey = new Map(
+    (workspace.modules ?? []).map((mod) => [
+      `${mod.method.toUpperCase()}::${mod.routePath}`,
+      mod,
+    ])
+  );
+  const latestUiByName = new Map<string, WorkspaceContext['uiPackages'][number]>();
+  for (const pkg of workspace.uiPackages ?? []) {
+    if (!latestUiByName.has(pkg.name)) latestUiByName.set(pkg.name, pkg);
+  }
+  const sharedUiByName = new Map((workspace.sharedUi ?? []).map((pkg) => [pkg.name, pkg]));
+  const sharedModulesByName = new Map(
+    (workspace.sharedModules ?? []).map((pkg) => [pkg.name, pkg])
+  );
+
+  for (const directive of directives) {
+    const pathValue = normalizePath(directive.path);
+    const lower = pathValue.toLowerCase();
+    const content = directive.content ?? '';
+
+    if (lower.startsWith('modules/acl/')) {
+      const fileMatch = pathValue.match(/^modules\/acl\/(permissions|roles|endpoints)\.json$/i);
+      if (!fileMatch || directive.action === 'delete') continue;
+      operations.push({
+        tool: 'update_acl_file',
+        input: {
+          file: fileMatch[1].toLowerCase(),
+          content: asJsonObject(content) ?? {},
+        },
+      });
+      continue;
+    }
+
+    if (lower.startsWith('modules/')) {
+      const relative = stripPathSegment(pathValue, 'modules');
+      const moduleMatch = relative.match(/^(.*)\/(get|post|put|patch|delete|head|options)\.module\.([a-z0-9]+)$/i);
+      if (!moduleMatch) continue;
+      const routePart = moduleMatch[1] || '';
+      const routePath = routePart ? `/${routePart}` : '/';
+      const method = moduleMatch[2].toUpperCase();
+      const ext = moduleMatch[3].toLowerCase();
+      const existing = modulesByKey.get(`${method}::${routePath}`);
+      if (directive.action === 'delete') {
+        operations.push({
+          tool: 'delete_module',
+          input: existing
+            ? { id: existing.id }
+            : { routePath, method },
+        });
+        continue;
+      }
+      operations.push({
+        tool: existing || directive.action === 'edit' ? 'update_module' : 'create_module',
+        input: existing
+          ? { id: existing.id, code: content, fileExtension: ext }
+          : { routePath, method, code: content, fileExtension: ext },
+      });
+      continue;
+    }
+
+    if (lower.startsWith('models/')) {
+      const rel = stripPathSegment(pathValue, 'models');
+      const modelPath = normalizeModelPathInput(`models/${rel}`);
+      const extMatch = String(modelPath).match(/\.([a-z0-9]+)$/i);
+      const ext = extMatch?.[1]?.toLowerCase() || 'js';
+      if (directive.action === 'delete') {
+        operations.push({ tool: 'delete_model', input: { path: modelPath } });
+      } else if (directive.action === 'edit') {
+        operations.push({
+          tool: 'update_model',
+          input: { path: modelPath, code: content, fileExtension: ext },
+        });
+      } else {
+        operations.push({
+          tool: 'create_model',
+          input: { path: modelPath, code: content, fileExtension: ext },
+        });
+      }
+      continue;
+    }
+
+    if (lower.startsWith('ui/')) {
+      const rel = stripPathSegment(pathValue, 'ui');
+      const uiMatch = rel.match(/^(.*)\.ui\.([a-z0-9]+)$/i);
+      if (!uiMatch) continue;
+      const name = uiMatch[1];
+      const ext = uiMatch[2].toLowerCase();
+      const existing = latestUiByName.get(name);
+      if (directive.action === 'delete') {
+        operations.push({
+          tool: 'delete_ui_package',
+          input: existing
+            ? { id: existing.id }
+            : { name, version: '1.0.0' },
+        });
+        continue;
+      }
+      if (existing) {
+        operations.push({
+          tool: 'update_ui_package',
+          input: { id: existing.id, code: content, fileExtension: ext },
+        });
+      } else {
+        operations.push({
+          tool: 'create_ui_package',
+          input: { name, version: '1.0.0', code: content, fileExtension: ext },
+        });
+      }
+      continue;
+    }
+
+    if (lower.startsWith('shared-ui/')) {
+      const rel = stripPathSegment(pathValue, 'shared-ui');
+      const parts = rel.split('/');
+      const projectName = parts.shift() || '';
+      if (!projectName) continue;
+      const project = sharedUiByName.get(projectName);
+      if (!project) continue;
+      const filePath = parts.join('/');
+      if (!filePath) continue;
+      operations.push({
+        tool: directive.action === 'delete' ? 'delete_shared_file' : 'write_shared_file',
+        input:
+          directive.action === 'delete'
+            ? { projectId: project.id, projectKind: 'ui', path: filePath }
+            : {
+                projectId: project.id,
+                projectKind: 'ui',
+                path: filePath,
+                content,
+              },
+      });
+      continue;
+    }
+
+    if (lower.startsWith('shared-modules/') || lower.startsWith('shared-backend/')) {
+      const rel = lower.startsWith('shared-modules/')
+        ? stripPathSegment(pathValue, 'shared-modules')
+        : stripPathSegment(pathValue, 'shared-backend');
+      const parts = rel.split('/');
+      const projectName = parts.shift() || '';
+      if (!projectName) continue;
+      const project = sharedModulesByName.get(projectName);
+      if (!project) continue;
+      const filePath = parts.join('/');
+      if (!filePath) continue;
+      operations.push({
+        tool: directive.action === 'delete' ? 'delete_shared_file' : 'write_shared_file',
+        input:
+          directive.action === 'delete'
+            ? { projectId: project.id, projectKind: 'module', path: filePath }
+            : {
+                projectId: project.id,
+                projectKind: 'module',
+                path: filePath,
+                content,
+              },
+      });
+    }
+  }
+
+  return operations;
+};
+
+const executeCodexOperations = async (
+  tools: Record<string, any>,
+  operations: CodexOperation[],
+  getChanges: () => AssistantChange[],
+  onChange?: (change: AssistantChange) => void,
+  onProgress?: (line: string) => void
+) => {
+  const logs: string[] = [];
+  const errors: string[] = [];
+  let executed = 0;
+  let mutationOps = 0;
+  let seenChanges = getChanges().length;
+
+  for (let index = 0; index < operations.length; index += 1) {
+    const op = operations[index];
+    const toolId = toToolId(String(op.tool || op.name || op.action || op.toolId || ''));
+    if (!toolId) continue;
+    const tool = tools[toolId];
+    if (!tool?.execute) {
+      const message = `Operation ${index + 1}: unknown tool "${toolId}"`;
+      errors.push(message);
+      onProgress?.(`${message}\n`);
+      continue;
+    }
+    const rawInput =
+      op.input && typeof op.input === 'object' && !Array.isArray(op.input) ? op.input : {};
+    const input = normalizeOperationInput(toolId, rawInput);
+    if (CODEX_MUTATION_TOOLS.has(toolId)) {
+      mutationOps += 1;
+    }
+    onProgress?.(`Applying ${toolId}...\n`);
+    try {
+      await executeTool(tool, input);
+      executed += 1;
+      const ok = `Applied ${toolId}`;
+      logs.push(ok);
+      onProgress?.(`${ok}\n`);
+      const current = getChanges();
+      if (current.length > seenChanges) {
+        const appended = current.slice(seenChanges);
+        appended.forEach((change) => onChange?.(change));
+        seenChanges = current.length;
+      }
+    } catch (error) {
+      const message = `Failed ${toolId}: ${String((error as Error).message || error)}`;
+      errors.push(message);
+      onProgress?.(`${message}\n`);
+    }
+  }
+
+  return { executed, mutationOps, logs, errors };
+};
+
+const getLatestUserPrompt = (messages: Array<{ role: string; content: string }>) => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const msg = messages[index];
+    if (msg.role === 'user') return msg.content || '';
+  }
+  return '';
+};
+
+const promptLooksLikeMutation = (prompt: string) =>
+  /\b(create|edit|update|delete|remove|add|implement|fix|refactor|build)\b/i.test(prompt);
 
 const normalizeBaseUrl = (value?: string | null) => {
   if (!value) return '';
@@ -129,21 +1024,67 @@ const truncate = (value: string, max = MAX_CONTEXT_CHARS) => {
   return `${value.slice(0, max)}\n…(truncated)`;
 };
 
+const createRunId = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `run-${Math.random().toString(36).slice(2, 12)}`;
+};
+
+type WorkspaceContext = {
+  modules: Array<{
+    id: string;
+    routePath: string;
+    method: string;
+    code: string;
+    fileExtension?: string | null;
+  }>;
+  models: Array<{
+    id: string;
+    path: string;
+    code: string;
+    fileExtension?: string | null;
+    draftVersion?: string | null;
+  }>;
+  uiPackages: Array<{
+    id: string;
+    name: string;
+    version: string;
+    code: string;
+    dependencies: string[];
+    fileExtension?: string | null;
+  }>;
+  sharedUi: Array<{
+    id: string;
+    name: string;
+    version: string;
+    entryPath: string;
+    code: string;
+    dependencies: string[];
+  }>;
+  sharedModules: Array<{
+    id: string;
+    name: string;
+    version: string;
+    entryPath: string;
+    code: string;
+    dependencies: string[];
+  }>;
+};
+
 const buildContextText = (
-  workspace: {
-    modules: Array<{ id: string; routePath: string; method: string }>;
-    uiPackages: Array<{ id: string; name: string; version: string; fileExtension?: string | null }>;
-    sharedUi: Array<{ id: string; name: string; version: string }>;
-    sharedModules: Array<{ id: string; name: string; version: string }>;
-  },
-  acl: { permissions: unknown; roles: unknown; endpoints: unknown },
-  clientContext?: ClientContext
+  workspace: WorkspaceContext,
+  acl: { permissions: unknown; roles: unknown; endpoints: unknown }
 ) => {
   const lines: string[] = [];
-  lines.push('Workspace snapshot:');
+  lines.push('Workspace snapshot (FULL PROJECT CONTEXT):');
   lines.push(`Modules (${workspace.modules.length}):`);
   workspace.modules.forEach((mod) => {
     lines.push(`- ${mod.method} ${mod.routePath} (id:${mod.id})`);
+  });
+  lines.push(`ORM Models (${workspace.models.length}):`);
+  workspace.models.forEach((model) => {
+    lines.push(`- ${model.path} (id:${model.id})`);
   });
   lines.push(`UI Packages (${workspace.uiPackages.length}):`);
   workspace.uiPackages.forEach((pkg) => {
@@ -164,19 +1105,51 @@ const buildContextText = (
   lines.push(truncate(JSON.stringify(acl.roles ?? {}, null, 2)));
   lines.push('ACL Endpoints JSON:');
   lines.push(truncate(JSON.stringify(acl.endpoints ?? {}, null, 2)));
-  if (clientContext?.activeFile) {
-    const active = clientContext.activeFile;
-    lines.push('Active file:');
-    lines.push(`- ${active.name} (id:${active.id})`);
-    if (active.meta) {
-      lines.push('Active file meta:');
-      lines.push(truncate(JSON.stringify(active.meta, null, 2)));
+  lines.push('');
+  lines.push('--- FULL SOURCE: BACKEND MODULES ---');
+  workspace.modules.forEach((mod) => {
+    const ext = mod.fileExtension ? `.${mod.fileExtension}` : '.js';
+    lines.push(`# FILE: modules${mod.routePath}/${mod.method.toLowerCase()}.module${ext}`);
+    lines.push(mod.code || '');
+    lines.push('');
+  });
+  lines.push('--- FULL SOURCE: ORM MODELS ---');
+  workspace.models.forEach((model) => {
+    const ext = model.fileExtension ? `.${model.fileExtension}` : '.js';
+    lines.push(`# FILE: ${model.path || `models/${model.id}${ext}`}`);
+    lines.push(model.code || '');
+    lines.push('');
+  });
+  lines.push('--- FULL SOURCE: UI PACKAGES ---');
+  workspace.uiPackages.forEach((pkg) => {
+    const ext = pkg.fileExtension ? `.${pkg.fileExtension}` : '.jsx';
+    lines.push(`# FILE: ui/${pkg.name}.ui${ext} @${pkg.version}`);
+    if (pkg.dependencies?.length) {
+      lines.push(`# DEPENDENCIES: ${pkg.dependencies.join(', ')}`);
     }
-    if (active.content) {
-      lines.push('Active file content:');
-      lines.push(truncate(active.content));
+    lines.push(pkg.code || '');
+    lines.push('');
+  });
+  lines.push('--- FULL SOURCE: SHARED UI PROJECTS (ENTRY) ---');
+  workspace.sharedUi.forEach((project) => {
+    lines.push(`# FILE: shared-ui/${project.name}/${project.entryPath} @${project.version}`);
+    if (project.dependencies?.length) {
+      lines.push(`# DEPENDENCIES: ${project.dependencies.join(', ')}`);
     }
-  }
+    lines.push(project.code || '');
+    lines.push('');
+  });
+  lines.push('--- FULL SOURCE: SHARED BACKEND PROJECTS (ENTRY) ---');
+  workspace.sharedModules.forEach((project) => {
+    lines.push(
+      `# FILE: shared-modules/${project.name}/${project.entryPath} @${project.version}`
+    );
+    if (project.dependencies?.length) {
+      lines.push(`# DEPENDENCIES: ${project.dependencies.join(', ')}`);
+    }
+    lines.push(project.code || '');
+    lines.push('');
+  });
   return lines.join('\n');
 };
 
@@ -191,7 +1164,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   const tenant = await resolveTenant(req);
   const allowClientConfig = process.env.AI_ALLOW_CLIENT_CONFIG === 'true';
 
-  const { messages, config, context, stream } = req.body ?? {};
+  const { messages, config, stream } = req.body ?? {};
   const normalizedMessages = normalizeMessages(messages);
   if (!normalizedMessages.length) {
     const err = new Error('Messages are required');
@@ -207,12 +1180,10 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     changes,
   });
 
-  const workspace = await executeTool<{
-    modules: Array<{ id: string; routePath: string; method: string }>;
-    uiPackages: Array<{ id: string; name: string; version: string; fileExtension?: string | null }>;
-    sharedUi: Array<{ id: string; name: string; version: string }>;
-    sharedModules: Array<{ id: string; name: string; version: string }>;
-  }, Record<string, never>>(tools.list_workspace, {});
+  const workspace = await executeTool<WorkspaceContext, Record<string, never>>(
+    tools.list_workspace,
+    {}
+  );
   const acl = await executeTool<{
     permissions: unknown;
     roles: unknown;
@@ -221,6 +1192,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   const contextText = buildContextText(
     {
       modules: workspace.modules ?? [],
+      models: workspace.models ?? [],
       uiPackages: workspace.uiPackages ?? [],
       sharedUi: workspace.sharedUi ?? [],
       sharedModules: workspace.sharedModules ?? [],
@@ -229,9 +1201,414 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       permissions: acl.permissions,
       roles: acl.roles,
       endpoints: acl.endpoints,
-    },
-    context as ClientContext
+    }
   );
+
+  const idempotency = buildAssistantIdempotencyKey(normalizedMessages, contextText);
+  const runId = createRunId();
+  const reservation = await reserveAssistantRun(tenant.id, runId, idempotency);
+  if (reservation.reusedRunId) {
+    const cached = await getAssistantRun(tenant.id, reservation.reusedRunId);
+    if (cached) {
+      if (stream) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('Connection', 'keep-alive');
+        (res as any).flushHeaders?.();
+        res.write(
+          `data: ${JSON.stringify({
+            type: 'start',
+            runId: cached.runId,
+          })}\n\n`
+        );
+        res.write(
+          `data: ${JSON.stringify({
+            type: 'done',
+            message: cached.message,
+            changes,
+            finishReason: cached.finishReason,
+            runId: cached.runId,
+            usage: cached.usage,
+            events: cached.events,
+            dag: cached.dag,
+            conflicts: cached.conflicts,
+            cached: true,
+          })}\n\n`
+        );
+        res.end();
+        return;
+      }
+      res.status(200).json({
+        message: cached.message,
+        changes,
+        finishReason: cached.finishReason,
+        runId: cached.runId,
+        usage: cached.usage,
+        events: cached.events,
+        dag: cached.dag,
+        conflicts: cached.conflicts,
+        cached: true,
+      });
+      return;
+    }
+    const summary = await getAssistantRunSummary(tenant.id, reservation.reusedRunId);
+    if (summary?.status === 'running') {
+      if (stream) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('Connection', 'keep-alive');
+        (res as any).flushHeaders?.();
+        res.write(
+          `data: ${JSON.stringify({
+            type: 'start',
+            runId: reservation.reusedRunId,
+          })}\n\n`
+        );
+        res.write(
+          `data: ${JSON.stringify({
+            type: 'done',
+            message: 'Equivalent run is already in progress. Retry in a few seconds.',
+            changes,
+            runId: reservation.reusedRunId,
+            pending: true,
+          })}\n\n`
+        );
+        res.end();
+        return;
+      }
+      res.status(202).json({
+        message: 'Equivalent run is already in progress. Retry in a few seconds.',
+        runId: reservation.reusedRunId,
+        pending: true,
+      });
+      return;
+    }
+  }
+  await startAssistantRun(tenant.id, runId, idempotency);
+
+  if (isCodexAgentMode()) {
+    const codexModel = resolveCodexModel(config ?? {}, allowClientConfig);
+    if (stream) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      (res as any).flushHeaders?.();
+
+      const sendEvent = (payload: Record<string, unknown>) => {
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      };
+
+      const events: AssistantRunEvent[] = [];
+      const emitRunEvent = (event: AssistantRunEvent) => {
+        events.push(event);
+        sendEvent({ type: 'run_event', event });
+        void appendAssistantEvent(tenant.id, runId, event).catch(() => undefined);
+      };
+
+      try {
+        sendEvent({ type: 'start', runId });
+        emitRunEvent(
+          createRunEvent(runId, 'RUN_REQUESTED', 'S0_INIT', {
+            mode: 'codex',
+            agentType: resolveAgentType(),
+          })
+        );
+        emitRunEvent(createRunEvent(runId, 'CONTEXT_CAPTURED', 'S0_INIT'));
+        emitRunEvent(createRunEvent(runId, 'EXECUTION_STARTED', 'S2_EXTRACTION'));
+        sendEvent({ type: 'delta', content: '[codex] building prompt/context...\n' });
+        sendEvent({ type: 'delta', content: '[codex] launching codex-cli...\n' });
+        const startedAt = Date.now();
+        const heartbeat = setInterval(() => {
+          if (closed) return;
+          const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+          sendEvent({ type: 'delta', content: `[codex] working... ${elapsed}s\n` });
+        }, 5000);
+        heartbeat.unref?.();
+
+        const codex = await (async () => {
+          try {
+            return await executeCodexCli({
+              runId,
+              messages: normalizedMessages,
+              contextText,
+              model: codexModel,
+              onLine: (line) => {
+                const formatted = formatCodexProgressLine(line);
+                if (!formatted?.text) return;
+                sendEvent({
+                  type: 'delta',
+                  content: formatted.appendNewline ? `${formatted.text}\n` : formatted.text,
+                });
+              },
+            });
+          } finally {
+            clearInterval(heartbeat);
+          }
+        })();
+        sendEvent({
+          type: 'delta',
+          content: '\n[codex] response received, resolving operations...\n',
+        });
+        const plan = parseCodexPlan(codex.message);
+        const fallbackDirectives = parseCodexFileDirectives(codex.message);
+        const fallbackOperations = buildOperationsFromDirectives(fallbackDirectives, workspace);
+        const operations = (plan?.operations?.length ? plan.operations : fallbackOperations) ?? [];
+        if (plan?.operations?.length) {
+          sendEvent({
+            type: 'delta',
+            content: `[codex] parsed ${plan.operations.length} operation(s) from JSON plan\n`,
+          });
+        } else if (fallbackDirectives.length) {
+          sendEvent({
+            type: 'delta',
+            content: `[codex] parsed ${fallbackDirectives.length} file directive(s), mapped to ${fallbackOperations.length} operation(s)\n`,
+          });
+        } else {
+          sendEvent({
+            type: 'delta',
+            content: '[codex] no explicit operations in response\n',
+          });
+        }
+        const latestPrompt = getLatestUserPrompt(normalizedMessages);
+        if (operations.length > 0) {
+          emitRunEvent(
+            createRunEvent(runId, 'PLAN_READY', 'S1_ANALYSIS', {
+              operationCount: operations.length,
+            })
+          );
+        }
+        if (promptLooksLikeMutation(latestPrompt) && operations.length === 0) {
+          throw new Error('Codex returned no operations to apply.');
+        }
+        const opResult =
+          operations.length > 0
+            ? await executeCodexOperations(
+                tools as Record<string, any>,
+                operations,
+                () => changes,
+                (change) => sendEvent({ type: 'change', change }),
+                (line) => sendEvent({ type: 'delta', content: line })
+              )
+            : { executed: 0, mutationOps: 0, logs: [] as string[], errors: [] as string[] };
+        sendEvent({
+          type: 'delta',
+          content: `[codex] operations done: executed ${opResult.executed}/${operations.length}, mutations ${opResult.mutationOps}, changes ${changes.length}\n`,
+        });
+        if (operations.length > 0 && opResult.executed === 0) {
+          throw new Error(
+            `Codex operations failed: ${opResult.errors.join(' | ') || 'no operation was applied'}`
+          );
+        }
+        if (promptLooksLikeMutation(latestPrompt) && changes.length === 0) {
+          throw new Error(
+            `No workspace changes were applied for mutation request.${opResult.errors.length ? ` Errors: ${opResult.errors.join(' | ')}` : ''}`
+          );
+        }
+        const summary = (plan?.summary || '').trim() || codex.message.trim() || 'Done.';
+        const finalMessageLines = [summary];
+        if (opResult.logs.length) {
+          finalMessageLines.push('');
+          finalMessageLines.push(...opResult.logs.map((line) => `- ${line}`));
+        }
+        if (opResult.errors.length) {
+          finalMessageLines.push('');
+          finalMessageLines.push(...opResult.errors.map((line) => `- ${line}`));
+        }
+        const finalMessage = finalMessageLines.join('\n').trim();
+
+        emitRunEvent(createRunEvent(runId, 'EXECUTION_COMPLETED', 'S3_SYNTHESIS'));
+        emitRunEvent(createRunEvent(runId, 'RUN_COMPLETED', 'S4_PRODUCTION'));
+
+        const now = new Date().toISOString();
+        await completeAssistantRun({
+          runId,
+          tenantId: tenant.id,
+          status: 'completed',
+          message: finalMessage,
+          finishReason: 'codex-complete',
+          usage: undefined,
+          createdAt: events[0]?.timestamp ?? now,
+          updatedAt: now,
+          idempotencyKey: idempotency,
+          events,
+          artifacts: [
+            { id: `${runId}-messages`, kind: 'request_messages', payload: normalizedMessages },
+            { id: `${runId}-context`, kind: 'workspace_context', payload: contextText },
+            { id: `${runId}-plan`, kind: 'execution_plan', payload: plan ?? {} },
+            { id: `${runId}-output`, kind: 'execution_output', payload: finalMessage },
+          ],
+          dag: { nodes: [], edges: [] },
+          conflicts: [],
+        });
+
+        sendEvent({
+          type: 'done',
+          message: finalMessage,
+          changes,
+          finishReason: 'codex-complete',
+          runId,
+          usage: undefined,
+          events,
+          dag: { nodes: [], edges: [] },
+          conflicts: [],
+        });
+        res.end();
+        return;
+      } catch (err) {
+        const failEvent = createRunEvent(runId, 'RUN_FAILED', 'S4_PRODUCTION', {
+          message: (err as Error).message || 'Codex execution failed',
+        });
+        events.push(failEvent);
+        void appendAssistantEvent(tenant.id, runId, failEvent).catch(() => undefined);
+        sendEvent({ type: 'run_event', event: failEvent });
+        const now = new Date().toISOString();
+        await completeAssistantRun({
+          runId,
+          tenantId: tenant.id,
+          status: 'failed',
+          message: '',
+          finishReason: 'codex-error',
+          usage: undefined,
+          createdAt: events[0]?.timestamp ?? now,
+          updatedAt: now,
+          idempotencyKey: idempotency,
+          events,
+          artifacts: [],
+          dag: { nodes: [], edges: [] },
+          conflicts: [],
+        });
+        sendEvent({
+          type: 'error',
+          message: (err as Error).message || 'Codex streaming failed',
+        });
+        res.end();
+        return;
+      }
+    }
+
+    const events: AssistantRunEvent[] = [];
+    const pushEvent = (event: AssistantRunEvent) => {
+      events.push(event);
+      void appendAssistantEvent(tenant.id, runId, event).catch(() => undefined);
+    };
+    try {
+      pushEvent(
+        createRunEvent(runId, 'RUN_REQUESTED', 'S0_INIT', {
+          mode: 'codex',
+          agentType: resolveAgentType(),
+        })
+      );
+      pushEvent(createRunEvent(runId, 'CONTEXT_CAPTURED', 'S0_INIT'));
+      pushEvent(createRunEvent(runId, 'EXECUTION_STARTED', 'S2_EXTRACTION'));
+      const codex = await executeCodexCli({
+        runId,
+        messages: normalizedMessages,
+        contextText,
+        model: codexModel,
+      });
+      const plan = parseCodexPlan(codex.message);
+      const fallbackDirectives = parseCodexFileDirectives(codex.message);
+      const fallbackOperations = buildOperationsFromDirectives(fallbackDirectives, workspace);
+      const operations = (plan?.operations?.length ? plan.operations : fallbackOperations) ?? [];
+      const latestPrompt = getLatestUserPrompt(normalizedMessages);
+      if (operations.length > 0) {
+        pushEvent(
+          createRunEvent(runId, 'PLAN_READY', 'S1_ANALYSIS', {
+            operationCount: operations.length,
+          })
+        );
+      }
+      if (promptLooksLikeMutation(latestPrompt) && operations.length === 0) {
+        throw new Error('Codex returned no operations to apply.');
+      }
+      const opResult =
+        operations.length > 0
+          ? await executeCodexOperations(
+              tools as Record<string, any>,
+              operations,
+              () => changes
+            )
+          : { executed: 0, mutationOps: 0, logs: [] as string[], errors: [] as string[] };
+      if (operations.length > 0 && opResult.executed === 0) {
+        throw new Error(
+          `Codex operations failed: ${opResult.errors.join(' | ') || 'no operation was applied'}`
+        );
+      }
+      if (promptLooksLikeMutation(latestPrompt) && changes.length === 0) {
+        throw new Error(
+          `No workspace changes were applied for mutation request.${opResult.errors.length ? ` Errors: ${opResult.errors.join(' | ')}` : ''}`
+        );
+      }
+      const summary = (plan?.summary || '').trim() || codex.message.trim() || 'Done.';
+      const finalMessageLines = [summary];
+      if (opResult.logs.length) {
+        finalMessageLines.push('');
+        finalMessageLines.push(...opResult.logs.map((line) => `- ${line}`));
+      }
+      if (opResult.errors.length) {
+        finalMessageLines.push('');
+        finalMessageLines.push(...opResult.errors.map((line) => `- ${line}`));
+      }
+      const finalMessage = finalMessageLines.join('\n').trim();
+      pushEvent(createRunEvent(runId, 'EXECUTION_COMPLETED', 'S3_SYNTHESIS'));
+      pushEvent(createRunEvent(runId, 'RUN_COMPLETED', 'S4_PRODUCTION'));
+      const now = new Date().toISOString();
+      await completeAssistantRun({
+        runId,
+        tenantId: tenant.id,
+        status: 'completed',
+        message: finalMessage,
+        finishReason: 'codex-complete',
+        usage: undefined,
+        createdAt: events[0]?.timestamp ?? now,
+        updatedAt: now,
+        idempotencyKey: idempotency,
+        events,
+        artifacts: [
+          { id: `${runId}-messages`, kind: 'request_messages', payload: normalizedMessages },
+          { id: `${runId}-context`, kind: 'workspace_context', payload: contextText },
+          { id: `${runId}-plan`, kind: 'execution_plan', payload: plan ?? {} },
+          { id: `${runId}-output`, kind: 'execution_output', payload: finalMessage },
+        ],
+        dag: { nodes: [], edges: [] },
+        conflicts: [],
+      });
+      res.status(200).json({
+        message: finalMessage,
+        changes,
+        finishReason: 'codex-complete',
+        runId,
+        usage: undefined,
+        events,
+        dag: { nodes: [], edges: [] },
+        conflicts: [],
+      });
+      return;
+    } catch (err) {
+      pushEvent(
+        createRunEvent(runId, 'RUN_FAILED', 'S4_PRODUCTION', {
+          message: (err as Error).message || 'Codex execution failed',
+        })
+      );
+      const now = new Date().toISOString();
+      await completeAssistantRun({
+        runId,
+        tenantId: tenant.id,
+        status: 'failed',
+        message: '',
+        finishReason: 'codex-error',
+        usage: undefined,
+        createdAt: events[0]?.timestamp ?? now,
+        updatedAt: now,
+        idempotencyKey: idempotency,
+        events,
+        artifacts: [],
+        dag: { nodes: [], edges: [] },
+        conflicts: [],
+      });
+      throw err;
+    }
+  }
 
   const modelConfig = await pickAvailableModel(
     buildAssistantModelConfig(config ?? {}, allowClientConfig)
@@ -249,41 +1626,85 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     };
 
     try {
-      const output = await agent.stream(normalizedMessages as any, {
-        system: contextText,
-        maxSteps: 24,
-      });
-
-      sendEvent({ type: 'start', runId: output.runId });
-
-      const reader = output.textStream.getReader();
       let closed = false;
       req.on('close', () => {
         closed = true;
-        reader.cancel().catch(() => undefined);
       });
-
-      while (!closed) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (value) {
-          sendEvent({ type: 'delta', content: value });
+      let startSent = false;
+      const emitRunEvent = (event: AssistantRunEvent) => {
+        if (closed) return;
+        if (!startSent) {
+          sendEvent({ type: 'start', runId: event.runId });
+          startSent = true;
         }
-      }
-
-      const full = await output.getFullOutput();
-      const usage = await output.totalUsage;
+        sendEvent({ type: 'run_event', event });
+      };
+      const run = await executeAssistantRun({
+        runId,
+        agent,
+        messages: normalizedMessages,
+        contextText,
+        maxSteps: 24,
+        maxRetries: 1,
+        onDelta: (content) => {
+          if (!closed && content) {
+            sendEvent({ type: 'delta', content });
+          }
+        },
+        onEvent: (event) => {
+          emitRunEvent(event);
+          void appendAssistantEvent(tenant.id, runId, event).catch(() => undefined);
+        },
+        collectChanges: () => changes,
+      });
+      const status = run.events.some((event) => event.type === 'RUN_FAILED')
+        ? 'failed'
+        : 'completed';
+      await completeAssistantRun({
+        runId,
+        tenantId: tenant.id,
+        status,
+        message: run.message || '',
+        finishReason: run.finishReason,
+        usage: run.usage,
+        createdAt: run.events[0]?.timestamp ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        idempotencyKey: idempotency,
+        events: run.events,
+        artifacts: run.artifacts,
+        dag: run.dag,
+        conflicts: run.conflicts,
+      });
       sendEvent({
         type: 'done',
-        message: full.text?.trim() || '',
+        message: run.message || '',
         changes,
-        finishReason: full.finishReason,
-        runId: output.runId,
-        usage,
+        finishReason: run.finishReason,
+        runId,
+        usage: run.usage,
+        events: run.events,
+        dag: run.dag,
+        conflicts: run.conflicts,
       });
       res.end();
       return;
     } catch (err) {
+      const now = new Date().toISOString();
+      await completeAssistantRun({
+        runId,
+        tenantId: tenant.id,
+        status: 'failed',
+        message: '',
+        finishReason: 'error',
+        usage: undefined,
+        createdAt: now,
+        updatedAt: now,
+        idempotencyKey: idempotency,
+        events: [],
+        artifacts: [],
+        dag: { nodes: [], edges: [] },
+        conflicts: [],
+      });
       sendEvent({
         type: 'error',
         message: (err as Error).message || 'Streaming failed',
@@ -293,16 +1714,45 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     }
   }
 
-  const output = await agent.generate(normalizedMessages as any, {
-    system: contextText,
+  const run = await executeAssistantRun({
+    runId,
+    agent,
+    messages: normalizedMessages,
+    contextText,
     maxSteps: 24,
+    maxRetries: 1,
+    onEvent: (event) => {
+      void appendAssistantEvent(tenant.id, runId, event).catch(() => undefined);
+    },
+    collectChanges: () => changes,
+  });
+  const status = run.events.some((event) => event.type === 'RUN_FAILED')
+    ? 'failed'
+    : 'completed';
+  await completeAssistantRun({
+    runId,
+    tenantId: tenant.id,
+    status,
+    message: run.message || '',
+    finishReason: run.finishReason,
+    usage: run.usage,
+    createdAt: run.events[0]?.timestamp ?? new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    idempotencyKey: idempotency,
+    events: run.events,
+    artifacts: run.artifacts,
+    dag: run.dag,
+    conflicts: run.conflicts,
   });
 
   res.status(200).json({
-    message: output.text?.trim() || '',
+    message: run.message || '',
     changes,
-    finishReason: output.finishReason,
-    runId: output.runId,
-    usage: output.totalUsage ?? output.usage,
+    finishReason: run.finishReason,
+    runId,
+    usage: run.usage,
+    events: run.events,
+    dag: run.dag,
+    conflicts: run.conflicts,
   });
 });

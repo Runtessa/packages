@@ -16,6 +16,14 @@ export type UiSnapshot = {
   fileExtension?: string | null;
 };
 
+export type OrmModelSnapshot = {
+  id: string;
+  path: string;
+  code: string;
+  fileExtension?: string | null;
+  draftVersion?: string | null;
+};
+
 export type SharedProjectSnapshot = {
   id: string;
   name: string;
@@ -41,6 +49,12 @@ export type AssistantChange =
       action: 'create' | 'update' | 'delete';
       before?: ModuleSnapshot | null;
       after?: ModuleSnapshot | null;
+    }
+  | {
+      kind: 'model';
+      action: 'create' | 'update' | 'delete';
+      before?: OrmModelSnapshot | null;
+      after?: OrmModelSnapshot | null;
     }
   | {
       kind: 'ui';

@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FiRotateCcw, FiSend, FiSettings, FiTrash2 } from "react-icons/fi";
+import dynamic from "next/dynamic";
+import {
+  FiDownload,
+  FiMaximize2,
+  FiRotateCcw,
+  FiSend,
+  FiSettings,
+  FiSquare,
+  FiTrash2,
+} from "react-icons/fi";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
@@ -7,6 +16,10 @@ import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import type { ActiveFile, AclConfigDto } from "@/components/editor/types";
 import type { AssistantChange } from "@/lib/assistant/types";
+import type {
+  AssistantRunConflict,
+  AssistantRunEvent,
+} from "@/lib/assistant/orchestrator";
 
 type ApiFetch = (
   url: string,
@@ -14,7 +27,7 @@ type ApiFetch = (
 ) => Promise<any>;
 type ApiStreamFetch = (
   url: string,
-  options?: { method?: string; body?: unknown },
+  options?: { method?: string; body?: unknown; signal?: AbortSignal },
 ) => Promise<Response>;
 
 type AiMessage = {
@@ -23,6 +36,9 @@ type AiMessage = {
   content: string;
   createdAt: string;
   changes?: AssistantChange[];
+  events?: AssistantRunEvent[];
+  steps?: string[];
+  conflicts?: AssistantRunConflict[];
   rolledBack?: boolean;
 };
 
@@ -33,6 +49,24 @@ type AiSettings = {
   provider: string;
   allowClientConfig: boolean;
 };
+
+type AssistantRunSummary = {
+  runId: string;
+  status: "running" | "completed" | "failed";
+  createdAt: string;
+  updatedAt: string;
+  eventsCount: number;
+  conflictsCount: number;
+  finishReason?: string;
+};
+
+const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
+  ssr: false,
+});
+const MonacoDiffEditor = dynamic(
+  () => import("@monaco-editor/react").then((mod) => mod.DiffEditor),
+  { ssr: false },
+);
 
 type EditorAiPanelProps = {
   apiFetch: ApiFetch;
@@ -60,6 +94,11 @@ const formatChange = (change: AssistantChange) => {
     if (!target) return "UI update";
     return `${change.action.toUpperCase()} UI ${target.name}@${target.version}`;
   }
+  if (change.kind === "model") {
+    const target = change.after ?? change.before;
+    if (!target) return "Model update";
+    return `${change.action.toUpperCase()} model ${target.path}`;
+  }
   if (change.kind === "acl") {
     return `UPDATE ACL ${change.file}.json`;
   }
@@ -76,6 +115,233 @@ const formatChange = (change: AssistantChange) => {
   return "Change";
 };
 
+const uniqueChangeKey = (change: AssistantChange) => {
+  if (change.kind === "module") {
+    const target = change.after ?? change.before;
+    return `module:${change.action}:${target?.id || "unknown"}`;
+  }
+  if (change.kind === "model") {
+    const target = change.after ?? change.before;
+    return `model:${change.action}:${target?.id || target?.path || "unknown"}`;
+  }
+  if (change.kind === "ui") {
+    const target = change.after ?? change.before;
+    return `ui:${change.action}:${target?.id || `${target?.name}@${target?.version}`}`;
+  }
+  if (change.kind === "acl") {
+    return `acl:${change.file}`;
+  }
+  if (change.kind === "shared-project") {
+    const target = change.after ?? change.before;
+    return `shared-project:${change.action}:${target?.id || `${target?.name}@${target?.version}`}`;
+  }
+  const target = change.after ?? change.before;
+  return `shared-file:${change.action}:${change.projectId}:${target?.id || target?.path || "unknown"}`;
+};
+
+const mergeChanges = (
+  existing: AssistantChange[] | undefined,
+  incoming: AssistantChange[] | undefined,
+) => {
+  const next = [...(existing ?? [])];
+  for (const change of incoming ?? []) {
+    const key = uniqueChangeKey(change);
+    const idx = next.findIndex((item) => uniqueChangeKey(item) === key);
+    if (idx === -1) {
+      next.push(change);
+    } else {
+      next[idx] = change;
+    }
+  }
+  return next;
+};
+
+type ChangeDiffPayload = {
+  path: string;
+  before: string;
+  after: string;
+  language: string;
+};
+
+const mapLanguage = (ext?: string | null) => {
+  const normalized = String(ext || "").replace(/^\./, "").toLowerCase();
+  if (normalized === "jsx") return "javascript";
+  if (normalized === "js") return "javascript";
+  if (normalized === "json") return "json";
+  if (normalized === "css") return "css";
+  return "plaintext";
+};
+
+const stringifyJson = (value: unknown) => {
+  try {
+    return JSON.stringify(value ?? {}, null, 2);
+  } catch {
+    return String(value ?? "");
+  }
+};
+
+const buildChangeDiffPayload = (change: AssistantChange): ChangeDiffPayload => {
+  if (change.kind === "module") {
+    const before = change.before?.code ?? "";
+    const after = change.after?.code ?? "";
+    const target = change.after ?? change.before;
+    const ext = target?.fileExtension || "js";
+    const route = target?.routePath || "/unknown";
+    const method = target?.method?.toLowerCase?.() || "unknown";
+    return {
+      path: `Modules${route}/${method}.module.${ext}`,
+      before,
+      after,
+      language: mapLanguage(ext),
+    };
+  }
+  if (change.kind === "model") {
+    const before = change.before?.code ?? "";
+    const after = change.after?.code ?? "";
+    const target = change.after ?? change.before;
+    const ext = target?.fileExtension || "js";
+    return {
+      path: target?.path || `models/unknown.${ext}`,
+      before,
+      after,
+      language: mapLanguage(ext),
+    };
+  }
+  if (change.kind === "ui") {
+    const before = change.before?.code ?? "";
+    const after = change.after?.code ?? "";
+    const target = change.after ?? change.before;
+    const ext = target?.fileExtension || "jsx";
+    return {
+      path: `UI Entities/${target?.name || "unknown"}.ui.${ext}`,
+      before,
+      after,
+      language: mapLanguage(ext),
+    };
+  }
+  if (change.kind === "acl") {
+    return {
+      path: `Modules/acl/${change.file}.json`,
+      before: stringifyJson(change.before),
+      after: stringifyJson(change.after),
+      language: "json",
+    };
+  }
+  if (change.kind === "shared-project") {
+    const before = change.before?.code ?? "";
+    const after = change.after?.code ?? "";
+    const target = change.after ?? change.before;
+    const ext = target?.fileExtension || (target?.kind === "ui" ? "jsx" : "js");
+    return {
+      path: `Shared ${target?.kind || "project"} ${target?.name || "unknown"}@${target?.version || "unknown"} (${target?.entryPath || "entry"})`,
+      before,
+      after,
+      language: mapLanguage(ext),
+    };
+  }
+  const before = change.before?.content ?? "";
+  const after = change.after?.content ?? "";
+  const target = change.after ?? change.before;
+  const ext = target?.fileExtension || "js";
+  return {
+    path: `${change.projectKind === "ui" ? "Shared UI" : "Shared Backend"}/${target?.path || "unknown"}`,
+    before,
+    after,
+    language: mapLanguage(ext),
+  };
+};
+
+const formatRunStep = (event: AssistantRunEvent) => {
+  const labels: Record<AssistantRunEvent["type"], string> = {
+    RUN_REQUESTED: "Run requested",
+    CONTEXT_CAPTURED: "Context captured",
+    PLAN_READY: "Plan ready",
+    EXECUTION_STARTED: "Execution started",
+    EXECUTION_COMPLETED: "Execution completed",
+    CONFLICT_FOUND: "Conflict found",
+    RETRY_REQUESTED: "Retry requested",
+    RUN_COMPLETED: "Run completed",
+    RUN_FAILED: "Run failed",
+  };
+  const detail = (() => {
+    const payload = event.payload ?? {};
+    if (typeof payload.message === "string" && payload.message.trim()) {
+      return payload.message.trim();
+    }
+    if (typeof payload.summary === "string" && payload.summary.trim()) {
+      return payload.summary.trim();
+    }
+    if (typeof payload.reason === "string" && payload.reason.trim()) {
+      return payload.reason.trim();
+    }
+    if (typeof payload.attempt === "number") {
+      return `attempt ${payload.attempt}`;
+    }
+    return "";
+  })();
+  const base = labels[event.type] || event.type;
+  return detail ? `${base} - ${detail}` : base;
+};
+
+const mapRunSteps = (events: AssistantRunEvent[] | undefined) =>
+  (events ?? []).map(formatRunStep).filter(Boolean);
+
+const mergeSteps = (existing: string[] | undefined, incoming: string[]) => {
+  const output = [...(existing ?? [])];
+  for (const step of incoming) {
+    if (!step) continue;
+    if (output[output.length - 1] === step) continue;
+    output.push(step);
+  }
+  return output;
+};
+
+const buildArchivedRunMessage = (input: {
+  message?: string;
+  events?: AssistantRunEvent[];
+  conflicts?: AssistantRunConflict[];
+  finishReason?: string;
+}) => {
+  const message = (input.message || "").trim();
+  if (message) return message;
+  if ((input.conflicts?.length ?? 0) > 0) {
+    return `Archived run completed with ${input.conflicts?.length ?? 0} conflict(s).`;
+  }
+  if ((input.events?.length ?? 0) > 0) {
+    const steps = mapRunSteps(input.events);
+    if (steps.length) {
+      return `No stored assistant text. Last step: ${steps[steps.length - 1]}`;
+    }
+    return `No stored assistant text. Run recorded ${input.events?.length ?? 0} event(s).`;
+  }
+  if (input.finishReason) {
+    return `No stored assistant text. Finish reason: ${input.finishReason}.`;
+  }
+  return "No stored assistant text for this run.";
+};
+
+function ThinkingIndicator() {
+  return (
+    <div className="inline-flex items-center gap-2 rounded-lg border border-[#2a2d2e] bg-[#1b1b1b] px-3 py-2 text-[11px] text-gray-300">
+      <div className="flex items-center gap-1">
+        <span
+          className="h-1.5 w-1.5 rounded-full bg-gray-400 animate-bounce"
+          style={{ animationDelay: "0ms" }}
+        />
+        <span
+          className="h-1.5 w-1.5 rounded-full bg-gray-400 animate-bounce"
+          style={{ animationDelay: "130ms" }}
+        />
+        <span
+          className="h-1.5 w-1.5 rounded-full bg-gray-400 animate-bounce"
+          style={{ animationDelay: "260ms" }}
+        />
+      </div>
+      <span className="tracking-wide">Thinking</span>
+    </div>
+  );
+}
+
 export function EditorAiPanel({
   apiFetch,
   apiStreamFetch,
@@ -90,9 +356,19 @@ export function EditorAiPanel({
   const [messages, setMessages] = useState<AiMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [pendingAssistantId, setPendingAssistantId] = useState<string | null>(
+    null,
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
+  const [runs, setRuns] = useState<AssistantRunSummary[]>([]);
+  const [loadingRuns, setLoadingRuns] = useState(false);
+  const [promptMaximized, setPromptMaximized] = useState(false);
+  const [exportingDump, setExportingDump] = useState(false);
+  const [openChangeDiffKeys, setOpenChangeDiffKeys] = useState<
+    Record<string, boolean>
+  >({});
   const [settings, setSettings] = useState<AiSettings>({
     baseUrl: "",
     apiKey: "",
@@ -100,7 +376,22 @@ export function EditorAiPanel({
     provider: "",
     allowClientConfig: false,
   });
+  const [systemPrompt, setSystemPrompt] = useState("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const streamAbortRef = useRef<AbortController | null>(null);
+  const stoppingRef = useRef(false);
+
+  const isAbortError = (err: unknown) => {
+    if (!err) return false;
+    if (typeof DOMException !== "undefined" && err instanceof DOMException) {
+      return err.name === "AbortError";
+    }
+    const error = err as Error;
+    return (
+      error.name === "AbortError" ||
+      /abort|aborted/i.test(String(error.message || ""))
+    );
+  };
 
   const storageKey = useMemo(
     () => `${STORAGE_PREFIX}:${tenantHost || "default"}`,
@@ -119,6 +410,7 @@ export function EditorAiPanel({
           provider: config.provider || "",
           allowClientConfig: Boolean(config.allowClientConfig),
         }));
+        setSystemPrompt(String(config.systemPrompt || ""));
       } catch (err) {
         showError(
           (err as Error).message || "Failed to load assistant settings",
@@ -161,6 +453,24 @@ export function EditorAiPanel({
     localStorage.setItem(storageKey, JSON.stringify(toStore));
   }, [messages, settings, storageKey, tenantHost]);
 
+  const loadRuns = async () => {
+    try {
+      setLoadingRuns(true);
+      const result = await apiFetch("/api/assistant/runs?limit=12");
+      setRuns(Array.isArray(result?.runs) ? result.runs : []);
+    } catch {
+      setRuns([]);
+    } finally {
+      setLoadingRuns(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!tenantHost) return;
+    loadRuns();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantHost]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, sending]);
@@ -178,7 +488,11 @@ export function EditorAiPanel({
   }, [activeFile, fileContents, savedContents]);
 
   const sendMessage = async () => {
+    if (sending) return;
     if (!input.trim()) return;
+    const abortController = new AbortController();
+    streamAbortRef.current = abortController;
+    stoppingRef.current = false;
     const userMessage: AiMessage = {
       id: `user-${createId()}`,
       role: "user",
@@ -196,6 +510,7 @@ export function EditorAiPanel({
     setMessages(nextMessages);
     setInput("");
     setSending(true);
+    setPendingAssistantId(assistantId);
 
     try {
       const payload = {
@@ -220,11 +535,13 @@ export function EditorAiPanel({
       const res = await apiStreamFetch("/api/assistant/respond", {
         method: "POST",
         body: payload,
+        signal: abortController.signal,
       });
 
       const contentType = res.headers.get("content-type") || "";
       if (!res.body || !contentType.includes("text/event-stream")) {
         const data = await res.json();
+        const steps = mapRunSteps(data.events ?? []);
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === assistantId
@@ -232,6 +549,9 @@ export function EditorAiPanel({
                   ...msg,
                   content: data.message || "Done.",
                   changes: data.changes ?? [],
+                  events: data.events ?? [],
+                  steps,
+                  conflicts: data.conflicts ?? [],
                 }
               : msg,
           ),
@@ -239,6 +559,7 @@ export function EditorAiPanel({
         if (data.changes?.length) {
           onWorkspaceRefresh();
         }
+        loadRuns();
         success("Assistant updated the workspace");
         return;
       }
@@ -247,6 +568,9 @@ export function EditorAiPanel({
       const decoder = new TextDecoder();
       let buffer = "";
       let finalChanges: AssistantChange[] = [];
+      let finalEvents: AssistantRunEvent[] = [];
+      let finalSteps: string[] = [];
+      let finalConflicts: AssistantRunConflict[] = [];
 
       const appendContent = (text: string) => {
         if (!text) return;
@@ -286,21 +610,69 @@ export function EditorAiPanel({
               content?: string;
               message?: string;
               changes?: AssistantChange[];
+              change?: AssistantChange;
+              event?: AssistantRunEvent;
+              events?: AssistantRunEvent[];
+              conflicts?: AssistantRunConflict[];
             };
             if (event.type === "delta" && event.content) {
               appendContent(event.content);
             }
+            if (event.type === "run_event" && event.event) {
+              const step = formatRunStep(event.event as AssistantRunEvent);
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantId
+                    ? {
+                        ...msg,
+                        events: [...(msg.events ?? []), event.event as AssistantRunEvent],
+                        steps: mergeSteps(msg.steps, step ? [step] : []),
+                      }
+                    : msg,
+                ),
+              );
+            }
+            if (event.type === "change" && event.change) {
+              const change = event.change as AssistantChange;
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantId
+                    ? {
+                        ...msg,
+                        changes: mergeChanges(msg.changes, [change]),
+                      }
+                    : msg,
+                ),
+              );
+            }
+            if (event.type === "error" && event.message) {
+              appendContent(`\n${event.message}\n`);
+            }
             if (event.type === "done") {
               if (event.message) {
-                setMessages((prev: any) =>
-                  prev.map((msg: any) =>
-                    msg.id === assistantId
-                      ? { ...msg, content: event.message }
-                      : msg,
-                  ),
+                setMessages((prev) =>
+                  prev.map((msg) => {
+                    if (msg.id !== assistantId) return msg;
+                    const existing = String(msg.content || "").trim();
+                    const incoming = String(event.message || "").trim();
+                    if (!incoming) return msg;
+                    if (!existing) {
+                      return { ...msg, content: incoming };
+                    }
+                    if (existing.includes(incoming)) {
+                      return msg;
+                    }
+                    return {
+                      ...msg,
+                      content: `${existing}\n\n${incoming}`,
+                    };
+                  }),
                 );
               }
               finalChanges = event.changes ?? [];
+              finalEvents = event.events ?? [];
+              finalSteps = mapRunSteps(finalEvents);
+              finalConflicts = event.conflicts ?? [];
             }
           } catch {
             // ignore malformed chunk
@@ -309,20 +681,42 @@ export function EditorAiPanel({
         }
       }
 
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === assistantId
+            ? {
+                ...msg,
+                changes: finalChanges.length
+                  ? mergeChanges(msg.changes, finalChanges)
+                  : msg.changes ?? [],
+                events: finalEvents.length ? finalEvents : msg.events,
+                steps: finalSteps.length ? finalSteps : msg.steps,
+                conflicts: finalConflicts.length ? finalConflicts : msg.conflicts,
+              }
+            : msg,
+        ),
+      );
       if (finalChanges.length) {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === assistantId ? { ...msg, changes: finalChanges } : msg,
-          ),
-        );
         onWorkspaceRefresh();
       }
+      loadRuns();
       success("Assistant updated the workspace");
     } catch (err) {
-      showError((err as Error).message || "Assistant request failed");
+      if (!stoppingRef.current && !isAbortError(err)) {
+        showError((err as Error).message || "Assistant request failed");
+      }
     } finally {
+      streamAbortRef.current = null;
+      stoppingRef.current = false;
       setSending(false);
+      setPendingAssistantId(null);
     }
+  };
+
+  const stopMessage = () => {
+    if (!sending) return;
+    stoppingRef.current = true;
+    streamAbortRef.current?.abort();
   };
 
   const loadModels = async () => {
@@ -363,22 +757,125 @@ export function EditorAiPanel({
         ),
       );
       onWorkspaceRefresh();
+      loadRuns();
       success("Rolled back assistant changes");
     } catch (err) {
       showError((err as Error).message || "Rollback failed");
     }
   };
 
+  const inspectRun = async (runId: string) => {
+    try {
+      const run = await apiFetch(`/api/assistant/runs/${encodeURIComponent(runId)}`);
+      const events = Array.isArray(run.events) ? run.events : [];
+      const conflicts = Array.isArray(run.conflicts) ? run.conflicts : [];
+      const inspected: AiMessage = {
+        id: `run-${runId}`,
+        role: "assistant",
+        content: buildArchivedRunMessage({
+          message: run.message,
+          events,
+          conflicts,
+          finishReason: run.finishReason,
+        }),
+        createdAt: run.updatedAt || new Date().toISOString(),
+        changes: [],
+        events,
+        steps: mapRunSteps(events),
+        conflicts,
+      };
+      setMessages((prev) => [...prev, inspected]);
+    } catch (err) {
+      showError((err as Error).message || "Failed to load run");
+    }
+  };
+
+  const downloadTenantDump = async () => {
+    try {
+      setExportingDump(true);
+      const result = await apiFetch("/api/assistant/tenant-dump");
+      const markdown = String(result?.markdown || "");
+      const filename = String(
+        result?.filename || `tenant-dump-${Date.now()}.md`,
+      );
+      if (!markdown.trim()) {
+        throw new Error("Tenant dump is empty");
+      }
+      const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      success("Tenant dump generated");
+    } catch (err) {
+      showError((err as Error).message || "Failed to generate tenant dump");
+    } finally {
+      setExportingDump(false);
+    }
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-[34px] items-center justify-between border-b border-[#2a2d2e] px-3 text-[11px] uppercase text-gray-400">
-        <div>Assistant</div>
-        <div className="text-[10px] text-gray-500">
-          {sending ? "Working…" : "Ready"}
+        <div className="font-medium tracking-wide text-gray-300">Assistant</div>
+        <div
+          className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] normal-case ${
+            sending
+              ? "border-[#2a2d2e] bg-[#1f1f1f] text-gray-300"
+              : "border-[#2a2d2e] bg-[#1f1f1f] text-gray-400"
+          }`}
+        >
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${
+              sending ? "bg-[#0b5b96] animate-pulse" : "bg-gray-500"
+            }`}
+          />
+          {sending ? "Thinking" : "Ready"}
         </div>
       </div>
 
-      <div className="flex-1 space-y-3 overflow-auto p-3 text-[12px] text-gray-200">
+      <div className="flex-1 space-y-3 overflow-auto bg-[#252526] p-3 text-[12px] text-gray-200">
+        <div className="rounded-lg border border-[#2a2d2e] bg-[#171717] p-2.5 text-[11px] text-gray-300">
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-[10px] uppercase text-gray-400">
+              Recent runs
+            </span>
+            <button
+              type="button"
+              className="rounded border border-[#2a2d2e] px-2 py-0.5 text-[10px] text-gray-300 hover:bg-[#2a2d2e]"
+              onClick={loadRuns}
+            >
+              {loadingRuns ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+          {runs.length ? (
+            <div className="space-y-1">
+              {runs.slice(0, 6).map((run) => (
+                <button
+                  key={run.runId}
+                  type="button"
+                  className="flex w-full items-center justify-between rounded-md border border-transparent px-2 py-1.5 text-left hover:border-[#2a2d2e] hover:bg-[#1f1f1f]"
+                  onClick={() => inspectRun(run.runId)}
+                >
+                  <span className="truncate text-[10px] text-gray-200">
+                    {run.runId}
+                  </span>
+                  <span className="text-[10px] text-gray-500">
+                    {run.status}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[10px] text-gray-500">
+              {loadingRuns ? "Loading runs..." : "No stored runs"}
+            </div>
+          )}
+        </div>
         {messages.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-gray-400">
             Ask the assistant to create or edit modules, UI entities, ACL, or
@@ -387,37 +884,91 @@ export function EditorAiPanel({
         ) : (
           messages.map((msg) => {
             const isUser = msg.role === "user";
+            const isPendingAssistant =
+              !isUser &&
+              !!sending &&
+              pendingAssistantId === msg.id;
+            const showThinking = isPendingAssistant && !msg.content.trim();
             return (
               <div
                 key={msg.id}
                 className={`flex ${isUser ? "justify-end" : "justify-start"}`}
               >
                 <div
-                  className={`max-w-[85%] rounded-lg border px-3 py-2 ${
+                  className={`max-w-[87%] rounded-xl border px-3 py-2.5 shadow-sm ${
                     isUser
-                      ? "border-[#0b5b96] bg-[#0b5b96]/20 text-white"
-                      : "border-[#2a2d2e] bg-[#1f1f1f] text-gray-200"
+                      ? "border-[#2a2d2e] bg-[#1f1f1f] text-gray-100"
+                      : "border-[#2a2d2e] bg-[#1b1b1b] text-gray-200"
                   }`}
                 >
-                  <div className="whitespace-pre-wrap leading-relaxed">
-                    {msg.content}
-                  </div>
+                  {showThinking ? <ThinkingIndicator /> : null}
+                  {msg.content ? (
+                    <div className="whitespace-pre-wrap leading-relaxed text-[12px]">
+                      {msg.content}
+                    </div>
+                  ) : null}
                   {msg.changes?.length ? (
-                    <div className="mt-3 rounded border border-[#2a2d2e] bg-[#1b1b1b] p-2 text-[11px] text-gray-300">
+                    <div className="mt-3 rounded-lg border border-[#2a2d2e] bg-[#181818] p-2 text-[11px] text-gray-300">
                       <div className="mb-2 text-[10px] uppercase text-gray-400">
                         Applied changes
                       </div>
-                      <ul className="space-y-1">
-                        {msg.changes.map((change, idx) => (
-                          <li
-                            key={`${msg.id}-change-${idx}`}
-                            className="flex gap-2"
-                          >
-                            <span className="text-gray-500">•</span>
-                            <span>{formatChange(change)}</span>
-                          </li>
-                        ))}
-                      </ul>
+                      <div className="space-y-2">
+                        {msg.changes.map((change) => {
+                          const diff = buildChangeDiffPayload(change);
+                          const changeKey = `${msg.id}:${uniqueChangeKey(change)}`;
+                          const isDiffOpen = Boolean(openChangeDiffKeys[changeKey]);
+                          const originalModelPath = `file:///assistant-diff/${encodeURIComponent(changeKey)}.before`;
+                          const modifiedModelPath = `file:///assistant-diff/${encodeURIComponent(changeKey)}.after`;
+                          return (
+                            <details
+                              key={changeKey}
+                              className="overflow-hidden rounded border border-[#2a2d2e] bg-[#151515]"
+                              onToggle={(event) => {
+                                const nextOpen = event.currentTarget.open;
+                                setOpenChangeDiffKeys((prev) =>
+                                  prev[changeKey] === nextOpen
+                                    ? prev
+                                    : { ...prev, [changeKey]: nextOpen },
+                                );
+                              }}
+                            >
+                              <summary className="cursor-pointer list-none px-2 py-1.5 text-[11px] text-gray-200 hover:bg-[#1f1f1f]">
+                                {formatChange(change)}
+                              </summary>
+                              <div className="border-t border-[#2a2d2e]">
+                                <div className="px-2 py-1 text-[10px] text-gray-400">
+                                  {diff.path}
+                                </div>
+                                {isDiffOpen ? (
+                                  <MonacoDiffEditor
+                                    height="220px"
+                                    language={diff.language}
+                                    theme="vs-dark"
+                                    original={diff.before}
+                                    modified={diff.after}
+                                    originalModelPath={originalModelPath}
+                                    modifiedModelPath={modifiedModelPath}
+                                    keepCurrentOriginalModel={true}
+                                    keepCurrentModifiedModel={true}
+                                    options={{
+                                      readOnly: true,
+                                      renderSideBySide: true,
+                                      minimap: { enabled: false },
+                                      scrollBeyondLastLine: false,
+                                      lineNumbers: "on",
+                                      fontSize: 11,
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="px-2 py-2 text-[10px] text-gray-500">
+                                    Expand to preview file diff
+                                  </div>
+                                )}
+                              </div>
+                            </details>
+                          );
+                        })}
+                      </div>
                       <div className="mt-2 flex items-center justify-between">
                         <span className="text-[10px] text-gray-500">
                           {msg.rolledBack ? "Rolled back" : "Auto-applied"}
@@ -435,6 +986,25 @@ export function EditorAiPanel({
                       </div>
                     </div>
                   ) : null}
+                  {msg.steps?.length ? (
+                    <div className="mt-2 space-y-1 text-[10px] text-gray-300">
+                      {msg.steps.slice(-8).map((step, idx) => (
+                        <div
+                          key={`${msg.id}-step-${idx}`}
+                          className="flex items-start gap-2"
+                        >
+                          <span className="mt-[1px] text-gray-500">•</span>
+                          <span>{step}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {msg.conflicts?.length ? (
+                    <div className="mt-2 rounded-lg border border-amber-700/40 bg-amber-950/20 p-2 text-[10px] text-amber-200">
+                      {msg.conflicts.length} conflict
+                      {msg.conflicts.length > 1 ? "s" : ""} detected during run
+                    </div>
+                  ) : null}
                 </div>
               </div>
             );
@@ -450,7 +1020,11 @@ export function EditorAiPanel({
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              sendMessage();
+              if (sending) {
+                stopMessage();
+              } else {
+                sendMessage();
+              }
             }
           }}
           placeholder="Describe what you need (modules, UI, ACL, shared files)…"
@@ -478,12 +1052,16 @@ export function EditorAiPanel({
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
-              disabled={sending || !input.trim()}
+              disabled={!sending && !input.trim()}
               className="flex items-center gap-2 rounded bg-[#0b5b96] px-3 py-2 text-[12px] font-semibold text-white hover:bg-[#0f72be] disabled:opacity-60"
-              onClick={sendMessage}
+              onClick={sending ? stopMessage : sendMessage}
             >
-              {sending ? "Sending…" : "Send"}
-              <FiSend className="h-4 w-4" />
+              {sending ? "Stop" : "Send"}
+              {sending ? (
+                <FiSquare className="h-4 w-4" />
+              ) : (
+                <FiSend className="h-4 w-4" />
+              )}
             </button>
           </div>
         </div>
@@ -563,6 +1141,95 @@ export function EditorAiPanel({
             }
             placeholder="openai"
             disabled={!settings.allowClientConfig}
+          />
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-medium text-textPrimary">
+                System Prompt
+              </div>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  onClick={downloadTenantDump}
+                  disabled={exportingDump}
+                  className="!px-2"
+                  title="Download full tenant markdown dump"
+                >
+                  <FiDownload className="h-3 w-3" />
+                  {exportingDump ? "Exporting..." : "Tenant dump"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  onClick={() => {
+                    setPromptMaximized(true);
+                    setSettingsOpen(false);
+                  }}
+                  className="!px-2"
+                  title="Maximize system prompt"
+                >
+                  <FiMaximize2 className="h-3 w-3" />
+                  Maximize
+                </Button>
+              </div>
+            </div>
+            <div className="overflow-hidden rounded border border-[#2a2d2e]">
+              <MonacoEditor
+                height="320px"
+                language="markdown"
+                theme="vs-dark"
+                value={systemPrompt}
+                options={{
+                  readOnly: true,
+                  minimap: { enabled: false },
+                  wordWrap: "on",
+                  lineNumbers: "on",
+                  scrollBeyondLastLine: false,
+                  fontSize: 12,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={promptMaximized}
+        onClose={() => setPromptMaximized(false)}
+        title="System Prompt"
+        size="xl"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setPromptMaximized(false);
+                setSettingsOpen(true);
+              }}
+            >
+              Back to settings
+            </Button>
+            <Button variant="primary" onClick={() => setPromptMaximized(false)}>
+              Close
+            </Button>
+          </>
+        }
+      >
+        <div className="overflow-hidden rounded border border-[#2a2d2e]">
+          <MonacoEditor
+            height="70vh"
+            language="markdown"
+            theme="vs-dark"
+            value={systemPrompt}
+            options={{
+              readOnly: true,
+              minimap: { enabled: true },
+              wordWrap: "on",
+              lineNumbers: "on",
+              scrollBeyondLastLine: false,
+              fontSize: 12,
+            }}
           />
         </div>
       </Modal>

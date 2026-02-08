@@ -425,7 +425,10 @@ export default function EditorPage() {
   );
 
   const apiStreamFetch = useCallback(
-    async (url: string, options: { method?: string; body?: unknown } = {}) => {
+    async (
+      url: string,
+      options: { method?: string; body?: unknown; signal?: AbortSignal } = {}
+    ) => {
       if (!token) {
         const err = new Error('Session token is missing');
         (err as any).statusCode = 401;
@@ -439,6 +442,7 @@ export default function EditorPage() {
       }
       const res = await fetch(resolveApiUrl(url), {
         method: options.method ?? 'GET',
+        signal: options.signal,
         headers: {
           'Content-Type': 'application/json',
           ...(tenantHost ? { 'X-Tenant-Host': tenantHost } : {}),

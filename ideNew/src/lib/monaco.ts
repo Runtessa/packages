@@ -155,6 +155,46 @@ declare module '@shared/*' {
   const mod: any;
   export = mod;
 }
+declare module '@app/runtime' {
+  // Backend runtime helpers are not available inside UI entities.
+}
+declare module '@app/datacontext' {
+  export const DataContext: any;
+  export const DataProvider: any;
+  export const useDataContext: () => {
+    api: {
+      request: (path: string, options?: any) => Promise<any>;
+      get: (path: string, options?: any) => Promise<any>;
+      post: (path: string, body?: any, options?: any) => Promise<any>;
+      put: (path: string, body?: any, options?: any) => Promise<any>;
+      del: (path: string, options?: any) => Promise<any>;
+    };
+    tenantHost: string | null;
+    previewMode: boolean;
+    getToken: () => string | null;
+  };
+  export const useApiClient: () => {
+    request: (path: string, options?: any) => Promise<any>;
+    get: (path: string, options?: any) => Promise<any>;
+    post: (path: string, body?: any, options?: any) => Promise<any>;
+    put: (path: string, body?: any, options?: any) => Promise<any>;
+    del: (path: string, options?: any) => Promise<any>;
+  };
+  export const getApiClient: () => ReturnType<typeof useApiClient>;
+  export const api: ReturnType<typeof useApiClient>;
+  const _default: {
+    DataContext: any;
+    DataProvider: any;
+    useDataContext: typeof useDataContext;
+    useApiClient: typeof useApiClient;
+    getApiClient: typeof getApiClient;
+    api: typeof api;
+  };
+  export default _default;
+}
+declare module 'adapters' {
+  // Adapters must come from backend module handler arg: (req, adapters)
+}
 declare module '@app/*' {
   const mod: any;
   export = mod;

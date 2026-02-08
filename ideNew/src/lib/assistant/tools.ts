@@ -12,6 +12,7 @@ import {
   GlobalUIPackageFile,
   GlobalModulePackage,
   GlobalModulePackageFile,
+  OrmModel,
 } from '@idp/shared';
 import redis from '@/lib/redis';
 import { generateVersion } from '@/lib/version';
@@ -36,9 +37,11 @@ import {
   upsertGlobalTailwindPackage,
 } from '@/lib/shared-tailwind';
 import { buildSharedBundle, compileUiSource } from './compiler';
+import { compileOrmSource } from '@/lib/orm-compiler';
 import type {
   AssistantChange,
   ModuleSnapshot,
+  OrmModelSnapshot,
   UiSnapshot,
   SharedProjectSnapshot,
   SharedFileSnapshot,
@@ -90,11 +93,206 @@ const normalizeDependencies = (raw: unknown): string[] => {
   return raw.map((item) => String(item));
 };
 
+const DASHBOARD_UI_NAME = '@app/dashboard';
+const DASHBOARD_DEFAULT_VERSION = '1.0.0';
+const DEFAULT_DASHBOARD_CODE = `import React from 'react';
+
+export function App() {
+  return (
+    <div style={{ padding: 24 }}>
+      <h1>IDP Dashboard</h1>
+    </div>
+  );
+}
+`;
+
+const UI_FORBIDDEN_IMPORTS = ['@app/runtime', 'typeorm'];
+const MODULE_FORBIDDEN_IMPORTS = ['adapters'];
+const KERNEL_API_CLIENT_MODULE = '@app/datacontext';
+
+const assertUiCodeIsRuntimeSafe = (code: string) => {
+  for (const specifier of UI_FORBIDDEN_IMPORTS) {
+    const escaped = specifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const importPattern = new RegExp(
+      `(?:import\\s+[^;]*?from\\s+['"]${escaped}['"]|require\\(\\s*['"]${escaped}['"]\\s*\\))`,
+      'm'
+    );
+    if (importPattern.test(code)) {
+      throw new Error(
+        `UI packages cannot import "${specifier}". Use backend modules for adapters/ORM logic and call API endpoints from UI.`
+      );
+    }
+  }
+  const directNetworkPatterns: Array<{ pattern: RegExp; label: string }> = [
+    { pattern: /\bfetch\s*\(/m, label: 'fetch(...)' },
+    { pattern: /\baxios\b/m, label: 'axios' },
+    { pattern: /\bXMLHttpRequest\b/m, label: 'XMLHttpRequest' },
+  ];
+  for (const entry of directNetworkPatterns) {
+    if (entry.pattern.test(code)) {
+      throw new Error(
+        `UI packages must use the kernel API client from "${KERNEL_API_CLIENT_MODULE}". Direct network usage (${entry.label}) is not allowed.`
+      );
+    }
+  }
+  const mentionsApiPath = /(['"`])\/api\/[^'"`\s]+/m.test(code);
+  if (mentionsApiPath) {
+    const hasKernelClientImport =
+      /from\s+['"]@app\/datacontext['"]/m.test(code) ||
+      /require\(\s*['"]@app\/datacontext['"]\s*\)/m.test(code);
+    const hasKernelClientUsage =
+      /\buseApiClient\s*\(/m.test(code) || /\bgetApiClient\s*\(/m.test(code);
+    if (!hasKernelClientImport || !hasKernelClientUsage) {
+      throw new Error(
+        `UI packages that call /api/* must import and use "${KERNEL_API_CLIENT_MODULE}" (useApiClient/getApiClient).`
+      );
+    }
+  }
+};
+
+const assertBackendModuleContract = (code: string) => {
+  for (const specifier of MODULE_FORBIDDEN_IMPORTS) {
+    const escaped = specifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const importPattern = new RegExp(
+      `(?:import\\s+[^;]*?from\\s+['"]${escaped}['"]|require\\(\\s*['"]${escaped}['"]\\s*\\))`,
+      'm'
+    );
+    if (importPattern.test(code)) {
+      throw new Error(
+        `Backend modules must not import "${specifier}". Use the injected adapters argument: module.exports = async function handler(req, adapters) { ... }.`
+      );
+    }
+  }
+  const directDbAdapterPatterns: Array<{ pattern: RegExp; label: string }> = [
+    { pattern: /\badapters\.postgres\b/m, label: 'adapters.postgres' },
+    { pattern: /\badapters\.mysql\b/m, label: 'adapters.mysql' },
+    { pattern: /\badapters\.mssql\b/m, label: 'adapters.mssql' },
+  ];
+  for (const entry of directDbAdapterPatterns) {
+    if (entry.pattern.test(code)) {
+      throw new Error(
+        `Direct DB adapter usage (${entry.label}) is not allowed in backend modules. Use adapters.orm('<adapter:key>') only.`
+      );
+    }
+  }
+  const directDbLibraryPatterns: Array<{ pattern: RegExp; label: string }> = [
+    { pattern: /require\(\s*['"]pg['"]\s*\)/m, label: 'pg' },
+    { pattern: /require\(\s*['"]mysql2?['"]\s*\)/m, label: 'mysql/mysql2' },
+    { pattern: /require\(\s*['"]mssql['"]\s*\)/m, label: 'mssql' },
+    { pattern: /require\(\s*['"]typeorm['"]\s*\)/m, label: 'typeorm' },
+    { pattern: /from\s+['"]pg['"]/m, label: 'pg' },
+    { pattern: /from\s+['"]mysql2?['"]/m, label: 'mysql/mysql2' },
+    { pattern: /from\s+['"]mssql['"]/m, label: 'mssql' },
+    { pattern: /from\s+['"]typeorm['"]/m, label: 'typeorm' },
+  ];
+  for (const entry of directDbLibraryPatterns) {
+    if (entry.pattern.test(code)) {
+      throw new Error(
+        `Direct DB library import (${entry.label}) is not allowed in backend modules. Use adapters.orm('<adapter:key>') only.`
+      );
+    }
+  }
+  if (!/module\.exports\s*=/m.test(code)) {
+    throw new Error(
+      'Backend module must export a CommonJS handler via module.exports = async function handler(req, adapters) { ... }.'
+    );
+  }
+  if (!/\(\s*req\s*,\s*adapters\s*\)/m.test(code)) {
+    throw new Error('Backend module handler must accept (req, adapters) parameters.');
+  }
+};
+
+const assertDashboardEntrypointCode = (name: string, code: string) => {
+  if (name !== DASHBOARD_UI_NAME) return;
+  if (!/export\s+function\s+App\s*\(/m.test(code)) {
+    throw new Error(
+      'Entrypoint UI package "@app/dashboard" must export a named function App().'
+    );
+  }
+  if (/export\s+default\s+/m.test(code)) {
+    throw new Error(
+      'Entrypoint UI package "@app/dashboard" cannot use default export. Use "export function App()".'
+    );
+  }
+};
+
+const assertNonDashboardDoesNotDefineAppEntrypoint = (name: string, code: string) => {
+  if (name === DASHBOARD_UI_NAME) return;
+  if (
+    /export\s+function\s+App\s*\(/m.test(code) ||
+    /export\s+default\s+function\s+App\s*\(/m.test(code)
+  ) {
+    throw new Error(
+      'Only "@app/dashboard" may define/export App(). Create reusable components in other packages and import them into @app/dashboard.'
+    );
+  }
+};
+
 const normalizeModuleExtension = (raw: unknown): string => {
   const allowed = new Set(['js']);
   if (!raw || typeof raw !== 'string') return 'js';
   const normalized = raw.replace(/^\./, '').toLowerCase();
   return allowed.has(normalized) ? normalized : 'js';
+};
+
+const ensureModelPath = (value: string) => {
+  const extMatch = value.match(/\.([^.\/]+)$/);
+  if (!extMatch) return `${value}.js`;
+  const ext = extMatch[1]?.toLowerCase();
+  if (ext !== 'js') {
+    return value.replace(/\.[^.\/]+$/, '.js');
+  }
+  return value;
+};
+
+const normalizeModelPath = (raw: unknown): string => {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    throw new Error('path is required');
+  }
+  const trimmed = raw.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  return ensureModelPath(trimmed);
+};
+
+const normalizeModelExtension = (raw: unknown): string => {
+  const allowed = new Set(['js']);
+  if (!raw || typeof raw !== 'string') return 'js';
+  const normalized = raw.replace(/^\./, '').toLowerCase();
+  if (!allowed.has(normalized)) {
+    throw new Error('Only .js model files are supported.');
+  }
+  return normalized;
+};
+
+const assertOrmModelDecoratorNotation = (code: string) => {
+  const trimmed = code.trim();
+  if (!trimmed) {
+    throw new Error('Model code cannot be empty.');
+  }
+  if (/^[\[{]/.test(trimmed)) {
+    throw new Error(
+      'Model must be JavaScript class code with TypeORM decorators, not JSON.'
+    );
+  }
+  if (!/@Entity\s*\(/m.test(code)) {
+    throw new Error('Model must include @Entity(...) decorator.');
+  }
+  if (!/\bclass\s+[A-Za-z_$][\w$]*\b/m.test(code)) {
+    throw new Error('Model must declare at least one class.');
+  }
+  if (!/@(?:PrimaryGeneratedColumn|PrimaryColumn|Column|CreateDateColumn|UpdateDateColumn)\s*\(/m.test(code)) {
+    throw new Error(
+      'Model must include at least one TypeORM field decorator such as @PrimaryGeneratedColumn or @Column.'
+    );
+  }
+  if (
+    !/require\(\s*['"]typeorm['"]\s*\)/m.test(code) &&
+    !/from\s+['"]typeorm['"]/m.test(code)
+  ) {
+    throw new Error('Model must import TypeORM decorators from "typeorm".');
+  }
+  if (!/module\.exports\s*=/m.test(code)) {
+    throw new Error('Model must export class(es) using module.exports = { ... }.');
+  }
 };
 
 const normalizeUiExtension = (raw: unknown): string => {
@@ -157,6 +355,14 @@ const snapshotUi = (pkg: UIPackage): UiSnapshot => ({
   codeBlob: pkg.codeBlob ?? '',
   dependencies: pkg.dependencies ?? [],
   fileExtension: pkg.fileExtension ?? undefined,
+});
+
+const snapshotModel = (model: OrmModel): OrmModelSnapshot => ({
+  id: model.id,
+  path: model.path ?? '',
+  code: model.code ?? '',
+  fileExtension: model.fileExtension ?? undefined,
+  draftVersion: model.draftVersion ?? undefined,
 });
 
 const snapshotSharedProject = (
@@ -238,6 +444,7 @@ const createUiRevision = async (
 const listWorkspace = async (tenantId: string, isAdmin: boolean) => {
   const moduleRepo = CoreDataSource.getRepository(ModuleEntity);
   const uiRepo = CoreDataSource.getRepository(UIPackage);
+  const modelRepo = CoreDataSource.getRepository(OrmModel);
   const modules = await moduleRepo.find({
     where: { tenant: { id: tenantId } },
     order: { routePath: 'ASC', method: 'ASC' },
@@ -245,6 +452,10 @@ const listWorkspace = async (tenantId: string, isAdmin: boolean) => {
   const uiPackages = await uiRepo.find({
     where: { tenant: { id: tenantId } },
     order: { name: 'ASC', version: 'DESC' },
+  });
+  const models = await modelRepo.find({
+    where: { tenant: { id: tenantId } },
+    order: { path: 'ASC' },
   });
   const sharedUi = isAdmin
     ? await CoreDataSource.getRepository(GlobalUIPackage).find({ order: { name: 'ASC' } })
@@ -254,6 +465,7 @@ const listWorkspace = async (tenantId: string, isAdmin: boolean) => {
     : [];
   return {
     modules: modules.map(snapshotModule),
+    models: models.map(snapshotModel),
     uiPackages: uiPackages.map(snapshotUi),
     sharedUi: sharedUi.map((pkg) => snapshotSharedProject(pkg, 'ui')),
     sharedModules: sharedModules.map((pkg) => snapshotSharedProject(pkg, 'module')),
@@ -277,6 +489,9 @@ const updateUiPackage = async (
   const nextVersion = nextValues.version ?? pkg.version;
   const nextExt = nextValues.fileExtension ?? pkg.fileExtension;
   const nextCode = nextValues.code ?? pkg.code ?? '';
+  assertUiCodeIsRuntimeSafe(nextCode);
+  assertDashboardEntrypointCode(nextName, nextCode);
+  assertNonDashboardDoesNotDefineAppEntrypoint(nextName, nextCode);
   const compiled =
     nextValues.codeBlob ?? compileUiSource(nextCode, nextExt ?? undefined);
   const rawDeps = nextValues.dependencies ?? pkg.dependencies ?? [];
@@ -333,6 +548,31 @@ const updateUiPackage = async (
   }
 
   return pkg;
+};
+
+const ensureDashboardEntrypoint = async (ctx: AssistantToolContext) => {
+  const repo = CoreDataSource.getRepository(UIPackage);
+  const existing = await repo.findOne({
+    where: { tenant: { id: ctx.tenant.id }, name: DASHBOARD_UI_NAME },
+    order: { createdAt: 'DESC' },
+  });
+  if (existing) return existing;
+
+  const compiled = compileUiSource(DEFAULT_DASHBOARD_CODE, 'jsx');
+  const dashboard = repo.create({
+    tenant: ctx.tenant,
+    name: DASHBOARD_UI_NAME,
+    version: DASHBOARD_DEFAULT_VERSION,
+    code: DEFAULT_DASHBOARD_CODE,
+    codeBlob: compiled,
+    dependencies: [],
+    fileExtension: 'jsx',
+    draftVersion: generateVersion(),
+  });
+  await repo.save(dashboard);
+  await clearRegistryCache(ctx.tenant.id, dashboard.name, dashboard.version);
+  ctx.changes.push({ kind: 'ui', action: 'create', after: snapshotUi(dashboard) });
+  return dashboard;
 };
 
 const updateSharedBundle = async (
@@ -416,7 +656,8 @@ const cleanupTailwindPackages = async (tenantId: string) => {
 export const buildAssistantTools = (ctx: AssistantToolContext) => {
   const listWorkspaceTool = createTool({
     id: 'list_workspace',
-    description: 'List modules, UI packages, and shared projects available to the current tenant.',
+    description:
+      'List backend modules, ORM models, UI packages, and shared projects available to the current tenant.',
     execute: async () => {
       await ensureCoreSchema();
       return await listWorkspace(ctx.tenant.id, ctx.isAdmin);
@@ -462,6 +703,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       const routePath = normalizeRoute(input.routePath);
       const method = normalizeMethod(input.method);
       const code = normalizeCode(input.code);
+      assertBackendModuleContract(code);
       const fileExtension = normalizeModuleExtension(input.fileExtension);
       const existing = await repo.findOne({
         where: { tenant: { id: ctx.tenant.id }, routePath, method },
@@ -508,6 +750,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       const nextRoute = input.routePath ? normalizeRoute(input.routePath) : mod.routePath;
       const nextMethod = input.method ? normalizeMethod(input.method) : mod.method;
       const nextCode = input.code !== undefined ? normalizeCode(input.code) : mod.code;
+      assertBackendModuleContract(nextCode);
       const nextExt =
         input.fileExtension !== undefined
           ? normalizeModuleExtension(input.fileExtension)
@@ -566,6 +809,146 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
     },
   });
 
+  const listModelsTool = createTool({
+    id: 'list_models',
+    description: 'List ORM models for the current tenant.',
+    execute: async () => {
+      await ensureCoreSchema();
+      const repo = CoreDataSource.getRepository(OrmModel);
+      const models = await repo.find({
+        where: { tenant: { id: ctx.tenant.id } },
+        order: { path: 'ASC' },
+      });
+      return models.map(snapshotModel);
+    },
+  });
+
+  const getModelTool = createTool({
+    id: 'get_model',
+    description: 'Fetch an ORM model by id or path.',
+    inputSchema: z.object({
+      id: z.string().optional(),
+      path: z.string().optional(),
+    }),
+    execute: async (input) => {
+      await ensureCoreSchema();
+      const repo = CoreDataSource.getRepository(OrmModel);
+      const where = input.id
+        ? { id: input.id, tenant: { id: ctx.tenant.id } }
+        : { tenant: { id: ctx.tenant.id }, path: normalizeModelPath(input.path) };
+      const model = await repo.findOne({ where });
+      if (!model) throw new Error('Model not found');
+      return snapshotModel(model);
+    },
+  });
+
+  const createModelTool = createTool({
+    id: 'create_model',
+    description: 'Create a new ORM model file for the current tenant.',
+    inputSchema: z.object({
+      path: z.string(),
+      code: z.string(),
+      fileExtension: z.string().optional(),
+    }),
+    execute: async (input) => {
+      await ensureCoreSchema();
+      const repo = CoreDataSource.getRepository(OrmModel);
+      const path = normalizeModelPath(input.path);
+      const code = normalizeCode(input.code);
+      assertOrmModelDecoratorNotation(code);
+      const fileExtension = normalizeModelExtension(input.fileExtension);
+      const existing = await repo.findOne({
+        where: { tenant: { id: ctx.tenant.id }, path },
+      });
+      if (existing) throw new Error('Model already exists at this path');
+      const compiled = compileOrmSource(code, fileExtension);
+      const model = repo.create({
+        tenant: ctx.tenant,
+        path,
+        code,
+        codeBlob: compiled,
+        fileExtension,
+        draftVersion: generateVersion(),
+      });
+      await repo.save(model);
+      ctx.changes.push({ kind: 'model', action: 'create', after: snapshotModel(model) });
+      return snapshotModel(model);
+    },
+  });
+
+  const updateModelTool = createTool({
+    id: 'update_model',
+    description: 'Update an ORM model by id or path.',
+    inputSchema: z.object({
+      id: z.string().optional(),
+      path: z.string().optional(),
+      code: z.string().optional(),
+      fileExtension: z.string().optional(),
+      newPath: z.string().optional(),
+    }),
+    execute: async (input) => {
+      await ensureCoreSchema();
+      const repo = CoreDataSource.getRepository(OrmModel);
+      const where = input.id
+        ? { id: input.id, tenant: { id: ctx.tenant.id } }
+        : { tenant: { id: ctx.tenant.id }, path: normalizeModelPath(input.path) };
+      const model = await repo.findOne({ where });
+      if (!model) throw new Error('Model not found');
+      const before = snapshotModel(model);
+      const nextPath = input.newPath ? normalizeModelPath(input.newPath) : model.path;
+      if (nextPath !== model.path) {
+        const duplicate = await repo.findOne({
+          where: { tenant: { id: ctx.tenant.id }, path: nextPath },
+        });
+        if (duplicate && duplicate.id !== model.id) {
+          throw new Error('Another model already uses this path');
+        }
+      }
+      const nextCode = input.code !== undefined ? normalizeCode(input.code) : model.code;
+      assertOrmModelDecoratorNotation(nextCode);
+      const nextExt =
+        input.fileExtension !== undefined
+          ? normalizeModelExtension(input.fileExtension)
+          : model.fileExtension;
+      const compiled = compileOrmSource(nextCode, nextExt);
+      model.path = nextPath;
+      model.code = nextCode;
+      model.codeBlob = compiled;
+      model.fileExtension = nextExt;
+      model.draftVersion = generateVersion();
+      await repo.save(model);
+      ctx.changes.push({
+        kind: 'model',
+        action: 'update',
+        before,
+        after: snapshotModel(model),
+      });
+      return snapshotModel(model);
+    },
+  });
+
+  const deleteModelTool = createTool({
+    id: 'delete_model',
+    description: 'Delete an ORM model by id or path.',
+    inputSchema: z.object({
+      id: z.string().optional(),
+      path: z.string().optional(),
+    }),
+    execute: async (input) => {
+      await ensureCoreSchema();
+      const repo = CoreDataSource.getRepository(OrmModel);
+      const where = input.id
+        ? { id: input.id, tenant: { id: ctx.tenant.id } }
+        : { tenant: { id: ctx.tenant.id }, path: normalizeModelPath(input.path) };
+      const model = await repo.findOne({ where });
+      if (!model) throw new Error('Model not found');
+      const before = snapshotModel(model);
+      await repo.remove(model);
+      ctx.changes.push({ kind: 'model', action: 'delete', before });
+      return { ok: true };
+    },
+  });
+
   const listUiTool = createTool({
     id: 'list_ui_packages',
     description: 'List UI packages for the current tenant.',
@@ -620,6 +1003,12 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       const name = normalizeUiName(input.name);
       const version = normalizeUiVersion(input.version);
       const code = normalizeCode(input.code);
+      assertUiCodeIsRuntimeSafe(code);
+      assertDashboardEntrypointCode(name, code);
+      assertNonDashboardDoesNotDefineAppEntrypoint(name, code);
+      if (name !== DASHBOARD_UI_NAME) {
+        await ensureDashboardEntrypoint(ctx);
+      }
       const fileExtension = normalizeUiExtension(input.fileExtension);
       const depsRaw = normalizeDependencies(input.dependencies);
       const existing = await repo.findOne({
@@ -678,6 +1067,10 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
           };
       const pkg = await repo.findOne({ where });
       if (!pkg) throw new Error('UI package not found');
+      const targetName = input.name ? normalizeUiName(input.name) : pkg.name;
+      if (targetName !== DASHBOARD_UI_NAME) {
+        await ensureDashboardEntrypoint(ctx);
+      }
       const before = snapshotUi(pkg);
       await updateUiPackage(ctx, pkg, {
         name: input.name,
@@ -716,6 +1109,9 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
           };
       const pkg = await repo.findOne({ where });
       if (!pkg) throw new Error('UI package not found');
+      if (pkg.name === DASHBOARD_UI_NAME) {
+        throw new Error('Cannot delete "@app/dashboard". It is the required UI entrypoint.');
+      }
       const before = snapshotUi(pkg);
       await createUiRevision(pkg, ctx.tenant, ctx.userId, 'delete');
       const encoded = encodeURIComponent(pkg.name);
@@ -972,6 +1368,11 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
     create_module: createModuleTool,
     update_module: updateModuleTool,
     delete_module: deleteModuleTool,
+    list_models: listModelsTool,
+    get_model: getModelTool,
+    create_model: createModelTool,
+    update_model: updateModelTool,
+    delete_model: deleteModelTool,
     list_ui_packages: listUiTool,
     get_ui_package: getUiTool,
     create_ui_package: createUiTool,
@@ -993,6 +1394,7 @@ export const rollbackChanges = async (
 ) => {
   await ensureCoreSchema();
   const moduleRepo = CoreDataSource.getRepository(ModuleEntity);
+  const modelRepo = CoreDataSource.getRepository(OrmModel);
   const uiRepo = CoreDataSource.getRepository(UIPackage);
   const tenantRepo = CoreDataSource.getRepository(Tenant);
   const sharedUiRepo = CoreDataSource.getRepository(GlobalUIPackage);
@@ -1054,6 +1456,35 @@ export const rollbackChanges = async (
           pkg.draftVersion = generateVersion();
           await uiRepo.save(pkg);
           await clearRegistryCache(ctx.tenant.id, pkg.name, pkg.version);
+        }
+      }
+    }
+
+    if (change.kind === 'model') {
+      if (change.action === 'create' && change.after) {
+        const model = await modelRepo.findOne({ where: { id: change.after.id } });
+        if (model) await modelRepo.remove(model);
+      } else if (change.action === 'delete' && change.before) {
+        const code = change.before.code ?? '';
+        const fileExtension = change.before.fileExtension ?? 'js';
+        const restored = modelRepo.create({
+          ...(change.before as any),
+          tenant: ctx.tenant,
+          codeBlob: compileOrmSource(code, fileExtension),
+          draftVersion: generateVersion(),
+        } as any) as unknown as OrmModel;
+        await modelRepo.save(restored);
+      } else if (change.action === 'update' && change.before) {
+        const model = await modelRepo.findOne({ where: { id: change.before.id } });
+        if (model) {
+          const code = change.before.code ?? '';
+          const fileExtension = change.before.fileExtension ?? 'js';
+          model.path = change.before.path;
+          model.code = code;
+          model.codeBlob = compileOrmSource(code, fileExtension);
+          model.fileExtension = fileExtension;
+          model.draftVersion = generateVersion();
+          await modelRepo.save(model);
         }
       }
     }
