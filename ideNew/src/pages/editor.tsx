@@ -21,6 +21,8 @@ import { EditorTabContextMenu } from '@/components/editor/EditorTabContextMenu';
 import { EditorWorkspace } from '@/components/editor/EditorWorkspace';
 import { EditorModals } from '@/components/editor/EditorModals';
 import {
+  ASSISTANT_PANEL_OPEN_STORAGE_KEY,
+  DEFAULT_ASSISTANT_PANEL_WIDTH,
   DEFAULT_CSS_CODE,
   DEFAULT_LEFT_PANEL_WIDTH,
   DEFAULT_MODEL_CODE,
@@ -266,8 +268,14 @@ export default function EditorPage() {
     null
   );
   const [leftPanel, setLeftPanel] = useState<
-    'explorer' | 'history' | 'search' | 'staging' | 'assistant'
+    'explorer' | 'history' | 'search' | 'staging'
   >('explorer');
+  const [assistantPanelOpen, setAssistantPanelOpen] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const stored = localStorage.getItem(ASSISTANT_PANEL_OPEN_STORAGE_KEY);
+    if (stored === null) return false;
+    return stored === '1';
+  });
   const [stagingBusy, setStagingBusy] = useState(false);
   const [stagingBusyId, setStagingBusyId] = useState<string | null>(null);
   const [modelMigrationBusy, setModelMigrationBusy] = useState(false);
@@ -500,6 +508,14 @@ export default function EditorPage() {
     if (typeof window === 'undefined') return;
     localStorage.setItem(PREVIEW_PORT_STORAGE_KEY, previewPort);
   }, [previewPort]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(
+      ASSISTANT_PANEL_OPEN_STORAGE_KEY,
+      assistantPanelOpen ? '1' : '0'
+    );
+  }, [assistantPanelOpen]);
 
   useEffect(() => {
     leftPanelWidthRef.current = leftPanelWidth;
@@ -3452,6 +3468,10 @@ export default function EditorPage() {
                 setLeftPanelOpen(true);
               }
             }}
+            assistantOpen={assistantPanelOpen}
+            onToggleAssistant={() =>
+              setAssistantPanelOpen((prev) => !prev)
+            }
             sidebarLabel={sidebarLabel}
             sidebarLabelTone={sidebarLabelTone}
             exitHref={exitHref}
@@ -3506,17 +3526,6 @@ export default function EditorPage() {
                   stagingBusyId={stagingBusyId}
                   onPublish={publishTarget}
                   formatTimestamp={formatHistoryTimestamp}
-                />
-              ) : leftPanel === 'assistant' ? (
-                <EditorAiPanel
-                  apiFetch={apiFetch}
-                  apiStreamFetch={apiStreamFetch}
-                  tenantHost={tenantHost}
-                  activeFile={activeFile}
-                  fileContents={fileContents}
-                  savedContents={savedContents}
-                  aclConfig={aclConfig}
-                  onWorkspaceRefresh={refreshWorkspace}
                 />
               ) : (
                 <EditorSearchPanel
@@ -3617,6 +3626,24 @@ export default function EditorPage() {
               editorAreaRef={editorAreaRef}
             />
           </main>
+
+          {assistantPanelOpen && (
+            <aside
+              className="relative flex h-full min-w-0 flex-col overflow-hidden border-l border-[#2a2d2e] bg-[#252526] text-gray-100"
+              style={{ width: DEFAULT_ASSISTANT_PANEL_WIDTH }}
+            >
+              <EditorAiPanel
+                apiFetch={apiFetch}
+                apiStreamFetch={apiStreamFetch}
+                tenantHost={tenantHost}
+                activeFile={activeFile}
+                fileContents={fileContents}
+                savedContents={savedContents}
+                aclConfig={aclConfig}
+                onWorkspaceRefresh={refreshWorkspace}
+              />
+            </aside>
+          )}
         </div>
 
         <EditorBottomBar

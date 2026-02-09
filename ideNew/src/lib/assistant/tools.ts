@@ -445,6 +445,8 @@ const listWorkspace = async (tenantId: string, isAdmin: boolean) => {
   const moduleRepo = CoreDataSource.getRepository(ModuleEntity);
   const uiRepo = CoreDataSource.getRepository(UIPackage);
   const modelRepo = CoreDataSource.getRepository(OrmModel);
+  const sharedUiFileRepo = CoreDataSource.getRepository(GlobalUIPackageFile);
+  const sharedModuleFileRepo = CoreDataSource.getRepository(GlobalModulePackageFile);
   const modules = await moduleRepo.find({
     where: { tenant: { id: tenantId } },
     order: { routePath: 'ASC', method: 'ASC' },
@@ -463,12 +465,34 @@ const listWorkspace = async (tenantId: string, isAdmin: boolean) => {
   const sharedModules = isAdmin
     ? await CoreDataSource.getRepository(GlobalModulePackage).find({ order: { name: 'ASC' } })
     : [];
+  const sharedUiFiles = isAdmin
+    ? await sharedUiFileRepo.find({
+        relations: { project: true },
+        order: { path: 'ASC' },
+      })
+    : [];
+  const sharedModuleFiles = isAdmin
+    ? await sharedModuleFileRepo.find({
+        relations: { project: true },
+        order: { path: 'ASC' },
+      })
+    : [];
   return {
     modules: modules.map(snapshotModule),
     models: models.map(snapshotModel),
     uiPackages: uiPackages.map(snapshotUi),
     sharedUi: sharedUi.map((pkg) => snapshotSharedProject(pkg, 'ui')),
     sharedModules: sharedModules.map((pkg) => snapshotSharedProject(pkg, 'module')),
+    sharedUiFiles: sharedUiFiles.map((file) => ({
+      ...snapshotSharedFile(file),
+      projectId: file.project?.id ?? '',
+      projectName: file.project?.name ?? '',
+    })),
+    sharedModuleFiles: sharedModuleFiles.map((file) => ({
+      ...snapshotSharedFile(file),
+      projectId: file.project?.id ?? '',
+      projectName: file.project?.name ?? '',
+    })),
   };
 };
 
@@ -657,7 +681,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
   const listWorkspaceTool = createTool({
     id: 'list_workspace',
     description:
-      'List backend modules, ORM models, UI packages, and shared projects available to the current tenant.',
+      'List backend modules, ORM models, UI packages, and shared project files available to the current tenant.',
     execute: async () => {
       await ensureCoreSchema();
       return await listWorkspace(ctx.tenant.id, ctx.isAdmin);
@@ -675,14 +699,34 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
     execute: async (input) => {
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(ModuleEntity);
-      const where = input.id
-        ? { id: input.id, tenant: { id: ctx.tenant.id } }
-        : {
+      let mod: ModuleEntity | null = null;
+      if (input.id) {
+        mod = await repo.findOne({
+          where: { id: input.id, tenant: { id: ctx.tenant.id } },
+        });
+      } else if (input.routePath && input.method) {
+        mod = await repo.findOne({
+          where: {
             tenant: { id: ctx.tenant.id },
             routePath: normalizeRoute(input.routePath),
             method: normalizeMethod(input.method),
-          };
-      const mod = await repo.findOne({ where });
+          },
+        });
+      } else if (input.routePath) {
+        const routePath = normalizeRoute(input.routePath);
+        const candidates = await repo.find({
+          where: { tenant: { id: ctx.tenant.id }, routePath },
+          order: { method: 'ASC', createdAt: 'DESC' },
+        });
+        if (candidates.length > 0) {
+          mod =
+            candidates.find((candidate) => candidate.method === HttpMethod.GET) ??
+            candidates[0] ??
+            null;
+        }
+      } else {
+        throw new Error('Provide id or routePath (optionally with method)');
+      }
       if (!mod) throw new Error('Module not found');
       return snapshotModule(mod);
     },
@@ -974,14 +1018,31 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
     execute: async (input) => {
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(UIPackage);
-      const where = input.id
-        ? { id: input.id, tenant: { id: ctx.tenant.id } }
-        : {
+      let pkg: UIPackage | null = null;
+      if (input.id) {
+        pkg = await repo.findOne({
+          where: { id: input.id, tenant: { id: ctx.tenant.id } },
+        });
+      } else if (input.name && input.version) {
+        pkg = await repo.findOne({
+          where: {
             tenant: { id: ctx.tenant.id },
             name: normalizeUiName(input.name),
             version: normalizeUiVersion(input.version),
-          };
-      const pkg = await repo.findOne({ where });
+          },
+        });
+      } else if (input.name) {
+        // Version-less read should return the latest package for the requested name.
+        pkg = await repo.findOne({
+          where: {
+            tenant: { id: ctx.tenant.id },
+            name: normalizeUiName(input.name),
+          },
+          order: { createdAt: 'DESC' },
+        });
+      } else {
+        throw new Error('Provide id or name (optionally with version)');
+      }
       if (!pkg) throw new Error('UI package not found');
       return snapshotUi(pkg);
     },

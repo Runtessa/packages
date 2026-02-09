@@ -75,6 +75,7 @@ type ExecuteAssistantRunInput = {
   runId?: string;
   agent: Agent;
   messages: ChatMessage[];
+  systemPrompt: string;
   contextText: string;
   maxSteps: number;
   maxRetries: number;
@@ -348,8 +349,8 @@ export const executeAssistantRun = async (
 
     const systemPrompt =
       attempt === 0
-        ? input.contextText
-        : `${input.contextText}\n\nRetry context:\nResolve previous conflict(s) and apply only required edits for the original request.`;
+        ? `${input.systemPrompt}\n\n${input.contextText}`
+        : `${input.systemPrompt}\n\n${input.contextText}\n\nRetry context:\nResolve previous conflict(s) and apply only required edits for the original request.`;
 
     const execution = await runAgentExecution(
       {

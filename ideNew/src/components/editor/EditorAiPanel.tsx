@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import {
+  FiCopy,
   FiDownload,
   FiMaximize2,
+  FiRefreshCw,
   FiRotateCcw,
   FiSend,
   FiSettings,
@@ -358,6 +360,25 @@ const buildArchivedRunMessage = (input: {
   return "No stored assistant text for this run.";
 };
 
+const isMetaLogLine = (line: string) =>
+  /^\[(codex|gateway|stderr)\]/i.test(String(line || "").trim());
+
+const stripMetaLogLines = (text: string) => {
+  const lines = String(text || "").split("\n");
+  return lines.filter((line) => !isMetaLogLine(line)).join("\n");
+};
+
+const normalizeAssistantMessage = (text: string) => {
+  const cleaned = stripMetaLogLines(String(text || "")).trim();
+  if (!cleaned) return "";
+  let output = cleaned;
+  output = output.replace(/\b(Issues:)\s*/gi, "$1\n");
+  output = output.replace(/\b(Questions:)\s*/gi, "$1\n");
+  output = output.replace(/\s(?=\d+\)\s)/g, "\n");
+  output = output.replace(/\n{3,}/g, "\n\n");
+  return output.trim();
+};
+
 function ThinkingIndicator() {
   return (
     <div className="inline-flex items-center gap-2 rounded-lg border border-[#2a2d2e] bg-[#1b1b1b] px-3 py-2 text-[11px] text-gray-300">
@@ -430,6 +451,7 @@ export function EditorAiPanel({
     allowClientConfig: false,
   });
   const [systemPrompt, setSystemPrompt] = useState("");
+  const [defaultSystemPrompt, setDefaultSystemPrompt] = useState("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const stoppingRef = useRef(false);
@@ -465,7 +487,11 @@ export function EditorAiPanel({
           provider: config.provider || "",
           allowClientConfig: Boolean(config.allowClientConfig),
         }));
-        setSystemPrompt(String(config.systemPrompt || ""));
+        const nextDefaultPrompt = String(config.systemPrompt || "");
+        setDefaultSystemPrompt(nextDefaultPrompt);
+        setSystemPrompt((prev) =>
+          prev.trim() ? prev : nextDefaultPrompt,
+        );
       } catch (err) {
         showError(
           (err as Error).message || "Failed to load assistant settings",
@@ -484,6 +510,7 @@ export function EditorAiPanel({
         messages?: AiMessage[];
         chatSessionId?: string;
         settings?: Partial<AiSettings>;
+        systemPrompt?: string;
       };
       if (parsed.messages) setMessages(parsed.messages);
       if (parsed.chatSessionId && parsed.chatSessionId.trim()) {
@@ -491,6 +518,9 @@ export function EditorAiPanel({
       }
       if (parsed.settings) {
         setSettings((prev) => ({ ...prev, ...parsed.settings }));
+      }
+      if (typeof parsed.systemPrompt === "string") {
+        setSystemPrompt(parsed.systemPrompt);
       }
     } catch {
       // ignore malformed state
@@ -509,9 +539,10 @@ export function EditorAiPanel({
         apiKey: settings.allowClientConfig ? settings.apiKey : "",
         allowClientConfig: settings.allowClientConfig,
       },
+      systemPrompt,
     };
     localStorage.setItem(storageKey, JSON.stringify(toStore));
-  }, [chatSessionId, messages, settings, storageKey, tenantHost]);
+  }, [chatSessionId, messages, settings, storageKey, systemPrompt, tenantHost]);
 
   const loadRuns = async () => {
     try {
@@ -801,16 +832,17 @@ export function EditorAiPanel({
     };
   }, [activeFile, fileContents, savedContents]);
 
-  const sendMessage = async () => {
+  const sendMessage = async (overrideText?: string) => {
     if (sending) return;
-    if (!input.trim()) return;
+    const prompt = typeof overrideText === "string" ? overrideText.trim() : input.trim();
+    if (!prompt) return;
     const abortController = new AbortController();
     streamAbortRef.current = abortController;
     stoppingRef.current = false;
     const userMessage: AiMessage = {
       id: `user-${createId()}`,
       role: "user",
-      content: input.trim(),
+      content: prompt,
       createdAt: new Date().toISOString(),
     };
     const assistantId = `assistant-${createId()}`;
@@ -822,7 +854,9 @@ export function EditorAiPanel({
     };
     const nextMessages = [...messages, userMessage, assistantSeed];
     setMessages(nextMessages);
-    setInput("");
+    if (typeof overrideText !== "string") {
+      setInput("");
+    }
     setSending(true);
     setPendingAssistantId(assistantId);
 
@@ -838,6 +872,7 @@ export function EditorAiPanel({
           acl: aclConfig ?? undefined,
         },
         stream: true,
+        systemPrompt: systemPrompt || undefined,
         config: settings.allowClientConfig
           ? {
               baseUrl: settings.baseUrl,
@@ -862,7 +897,7 @@ export function EditorAiPanel({
             msg.id === assistantId
               ? {
                   ...msg,
-                  content: data.message || "Done.",
+                  content: normalizeAssistantMessage(data.message || "Done."),
                   changes: data.changes ?? [],
                   events: data.events ?? [],
                   steps,
@@ -884,15 +919,15 @@ export function EditorAiPanel({
       let buffer = "";
       let finalChanges: AssistantChange[] = [];
       let finalEvents: AssistantRunEvent[] = [];
-      let finalSteps: string[] = [];
       let finalConflicts: AssistantRunConflict[] = [];
 
       const appendContent = (text: string) => {
-        if (!text) return;
+        const cleaned = stripMetaLogLines(text);
+        if (!cleaned.trim()) return;
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === assistantId
-              ? { ...msg, content: `${msg.content}${text}` }
+              ? { ...msg, content: `${msg.content}${cleaned}` }
               : msg,
           ),
         );
@@ -969,7 +1004,9 @@ export function EditorAiPanel({
                   prev.map((msg) => {
                     if (msg.id !== assistantId) return msg;
                     const existing = String(msg.content || "").trim();
-                    const incoming = String(event.message || "").trim();
+                    const incoming = normalizeAssistantMessage(
+                      String(event.message || ""),
+                    );
                     if (!incoming) return msg;
                     if (!existing) {
                       return { ...msg, content: incoming };
@@ -986,7 +1023,6 @@ export function EditorAiPanel({
               }
               finalChanges = event.changes ?? [];
               finalEvents = event.events ?? [];
-              finalSteps = mapRunSteps(finalEvents);
               finalConflicts = event.conflicts ?? [];
             }
           } catch {
@@ -1005,7 +1041,6 @@ export function EditorAiPanel({
                   ? mergeChanges(msg.changes, finalChanges)
                   : msg.changes ?? [],
                 events: finalEvents.length ? finalEvents : msg.events,
-                steps: finalSteps.length ? finalSteps : msg.steps,
                 conflicts: finalConflicts.length ? finalConflicts : msg.conflicts,
               }
             : msg,
@@ -1032,6 +1067,41 @@ export function EditorAiPanel({
     if (!sending) return;
     stoppingRef.current = true;
     streamAbortRef.current?.abort();
+  };
+
+  const getRetryPrompt = (messageId: string) => {
+    const index = messages.findIndex((item) => item.id === messageId);
+    if (index === -1) return "";
+    const current = messages[index];
+    if (current?.role === "user") return current.content || "";
+    for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+      const candidate = messages[cursor];
+      if (candidate?.role === "user" && String(candidate.content || "").trim()) {
+        return candidate.content;
+      }
+    }
+    return "";
+  };
+
+  const handleCopyMessage = async (text: string) => {
+    const value = String(text || "").trim();
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      success("Copied");
+    } catch {
+      showError("Copy failed");
+    }
+  };
+
+  const handleRetryMessage = async (messageId: string) => {
+    if (sending) return;
+    const retryPrompt = getRetryPrompt(messageId);
+    if (!retryPrompt.trim()) {
+      showError("No prompt available to retry");
+      return;
+    }
+    await sendMessage(retryPrompt);
   };
 
   const loadModels = async () => {
@@ -1301,25 +1371,34 @@ export function EditorAiPanel({
                       </div>
                     </div>
                   ) : null}
-                  {msg.steps?.length ? (
-                    <div className="mt-2 space-y-1 text-[10px] text-gray-300">
-                      {msg.steps.slice(-8).map((step, idx) => (
-                        <div
-                          key={`${msg.id}-step-${idx}`}
-                          className="flex items-start gap-2"
-                        >
-                          <span className="mt-[1px] text-gray-500">•</span>
-                          <span>{step}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
                   {msg.conflicts?.length ? (
                     <div className="mt-2 rounded-lg border border-amber-700/40 bg-amber-950/20 p-2 text-[10px] text-amber-200">
                       {msg.conflicts.length} conflict
                       {msg.conflicts.length > 1 ? "s" : ""} detected during run
                     </div>
                   ) : null}
+                  <div className="mt-1.5 flex items-center gap-1 text-[10px] text-gray-500">
+                    <button
+                      type="button"
+                      className="inline-flex h-5 w-5 items-center justify-center rounded border border-transparent hover:border-[#2a2d2e] hover:bg-[#222]"
+                      onClick={() => handleCopyMessage(msg.content)}
+                      title="Copy message"
+                      aria-label="Copy message"
+                      disabled={!msg.content.trim()}
+                    >
+                      <FiCopy className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex h-5 w-5 items-center justify-center rounded border border-transparent hover:border-[#2a2d2e] hover:bg-[#222] disabled:opacity-40"
+                      onClick={() => handleRetryMessage(msg.id)}
+                      title="Retry from this message"
+                      aria-label="Retry from this message"
+                      disabled={sending || !getRetryPrompt(msg.id).trim()}
+                    >
+                      <FiRefreshCw className="h-3 w-3" />
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -1372,7 +1451,13 @@ export function EditorAiPanel({
               type="button"
               disabled={!sending && !input.trim()}
               className="flex items-center gap-2 rounded bg-[#0b5b96] px-3 py-2 text-[12px] font-semibold text-white hover:bg-[#0f72be] disabled:opacity-60"
-              onClick={sending ? stopMessage : sendMessage}
+              onClick={() => {
+                if (sending) {
+                  stopMessage();
+                } else {
+                  void sendMessage();
+                }
+              }}
             >
               {sending ? "Stop" : "Send"}
               {sending ? (
@@ -1711,8 +1796,9 @@ export function EditorAiPanel({
                 language="markdown"
                 theme="vs-dark"
                 value={systemPrompt}
+                onChange={(value) => setSystemPrompt(String(value ?? ""))}
                 options={{
-                  readOnly: true,
+                  readOnly: false,
                   minimap: { enabled: false },
                   wordWrap: "on",
                   lineNumbers: "on",
@@ -1734,6 +1820,14 @@ export function EditorAiPanel({
           <>
             <Button
               variant="secondary"
+              onClick={() =>
+                setSystemPrompt(defaultSystemPrompt || "")
+              }
+            >
+              Reset default
+            </Button>
+            <Button
+              variant="secondary"
               onClick={() => {
                 setPromptMaximized(false);
                 setSettingsOpen(true);
@@ -1753,8 +1847,9 @@ export function EditorAiPanel({
             language="markdown"
             theme="vs-dark"
             value={systemPrompt}
+            onChange={(value) => setSystemPrompt(String(value ?? ""))}
             options={{
-              readOnly: true,
+              readOnly: false,
               minimap: { enabled: true },
               wordWrap: "on",
               lineNumbers: "on",

@@ -16,6 +16,7 @@ import { buildAssistantTools } from '@/lib/assistant/tools';
 import {
   buildAssistantModelConfig,
   createAssistantAgent,
+  ASSISTANT_SYSTEM_INSTRUCTIONS,
 } from '@/lib/assistant/agent';
 import type { AssistantChange } from '@/lib/assistant/types';
 import type { MastraModelConfig } from '@mastra/core/llm';
@@ -31,6 +32,7 @@ import {
 } from '@/lib/assistant/state-store';
 
 const MAX_CONTEXT_CHARS = 240000;
+const MAX_SYSTEM_PROMPT_CHARS = 120000;
 
 const resolveAgentType = () => (process.env.AGENT_TYPE || '').trim().toLowerCase();
 const isCodexAgentMode = () => resolveAgentType() === 'codex';
@@ -75,12 +77,43 @@ const createRunEvent = (
 
 const buildCodexPrompt = (
   messages: Array<{ role: string; content: string }>,
-  contextText: string
+  contextText: string,
+  systemPrompt: string
 ) => {
+  const codexRuntimeContract = `CODEX HOST EXECUTION CONTRACT (NON-NEGOTIABLE):
+- You do NOT have callable tools in this Codex run.
+- The host has ALREADY executed workspace/ACL discovery and provided full outputs in FULL WORKSPACE CONTEXT.
+- Never ask for list_workspace/get_acl_config/tool availability; never ask user to provide those outputs again.
+- Your job is to RETURN JSON operations for the host to execute.
+- If the request requires file/workspace changes, output at least one operation.
+- If the request is purely conversational, operations may be empty.
+- Return ONLY a single valid JSON object (no markdown, no code fences).
+
+JSON SCHEMA:
+{
+  "summary": "short human-readable summary",
+  "operations": [
+    { "tool": "<tool_id>", "input": { ... }, "reason": "optional" }
+  ]
+}
+
+Valid tool ids:
+list_workspace, get_acl_config,
+list_models, list_ui_packages, list_shared_ui_projects, list_shared_module_projects,
+create_module, update_module, delete_module,
+create_model, update_model, delete_model,
+create_ui_package, update_ui_package, delete_ui_package,
+update_acl_file,
+write_shared_file, delete_shared_file,
+get_module, get_model, get_ui_package, get_shared_file
+`;
+
   const history = messages
     .map((msg) => `[${msg.role}] ${msg.content}`)
     .join('\n\n');
-  return `${CODEX_SYSTEM_INSTRUCTIONS}
+  return `${systemPrompt}
+
+${codexRuntimeContract}
 
 RUNTIME MODE:
 - You are running in codex-cli mode for chat output.
@@ -97,6 +130,9 @@ OUTPUT CONTRACT (strict JSON object):
 }
 
 ALLOWED TOOL IDS:
+- list_workspace, get_acl_config
+- list_models, list_ui_packages
+- list_shared_ui_projects, list_shared_module_projects
 - create_module, update_module, delete_module
 - create_model, update_model, delete_model
 - create_ui_package, update_ui_package, delete_ui_package
@@ -121,13 +157,18 @@ type CodexExecInput = {
   chatId?: string;
   messages: Array<{ role: string; content: string }>;
   contextText: string;
+  systemPrompt: string;
   model?: string;
   onLine?: (line: string) => void;
 };
 
 const executeCodexCli = async (input: CodexExecInput) => {
   const outputFile = path.join(tmpdir(), `idp-codex-last-${input.runId}.txt`);
-  const prompt = buildCodexPrompt(input.messages, input.contextText);
+  const prompt = buildCodexPrompt(
+    input.messages,
+    input.contextText,
+    input.systemPrompt
+  );
   const runOnce = async (model?: string) =>
     new Promise<{
       stdoutText: string;
@@ -260,7 +301,11 @@ const executeCodexGateway = async (input: CodexExecInput) => {
       userId: String(input.userId),
       chatId: input.chatId || 'default',
       prompt: getLatestUserPrompt(input.messages),
-      fullPrompt: buildCodexPrompt(input.messages, input.contextText),
+      fullPrompt: buildCodexPrompt(
+        input.messages,
+        input.contextText,
+        input.systemPrompt
+      ),
       model: input.model,
       stream: true,
       cwd: gatewayCwd,
@@ -552,53 +597,35 @@ const formatCodexProgressLine = (
 ): { text: string; appendNewline: boolean } | null => {
   const trimmed = line.trim();
   if (!trimmed) return null;
+
+  const looksLikeSuppressedReasoning = (value: string) => {
+    const lower = value.toLowerCase();
+    if (
+      lower.includes('preparing json response') ||
+      lower.includes('creating a json-only reply')
+    ) {
+      return true;
+    }
+    if (
+      value.startsWith('{') &&
+      value.endsWith('}') &&
+      value.includes('"summary"') &&
+      value.includes('"operations"')
+    ) {
+      return true;
+    }
+    return false;
+  };
+
+  if (looksLikeSuppressedReasoning(trimmed)) return null;
+
   const parsed = parseJsonObject(trimmed);
   if (!parsed) {
-    // Keep plain text output visible for users when Codex emits non-JSON lines.
-    return { text: trimmed, appendNewline: true };
-  }
-
-  const deltaCandidates: unknown[] = [
-    parsed.delta,
-    parsed.content,
-    parsed.output_text,
-    parsed.reasoning,
-    getNested(parsed, ['item', 'text']),
-    getNested(parsed, ['item', 'delta']),
-    getNested(parsed, ['item', 'content']),
-    getNested(parsed, ['output_text', 'delta']),
-    getNested(parsed, ['output_text', 'text']),
-    getNested(parsed, ['reasoning', 'delta']),
-    getNested(parsed, ['reasoning', 'text']),
-    getNested(parsed, ['response', 'output_text', 'delta']),
-    getNested(parsed, ['response', 'output_text', 'text']),
-    getNested(parsed, ['response', 'reasoning', 'delta']),
-    getNested(parsed, ['response', 'reasoning', 'text']),
-  ];
-  for (const candidate of deltaCandidates) {
-    const value = pickString(candidate);
-    if (value) {
-      return { text: value, appendNewline: false };
+    // Keep only explicit error lines from the underlying process.
+    if (trimmed.startsWith('[stderr]')) {
+      return { text: trimmed, appendNewline: true };
     }
-  }
-
-  // Some providers send array-based parts.
-  if (Array.isArray(parsed.content)) {
-    for (const part of parsed.content) {
-      if (!part || typeof part !== 'object') continue;
-      const text = pickString((part as Record<string, unknown>).text);
-      if (text) return { text, appendNewline: false };
-    }
-  }
-
-  const messageCandidates = [
-    parsed.message,
-    parsed.summary,
-    parsed.detail,
-    parsed.text,
-  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
-  if (messageCandidates.length > 0) {
-    return { text: messageCandidates[0].trim(), appendNewline: true };
+    return null;
   }
 
   const type = typeof parsed.type === 'string' ? parsed.type.trim() : '';
@@ -607,15 +634,17 @@ const formatCodexProgressLine = (
   if (type === 'item.completed' || type === 'item.started') {
     if (itemText) {
       if (itemType === 'reasoning') {
-        return { text: `[thinking] ${itemText.trim()}`, appendNewline: true };
+        return null;
       }
       if (itemType === 'agent_message') {
-        return { text: itemText, appendNewline: true };
+        if (looksLikeSuppressedReasoning(itemText.trim())) return null;
+        return null;
       }
       return { text: `[codex:${itemType || 'item'}] ${itemText.trim()}`, appendNewline: true };
     }
     if (itemType) {
       const verb = type === 'item.started' ? 'started' : 'completed';
+      if (itemType === 'reasoning' || itemType === 'agent_message') return null;
       return { text: `[codex] ${itemType} ${verb}`, appendNewline: true };
     }
   }
@@ -641,7 +670,12 @@ const formatCodexProgressLine = (
     .join(' ')
     .replace(/^thread\.started$/i, 'thread started')
     .replace(/^turn\.started$/i, 'turn started');
+  if (label === 'thread started' || label === 'turn started') return null;
   if (label) return { text: `[codex] ${label}`, appendNewline: true };
+
+  if (typeof parsed.error === 'string' && parsed.error.trim()) {
+    return { text: `[stderr] ${parsed.error.trim()}`, appendNewline: true };
+  }
   return null;
 };
 
@@ -726,17 +760,99 @@ const normalizeProjectKind = (value: unknown) => {
   return value;
 };
 
-const normalizeOperationInput = (toolId: string, input: Record<string, unknown>) => {
+const parseModuleLookupFromPath = (value: unknown) => {
+  if (typeof value !== 'string') return {};
+  const normalized = value.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  const trimmed = normalized.toLowerCase().startsWith('modules/')
+    ? normalized.slice('modules/'.length)
+    : normalized;
+  const match = trimmed.match(
+    /^(.*)\/(get|post|put|patch|delete|head|options)\.module\.[a-z0-9]+$/i
+  );
+  if (!match) return {};
+  const routePart = match[1] || '';
+  return {
+    routePath: routePart ? `/${routePart}` : '/',
+    method: String(match[2] || '').toUpperCase(),
+  };
+};
+
+const parseUiLookupFromValue = (value: unknown) => {
+  if (typeof value !== 'string') return {};
+  const normalized = value.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  const raw = normalized.toLowerCase().startsWith('ui/')
+    ? normalized.slice('ui/'.length)
+    : normalized;
+
+  const uiFileMatch = raw.match(/^(.*)\.ui\.[^.\/]+$/i);
+  if (uiFileMatch?.[1]) {
+    return { name: uiFileMatch[1] };
+  }
+
+  const at = raw.lastIndexOf('@');
+  if (at > 0 && at + 1 < raw.length && /\d/.test(raw[at + 1] ?? '')) {
+    return {
+      name: raw.slice(0, at),
+      version: raw.slice(at + 1),
+    };
+  }
+
+  const segments = raw.split('/').filter(Boolean);
+  if (segments.length >= 2 && /^index\.[a-z0-9]+$/i.test(segments[segments.length - 1] || '')) {
+    return { name: segments.slice(0, -1).join('/') };
+  }
+
+  return {};
+};
+
+const normalizeOperationInput = (
+  toolId: string,
+  input: Record<string, unknown>,
+  workspace?: WorkspaceContext
+) => {
   const next: Record<string, unknown> = {};
+  const modules = workspace?.modules ?? [];
+  const uiPackages = workspace?.uiPackages ?? [];
+  const sharedUiProjects = workspace?.sharedUi ?? [];
+  const sharedModuleProjects = workspace?.sharedModules ?? [];
+
+  const findUiByName = (name: string) =>
+    uiPackages.find((pkg) => pkg.name === name) || null;
+  const findUiById = (id: string) => uiPackages.find((pkg) => pkg.id === id) || null;
+  const findModuleByRoute = (routePath: string, method?: string) =>
+    modules.find(
+      (mod) =>
+        mod.routePath === routePath &&
+        (!method || mod.method.toUpperCase() === method.toUpperCase())
+    ) || null;
+  const resolveSharedProjectId = (kind: 'ui' | 'module', projectName: string) => {
+    const list = kind === 'ui' ? sharedUiProjects : sharedModuleProjects;
+    return list.find((project) => project.name === projectName)?.id;
+  };
+
   if (toolId === 'create_module' || toolId === 'update_module' || toolId === 'delete_module') {
     putIfDefined(next, 'id', pickInput(input, ['id', 'moduleId', 'module_id']));
+    const rawRoutePath = pickInput(input, ['routePath', 'route', 'path', 'route_path', 'endpoint']);
+    const parsedFromPath = parseModuleLookupFromPath(rawRoutePath);
     putIfDefined(
       next,
       'routePath',
-      pickInput(input, ['routePath', 'route', 'path', 'route_path', 'endpoint'])
+      parsedFromPath.routePath ??
+        (typeof rawRoutePath === 'string' ? rawRoutePath : undefined)
     );
     const method = pickInput(input, ['method', 'httpMethod', 'http_method', 'verb']);
-    putIfDefined(next, 'method', typeof method === 'string' ? method.toUpperCase() : method);
+    const normalizedMethod =
+      typeof method === 'string' && method.trim()
+        ? method.toUpperCase()
+        : parsedFromPath.method;
+    putIfDefined(next, 'method', normalizedMethod);
+    if (!next.id && typeof next.routePath === 'string') {
+      const resolved = findModuleByRoute(String(next.routePath), String(next.method || ''));
+      if (resolved) {
+        next.id = resolved.id;
+        if (!next.method) next.method = resolved.method;
+      }
+    }
     putIfDefined(next, 'code', pickInput(input, ['code', 'content', 'source', 'body']));
     putIfDefined(next, 'fileExtension', pickInput(input, ['fileExtension', 'extension', 'ext']));
     return next;
@@ -753,8 +869,31 @@ const normalizeOperationInput = (toolId: string, input: Record<string, unknown>)
 
   if (toolId === 'create_ui_package' || toolId === 'update_ui_package' || toolId === 'delete_ui_package' || toolId === 'get_ui_package') {
     putIfDefined(next, 'id', pickInput(input, ['id', 'uiId', 'packageId', 'package_id']));
-    putIfDefined(next, 'name', pickInput(input, ['name', 'package', 'packageName', 'uiName']));
-    putIfDefined(next, 'version', pickInput(input, ['version', 'packageVersion', 'pkgVersion']));
+    const rawName = pickInput(input, ['name', 'package', 'packageName', 'uiName']);
+    const rawPath = pickInput(input, ['path', 'filePath', 'file', 'virtualPath']);
+    const parsedFromPath = parseUiLookupFromValue(rawPath ?? rawName);
+    const name =
+      (typeof rawName === 'string' && rawName.trim() ? rawName : undefined) ??
+      parsedFromPath.name;
+    putIfDefined(next, 'name', name);
+    const rawVersion = pickInput(input, ['version', 'packageVersion', 'pkgVersion']);
+    const version =
+      (typeof rawVersion === 'string' && rawVersion.trim() ? rawVersion : undefined) ??
+      parsedFromPath.version;
+    putIfDefined(next, 'version', version);
+    if (!next.id && typeof next.name === 'string') {
+      const resolved = findUiByName(next.name);
+      if (resolved) {
+        next.id = resolved.id;
+        if (!next.version) next.version = resolved.version;
+      }
+    } else if (typeof next.id === 'string' && !next.version) {
+      const resolved = findUiById(next.id);
+      if (resolved) {
+        next.version = resolved.version;
+        next.name = next.name || resolved.name;
+      }
+    }
     putIfDefined(next, 'code', pickInput(input, ['code', 'content', 'source', 'body']));
     putIfDefined(next, 'fileExtension', pickInput(input, ['fileExtension', 'extension', 'ext']));
     putIfDefined(next, 'dependencies', pickInput(input, ['dependencies', 'deps']));
@@ -773,15 +912,41 @@ const normalizeOperationInput = (toolId: string, input: Record<string, unknown>)
     putIfDefined(next, 'path', pickInput(input, ['path', 'filePath', 'file']));
     putIfDefined(next, 'content', pickInput(input, ['content', 'code', 'source', 'body']));
     putIfDefined(next, 'fileExtension', pickInput(input, ['fileExtension', 'extension', 'ext']));
-    putIfDefined(next, 'projectKind', normalizeProjectKind(pickInput(input, ['projectKind', 'kind', 'type'])));
+    const projectKind = normalizeProjectKind(pickInput(input, ['projectKind', 'kind', 'type']));
+    putIfDefined(next, 'projectKind', projectKind);
+    if (!next.projectId) {
+      const projectName = pickInput(input, ['projectName', 'project', 'name']);
+      if (typeof projectName === 'string' && typeof projectKind === 'string') {
+        const resolved = resolveSharedProjectId(projectKind as 'ui' | 'module', projectName);
+        if (resolved) next.projectId = resolved;
+      }
+    }
     return next;
   }
 
   if (toolId === 'get_module') {
     putIfDefined(next, 'id', pickInput(input, ['id', 'moduleId', 'module_id']));
-    putIfDefined(next, 'routePath', pickInput(input, ['routePath', 'route', 'path']));
+    const rawPath = pickInput(input, ['routePath', 'route', 'path', 'filePath', 'file', 'virtualPath']);
+    const parsedFromPath = parseModuleLookupFromPath(rawPath);
+    putIfDefined(
+      next,
+      'routePath',
+      parsedFromPath.routePath ??
+        (typeof rawPath === 'string' ? rawPath : undefined)
+    );
     const method = pickInput(input, ['method', 'httpMethod', 'verb']);
-    putIfDefined(next, 'method', typeof method === 'string' ? method.toUpperCase() : method);
+    const normalizedMethod =
+      typeof method === 'string' && method.trim()
+        ? method.toUpperCase()
+        : parsedFromPath.method;
+    putIfDefined(next, 'method', normalizedMethod);
+    if (!next.id && typeof next.routePath === 'string') {
+      const resolved = findModuleByRoute(String(next.routePath), typeof next.method === 'string' ? next.method : undefined);
+      if (resolved) {
+        next.id = resolved.id;
+        next.method = resolved.method;
+      }
+    }
     return next;
   }
 
@@ -991,6 +1156,7 @@ const buildOperationsFromDirectives = (
 const executeCodexOperations = async (
   tools: Record<string, any>,
   operations: CodexOperation[],
+  workspace: WorkspaceContext,
   getChanges: () => AssistantChange[],
   onChange?: (change: AssistantChange) => void,
   onProgress?: (line: string) => void
@@ -1014,7 +1180,7 @@ const executeCodexOperations = async (
     }
     const rawInput =
       op.input && typeof op.input === 'object' && !Array.isArray(op.input) ? op.input : {};
-    const input = normalizeOperationInput(toolId, rawInput);
+    const input = normalizeOperationInput(toolId, rawInput, workspace);
     if (CODEX_MUTATION_TOOLS.has(toolId)) {
       mutationOps += 1;
     }
@@ -1050,7 +1216,30 @@ const getLatestUserPrompt = (messages: Array<{ role: string; content: string }>)
 };
 
 const promptLooksLikeMutation = (prompt: string) =>
-  /\b(create|edit|update|delete|remove|add|implement|fix|refactor|build)\b/i.test(prompt);
+  /\b(create|edit|update|delete|remove|add|implement|fix|refactor|build|redesign|design|change|modify|improve|migrate)\b/i.test(prompt);
+
+const codexAskedForUnavailableTools = (message: string) => {
+  const text = String(message || '').toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes("tools aren't available") ||
+    text.includes('tools are not available') ||
+    text.includes('tool isn’t available') ||
+    text.includes('tool is not available') ||
+    text.includes('list_workspace') ||
+    text.includes('get_acl_config') ||
+    text.includes('provide their outputs') ||
+    text.includes('cannot proceed yet')
+  );
+};
+
+const buildCodexRecoveryPrompt = (latestPrompt: string) => `Your previous reply asked for unavailable direct tools.
+In this environment, tools are executed by the host, and their outputs are already provided in FULL WORKSPACE CONTEXT.
+Do NOT ask for list_workspace/get_acl_config again.
+Return a valid JSON object with "summary" and "operations" now.
+If the latest user request requires workspace mutations, "operations" must be non-empty.
+Latest user request:
+${latestPrompt || '(empty)'}`;
 
 const normalizeBaseUrl = (value?: string | null) => {
   if (!value) return '';
@@ -1163,6 +1352,13 @@ const truncate = (value: string, max = MAX_CONTEXT_CHARS) => {
   return `${value.slice(0, max)}\n…(truncated)`;
 };
 
+const normalizeSystemPrompt = (raw: unknown, fallback: string) => {
+  if (typeof raw !== 'string') return fallback;
+  const trimmed = raw.trim();
+  if (!trimmed) return fallback;
+  return truncate(trimmed, MAX_SYSTEM_PROMPT_CHARS);
+};
+
 const createRunId = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -1209,6 +1405,80 @@ type WorkspaceContext = {
     code: string;
     dependencies: string[];
   }>;
+  sharedUiFiles?: Array<{
+    id: string;
+    path: string;
+    content: string;
+    fileExtension?: string | null;
+    projectId: string;
+    projectName: string;
+  }>;
+  sharedModuleFiles?: Array<{
+    id: string;
+    path: string;
+    content: string;
+    fileExtension?: string | null;
+    projectId: string;
+    projectName: string;
+  }>;
+};
+
+const splitRouteSegments = (routePath: string) => {
+  const trimmed = String(routePath || '')
+    .trim()
+    .replace(/^\/+|\/+$/g, '');
+  if (!trimmed) return [] as string[];
+  return trimmed.split('/').filter(Boolean);
+};
+
+const splitUiSegments = (name: string) =>
+  String(name || '')
+    .split(/[\\/]+/g)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+const sanitizeForFilename = (value: string) =>
+  String(value || '')
+    .trim()
+    .replace(/^\/+/, '')
+    .replace(/[\/\\]+/g, '-')
+    .replace(/[:*?<>|"]+/g, '')
+    .replace(/\s+/g, '-')
+    .toLowerCase();
+
+const toModuleVirtualPath = (mod: WorkspaceContext['modules'][number]) => {
+  const ext = (mod.fileExtension || 'js').replace(/^\./, '').toLowerCase() || 'js';
+  const segments = splitRouteSegments(mod.routePath || '/');
+  const routeDir = segments.length ? `${segments.join('/')}/` : '';
+  return `modules/${routeDir}${String(mod.method || 'GET').toLowerCase()}.module.${ext}`;
+};
+
+const toModelVirtualPath = (model: WorkspaceContext['models'][number]) => {
+  const rawPath = String(model.path || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!rawPath) {
+    const ext = (model.fileExtension || 'js').replace(/^\./, '').toLowerCase() || 'js';
+    return `models/${model.id}.${ext}`;
+  }
+  return rawPath.toLowerCase().startsWith('models/') ? rawPath : `models/${rawPath}`;
+};
+
+const toUiVirtualPath = (pkg: WorkspaceContext['uiPackages'][number]) => {
+  const ext = (pkg.fileExtension || 'jsx').replace(/^\./, '').toLowerCase() || 'jsx';
+  const nameSegments = splitUiSegments(pkg.name || 'ui');
+  const folders = nameSegments.slice(0, -1);
+  const base = nameSegments[nameSegments.length - 1] || 'ui';
+  const fileName = `${sanitizeForFilename(base)}.ui.${ext}`;
+  return folders.length ? `ui/${folders.join('/')}/${fileName}` : `ui/${fileName}`;
+};
+
+const toSharedVirtualPath = (
+  root: 'shared-ui' | 'shared-modules',
+  projectName: string,
+  filePath: string
+) => {
+  const name = String(projectName || '').trim();
+  const pathPart = String(filePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  return `${root}/${name}/${pathPart}`;
 };
 
 const buildContextText = (
@@ -1216,6 +1486,100 @@ const buildContextText = (
   acl: { permissions: unknown; roles: unknown; endpoints: unknown }
 ) => {
   const lines: string[] = [];
+  const sharedUiFiles = workspace.sharedUiFiles ?? [];
+  const sharedModuleFiles = workspace.sharedModuleFiles ?? [];
+  const workspaceToolView = {
+    modules: workspace.modules.map((mod) => ({
+      id: mod.id,
+      routePath: mod.routePath,
+      method: mod.method,
+      virtualPath: toModuleVirtualPath(mod),
+      fileExtension: mod.fileExtension ?? 'js',
+    })),
+    models: workspace.models.map((model) => ({
+      id: model.id,
+      path: model.path,
+      virtualPath: toModelVirtualPath(model),
+      fileExtension: model.fileExtension ?? 'js',
+      draftVersion: model.draftVersion ?? null,
+    })),
+    uiPackages: workspace.uiPackages.map((pkg) => ({
+      id: pkg.id,
+      name: pkg.name,
+      version: pkg.version,
+      virtualPath: toUiVirtualPath(pkg),
+      dependencies: pkg.dependencies ?? [],
+      fileExtension: pkg.fileExtension ?? 'jsx',
+    })),
+    sharedUi: workspace.sharedUi.map((project) => ({
+      id: project.id,
+      name: project.name,
+      version: project.version,
+      entryPath: project.entryPath,
+      dependencies: project.dependencies ?? [],
+    })),
+    sharedModules: workspace.sharedModules.map((project) => ({
+      id: project.id,
+      name: project.name,
+      version: project.version,
+      entryPath: project.entryPath,
+      dependencies: project.dependencies ?? [],
+    })),
+    sharedUiFiles: sharedUiFiles.map((file) => ({
+      id: file.id,
+      projectId: file.projectId,
+      projectName: file.projectName,
+      path: file.path,
+      virtualPath: toSharedVirtualPath('shared-ui', file.projectName, file.path),
+      fileExtension: file.fileExtension ?? null,
+    })),
+    sharedModuleFiles: sharedModuleFiles.map((file) => ({
+      id: file.id,
+      projectId: file.projectId,
+      projectName: file.projectName,
+      path: file.path,
+      virtualPath: toSharedVirtualPath('shared-modules', file.projectName, file.path),
+      fileExtension: file.fileExtension ?? null,
+    })),
+  };
+  const aclToolView = {
+    permissions: acl.permissions ?? {},
+    roles: acl.roles ?? {},
+    endpoints: acl.endpoints ?? {},
+  };
+  lines.push('TOOL OUTPUTS (already executed by host):');
+  lines.push('list_workspace =>');
+  lines.push(truncate(JSON.stringify(workspaceToolView, null, 2)));
+  lines.push('get_acl_config =>');
+  lines.push(truncate(JSON.stringify(aclToolView, null, 2)));
+  lines.push('');
+  lines.push('CANONICAL VIRTUAL PATHS FOR MUTATIONS (use these exact roots):');
+  lines.push('- modules/... (backend modules)');
+  lines.push('- models/... (orm models)');
+  lines.push('- ui/... (tenant ui entities)');
+  lines.push('- shared-ui/<project>/... (shared ui files)');
+  lines.push('- shared-modules/<project>/... (shared backend files)');
+  lines.push('');
+  lines.push('VIRTUAL FILE TREE (exact paths seen by IDE logic):');
+  workspace.modules.forEach((mod) => {
+    lines.push(`- ${toModuleVirtualPath(mod)}`);
+  });
+  workspace.models.forEach((model) => {
+    lines.push(`- ${toModelVirtualPath(model)}`);
+  });
+  lines.push('- modules/acl/permissions.json');
+  lines.push('- modules/acl/roles.json');
+  lines.push('- modules/acl/endpoints.json');
+  workspace.uiPackages.forEach((pkg) => {
+    lines.push(`- ${toUiVirtualPath(pkg)}`);
+  });
+  sharedUiFiles.forEach((file) => {
+    lines.push(`- ${toSharedVirtualPath('shared-ui', file.projectName, file.path)}`);
+  });
+  sharedModuleFiles.forEach((file) => {
+    lines.push(`- ${toSharedVirtualPath('shared-modules', file.projectName, file.path)}`);
+  });
+  lines.push('');
   lines.push('Workspace snapshot (FULL PROJECT CONTEXT):');
   lines.push(`Modules (${workspace.modules.length}):`);
   workspace.modules.forEach((mod) => {
@@ -1247,48 +1611,75 @@ const buildContextText = (
   lines.push('');
   lines.push('--- FULL SOURCE: BACKEND MODULES ---');
   workspace.modules.forEach((mod) => {
-    const ext = mod.fileExtension ? `.${mod.fileExtension}` : '.js';
-    lines.push(`# FILE: modules${mod.routePath}/${mod.method.toLowerCase()}.module${ext}`);
+    lines.push(`# FILE: ${toModuleVirtualPath(mod)}`);
     lines.push(mod.code || '');
     lines.push('');
   });
   lines.push('--- FULL SOURCE: ORM MODELS ---');
   workspace.models.forEach((model) => {
-    const ext = model.fileExtension ? `.${model.fileExtension}` : '.js';
-    lines.push(`# FILE: ${model.path || `models/${model.id}${ext}`}`);
+    lines.push(`# FILE: ${toModelVirtualPath(model)}`);
     lines.push(model.code || '');
     lines.push('');
   });
+  lines.push('--- FULL SOURCE: ACL JSON ---');
+  lines.push('# FILE: modules/acl/permissions.json');
+  lines.push(JSON.stringify(acl.permissions ?? {}, null, 2));
+  lines.push('');
+  lines.push('# FILE: modules/acl/roles.json');
+  lines.push(JSON.stringify(acl.roles ?? {}, null, 2));
+  lines.push('');
+  lines.push('# FILE: modules/acl/endpoints.json');
+  lines.push(JSON.stringify(acl.endpoints ?? {}, null, 2));
+  lines.push('');
   lines.push('--- FULL SOURCE: UI PACKAGES ---');
   workspace.uiPackages.forEach((pkg) => {
-    const ext = pkg.fileExtension ? `.${pkg.fileExtension}` : '.jsx';
-    lines.push(`# FILE: ui/${pkg.name}.ui${ext} @${pkg.version}`);
+    lines.push(`# FILE: ${toUiVirtualPath(pkg)} @${pkg.version}`);
     if (pkg.dependencies?.length) {
       lines.push(`# DEPENDENCIES: ${pkg.dependencies.join(', ')}`);
     }
     lines.push(pkg.code || '');
     lines.push('');
   });
-  lines.push('--- FULL SOURCE: SHARED UI PROJECTS (ENTRY) ---');
-  workspace.sharedUi.forEach((project) => {
-    lines.push(`# FILE: shared-ui/${project.name}/${project.entryPath} @${project.version}`);
-    if (project.dependencies?.length) {
-      lines.push(`# DEPENDENCIES: ${project.dependencies.join(', ')}`);
-    }
-    lines.push(project.code || '');
-    lines.push('');
-  });
-  lines.push('--- FULL SOURCE: SHARED BACKEND PROJECTS (ENTRY) ---');
-  workspace.sharedModules.forEach((project) => {
-    lines.push(
-      `# FILE: shared-modules/${project.name}/${project.entryPath} @${project.version}`
-    );
-    if (project.dependencies?.length) {
-      lines.push(`# DEPENDENCIES: ${project.dependencies.join(', ')}`);
-    }
-    lines.push(project.code || '');
-    lines.push('');
-  });
+  lines.push('--- FULL SOURCE: SHARED UI PROJECT FILES ---');
+  if (sharedUiFiles.length) {
+    sharedUiFiles.forEach((file) => {
+      lines.push(`# FILE: ${toSharedVirtualPath('shared-ui', file.projectName, file.path)}`);
+      lines.push(file.content || '');
+      lines.push('');
+    });
+  } else {
+    workspace.sharedUi.forEach((project) => {
+      lines.push(
+        `# FILE: ${toSharedVirtualPath('shared-ui', project.name, project.entryPath)} @${project.version}`
+      );
+      if (project.dependencies?.length) {
+        lines.push(`# DEPENDENCIES: ${project.dependencies.join(', ')}`);
+      }
+      lines.push(project.code || '');
+      lines.push('');
+    });
+  }
+  lines.push('--- FULL SOURCE: SHARED BACKEND PROJECT FILES ---');
+  if (sharedModuleFiles.length) {
+    sharedModuleFiles.forEach((file) => {
+      lines.push(
+        `# FILE: ${toSharedVirtualPath('shared-modules', file.projectName, file.path)}`
+      );
+      lines.push(file.content || '');
+      lines.push('');
+    });
+  } else {
+    workspace.sharedModules.forEach((project) => {
+      lines.push(
+        `# FILE: ${toSharedVirtualPath('shared-modules', project.name, project.entryPath)} @${project.version}`
+      );
+      if (project.dependencies?.length) {
+        lines.push(`# DEPENDENCIES: ${project.dependencies.join(', ')}`);
+      }
+      lines.push(project.code || '');
+      lines.push('');
+    });
+  }
   return lines.join('\n');
 };
 
@@ -1303,7 +1694,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   const tenant = await resolveTenant(req);
   const allowClientConfig = process.env.AI_ALLOW_CLIENT_CONFIG === 'true';
 
-  const { messages, config, stream, chatId: rawChatId } = req.body ?? {};
+  const { messages, config, stream, chatId: rawChatId, systemPrompt: rawSystemPrompt } = req.body ?? {};
   const chatId =
     typeof rawChatId === 'string' && rawChatId.trim()
       ? rawChatId.trim().slice(0, 128)
@@ -1339,6 +1730,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       uiPackages: workspace.uiPackages ?? [],
       sharedUi: workspace.sharedUi ?? [],
       sharedModules: workspace.sharedModules ?? [],
+      sharedUiFiles: workspace.sharedUiFiles ?? [],
+      sharedModuleFiles: workspace.sharedModuleFiles ?? [],
     },
     {
       permissions: acl.permissions,
@@ -1430,6 +1823,10 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   await startAssistantRun(tenant.id, runId, idempotency);
 
   if (isCodexAgentMode()) {
+    const systemPrompt = normalizeSystemPrompt(
+      rawSystemPrompt,
+      CODEX_SYSTEM_INSTRUCTIONS
+    );
     const codexModel = resolveCodexModel(config ?? {}, allowClientConfig);
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
@@ -1458,59 +1855,79 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
         );
         emitRunEvent(createRunEvent(runId, 'CONTEXT_CAPTURED', 'S0_INIT'));
         emitRunEvent(createRunEvent(runId, 'EXECUTION_STARTED', 'S2_EXTRACTION'));
-        sendEvent({ type: 'delta', content: '[codex] building prompt/context...\n' });
-        const gatewayMode = resolveCodexGatewayModeValue();
-        const gatewayEnabled =
-          gatewayMode !== 'off' &&
-          gatewayMode !== 'none' &&
-          gatewayMode !== 'disabled' &&
-          (gatewayMode === 'container' || Boolean(resolveCodexGatewayUrl()));
-        sendEvent({
-          type: 'delta',
-          content: gatewayEnabled
-            ? '[codex] launching codex-gateway...\n'
-            : '[codex] launching codex-cli...\n',
-        });
-        const startedAt = Date.now();
-        sendEvent({ type: 'delta', content: '[codex] working... 0s\n' });
-        const heartbeat = setInterval(() => {
-          if (closed) return;
-          const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-          sendEvent({ type: 'delta', content: `[codex] working... ${elapsed}s\n` });
-        }, 1000);
-        heartbeat.unref?.();
 
         const codex = await (async () => {
-          try {
-            return await executeCodex({
-              runId,
-              userId: user.id,
-              userName: user.email,
-              chatId,
-              messages: normalizedMessages,
-              contextText,
-              model: codexModel,
-              onLine: (line) => {
-                const formatted = formatCodexProgressLine(line);
-                if (!formatted?.text) return;
-                sendEvent({
-                  type: 'delta',
-                  content: formatted.appendNewline ? `${formatted.text}\n` : formatted.text,
-                });
-              },
-            });
-          } finally {
-            clearInterval(heartbeat);
-          }
+          return await executeCodex({
+            runId,
+            userId: user.id,
+            userName: user.email,
+            chatId,
+            messages: normalizedMessages,
+            contextText,
+            systemPrompt,
+            model: codexModel,
+            onLine: (line) => {
+              const formatted = formatCodexProgressLine(line);
+              if (!formatted?.text) return;
+              sendEvent({
+                type: 'delta',
+                content: formatted.appendNewline ? `${formatted.text}\n` : formatted.text,
+              });
+            },
+          });
         })();
         sendEvent({
           type: 'delta',
           content: '\n[codex] response received, resolving operations...\n',
         });
-        const plan = parseCodexPlan(codex.message);
-        const fallbackDirectives = parseCodexFileDirectives(codex.message);
-        const fallbackOperations = buildOperationsFromDirectives(fallbackDirectives, workspace);
-        const operations = (plan?.operations?.length ? plan.operations : fallbackOperations) ?? [];
+        const latestPrompt = getLatestUserPrompt(normalizedMessages);
+        let codexMessage = codex.message;
+        let plan = parseCodexPlan(codexMessage);
+        let fallbackDirectives = parseCodexFileDirectives(codexMessage);
+        let fallbackOperations = buildOperationsFromDirectives(
+          fallbackDirectives,
+          workspace
+        );
+        let operations = (plan?.operations?.length ? plan.operations : fallbackOperations) ?? [];
+        if (operations.length === 0 && codexAskedForUnavailableTools(codexMessage)) {
+          sendEvent({
+            type: 'delta',
+            content:
+              '[codex] requested direct tools; retrying with host-provided tool outputs...\n',
+          });
+          const recovery = await executeCodex({
+            runId,
+            userId: user.id,
+            userName: user.email,
+            chatId,
+            messages: [
+              ...normalizedMessages,
+              {
+                role: 'user',
+                content: buildCodexRecoveryPrompt(latestPrompt),
+              },
+            ],
+            contextText,
+            systemPrompt,
+            model: codexModel,
+            onLine: (line) => {
+              const formatted = formatCodexProgressLine(line);
+              if (!formatted?.text) return;
+              sendEvent({
+                type: 'delta',
+                content: formatted.appendNewline ? `${formatted.text}\n` : formatted.text,
+              });
+            },
+          });
+          codexMessage = recovery.message;
+          plan = parseCodexPlan(codexMessage);
+          fallbackDirectives = parseCodexFileDirectives(codexMessage);
+          fallbackOperations = buildOperationsFromDirectives(
+            fallbackDirectives,
+            workspace
+          );
+          operations = (plan?.operations?.length ? plan.operations : fallbackOperations) ?? [];
+        }
         if (plan?.operations?.length) {
           sendEvent({
             type: 'delta',
@@ -1527,7 +1944,6 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
             content: '[codex] no explicit operations in response\n',
           });
         }
-        const latestPrompt = getLatestUserPrompt(normalizedMessages);
         if (operations.length > 0) {
           emitRunEvent(
             createRunEvent(runId, 'PLAN_READY', 'S1_ANALYSIS', {
@@ -1543,6 +1959,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
             ? await executeCodexOperations(
                 tools as Record<string, any>,
                 operations,
+                workspace,
                 () => changes,
                 (change) => sendEvent({ type: 'change', change }),
                 (line) => sendEvent({ type: 'delta', content: line })
@@ -1562,7 +1979,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
             `No workspace changes were applied for mutation request.${opResult.errors.length ? ` Errors: ${opResult.errors.join(' | ')}` : ''}`
           );
         }
-        const summary = (plan?.summary || '').trim() || codex.message.trim() || 'Done.';
+        const summary = (plan?.summary || '').trim() || codexMessage.trim() || 'Done.';
         const finalMessageLines = [summary];
         if (opResult.logs.length) {
           finalMessageLines.push('');
@@ -1665,13 +2082,44 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
         chatId,
         messages: normalizedMessages,
         contextText,
+        systemPrompt,
         model: codexModel,
       });
-      const plan = parseCodexPlan(codex.message);
-      const fallbackDirectives = parseCodexFileDirectives(codex.message);
-      const fallbackOperations = buildOperationsFromDirectives(fallbackDirectives, workspace);
-      const operations = (plan?.operations?.length ? plan.operations : fallbackOperations) ?? [];
       const latestPrompt = getLatestUserPrompt(normalizedMessages);
+      let codexMessage = codex.message;
+      let plan = parseCodexPlan(codexMessage);
+      let fallbackDirectives = parseCodexFileDirectives(codexMessage);
+      let fallbackOperations = buildOperationsFromDirectives(
+        fallbackDirectives,
+        workspace
+      );
+      let operations = (plan?.operations?.length ? plan.operations : fallbackOperations) ?? [];
+      if (operations.length === 0 && codexAskedForUnavailableTools(codexMessage)) {
+        const recovery = await executeCodex({
+          runId,
+          userId: user.id,
+          userName: user.email,
+          chatId,
+          messages: [
+            ...normalizedMessages,
+            {
+              role: 'user',
+              content: buildCodexRecoveryPrompt(latestPrompt),
+            },
+          ],
+          contextText,
+          systemPrompt,
+          model: codexModel,
+        });
+        codexMessage = recovery.message;
+        plan = parseCodexPlan(codexMessage);
+        fallbackDirectives = parseCodexFileDirectives(codexMessage);
+        fallbackOperations = buildOperationsFromDirectives(
+          fallbackDirectives,
+          workspace
+        );
+        operations = (plan?.operations?.length ? plan.operations : fallbackOperations) ?? [];
+      }
       if (operations.length > 0) {
         pushEvent(
           createRunEvent(runId, 'PLAN_READY', 'S1_ANALYSIS', {
@@ -1687,6 +2135,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
           ? await executeCodexOperations(
               tools as Record<string, any>,
               operations,
+              workspace,
               () => changes
             )
           : { executed: 0, mutationOps: 0, logs: [] as string[], errors: [] as string[] };
@@ -1700,7 +2149,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
           `No workspace changes were applied for mutation request.${opResult.errors.length ? ` Errors: ${opResult.errors.join(' | ')}` : ''}`
         );
       }
-      const summary = (plan?.summary || '').trim() || codex.message.trim() || 'Done.';
+      const summary = (plan?.summary || '').trim() || codexMessage.trim() || 'Done.';
       const finalMessageLines = [summary];
       if (opResult.logs.length) {
         finalMessageLines.push('');
@@ -1774,6 +2223,10 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   const modelConfig = await pickAvailableModel(
     buildAssistantModelConfig(config ?? {}, allowClientConfig)
   );
+  const systemPrompt = normalizeSystemPrompt(
+    rawSystemPrompt,
+    ASSISTANT_SYSTEM_INSTRUCTIONS
+  );
   const agent = createAssistantAgent(tools as any, modelConfig);
 
   if (stream) {
@@ -1804,6 +2257,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
         runId,
         agent,
         messages: normalizedMessages,
+        systemPrompt,
         contextText,
         maxSteps: 24,
         maxRetries: 1,
@@ -1879,6 +2333,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     runId,
     agent,
     messages: normalizedMessages,
+    systemPrompt,
     contextText,
     maxSteps: 24,
     maxRetries: 1,
