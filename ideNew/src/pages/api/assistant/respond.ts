@@ -7,6 +7,11 @@ import { withApiHandler } from '@/lib/api-helpers';
 import { requireUser } from '@/lib/auth';
 import { resolveTenant } from '@/lib/tenancy';
 import { CODEX_SYSTEM_INSTRUCTIONS, resolveCodexModelFromEnv } from '@/lib/assistant/codex';
+import { resolveCodexGatewayBase } from '@/lib/assistant/gateway';
+import {
+  resolveCodexGatewayBaseForUser,
+  resolveCodexGatewayModeValue,
+} from '@/lib/assistant/gateway-runtime';
 import { buildAssistantTools } from '@/lib/assistant/tools';
 import {
   buildAssistantModelConfig,
@@ -43,6 +48,8 @@ const resolveCodexTimeoutMs = () => {
   if (Number.isFinite(raw) && raw > 0) return Math.floor(raw);
   return 10 * 60 * 1000;
 };
+
+const resolveCodexGatewayUrl = () => resolveCodexGatewayBase();
 
 const resolveCodexModel = (_config: { model?: string } | undefined, _allowClientConfig: boolean) => {
   const codexOnly = resolveCodexModelFromEnv();
@@ -107,13 +114,18 @@ TASK:
 Respond to the latest user request using the context above.`;
 };
 
-const executeCodexCli = async (input: {
+type CodexExecInput = {
   runId: string;
+  userId: string | number;
+  userName?: string;
+  chatId?: string;
   messages: Array<{ role: string; content: string }>;
   contextText: string;
   model?: string;
   onLine?: (line: string) => void;
-}) => {
+};
+
+const executeCodexCli = async (input: CodexExecInput) => {
   const outputFile = path.join(tmpdir(), `idp-codex-last-${input.runId}.txt`);
   const prompt = buildCodexPrompt(input.messages, input.contextText);
   const runOnce = async (model?: string) =>
@@ -230,6 +242,133 @@ const executeCodexCli = async (input: {
     message = 'Codex completed with no response text.';
   }
   return { message };
+};
+
+const executeCodexGateway = async (input: CodexExecInput) => {
+  const runtime = await resolveCodexGatewayBaseForUser(input.userId, input.userName);
+  const baseUrl = runtime.baseUrl;
+  if (!baseUrl) {
+    throw new Error('AGENT_CODEX_GATEWAY_URL is not configured');
+  }
+  const gatewayMode = resolveCodexGatewayModeValue();
+  const gatewayCwd = gatewayMode === 'container' ? '/workspace' : resolveCodexCwd();
+
+  const response = await fetch(`${baseUrl}/v1/exec`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      userId: String(input.userId),
+      chatId: input.chatId || 'default',
+      prompt: getLatestUserPrompt(input.messages),
+      fullPrompt: buildCodexPrompt(input.messages, input.contextText),
+      model: input.model,
+      stream: true,
+      cwd: gatewayCwd,
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = (await response.text().catch(() => '')).trim();
+    throw new Error(detail || `codex-gateway request failed (${response.status})`);
+  }
+  if (!response.body) {
+    throw new Error('codex-gateway returned no stream body');
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let done = false;
+  let doneMessage = '';
+  let doneError = '';
+  let doneOk = false;
+
+  const processBlock = (block: string) => {
+    const lines = block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (!lines.length) return;
+
+    let eventName = 'message';
+    const dataLines: string[] = [];
+    for (const line of lines) {
+      if (line.startsWith('event:')) {
+        eventName = line.slice('event:'.length).trim() || 'message';
+        continue;
+      }
+      if (line.startsWith('data:')) {
+        dataLines.push(line.slice('data:'.length).trim());
+      }
+    }
+    if (!dataLines.length) return;
+
+    const rawData = dataLines.join('\n');
+    let payload: any;
+    try {
+      payload = JSON.parse(rawData);
+    } catch {
+      input.onLine?.(`[gateway] ${rawData}`);
+      return;
+    }
+
+    if (eventName === 'status') {
+      input.onLine?.(`[gateway] ${String(payload?.state || 'status')}`);
+      return;
+    }
+    if (eventName === 'stdout') {
+      const line = String(payload?.line || '').trim();
+      if (line) input.onLine?.(line);
+      return;
+    }
+    if (eventName === 'stderr') {
+      const line = String(payload?.line || '').trim();
+      if (line) input.onLine?.(`[stderr] ${line}`);
+      return;
+    }
+    if (eventName === 'done') {
+      done = true;
+      doneOk = Boolean(payload?.ok);
+      doneMessage = String(payload?.message || '').trim();
+      doneError = String(payload?.error || '').trim();
+    }
+  };
+
+  const reader = response.body.getReader();
+  while (true) {
+    const { done: readerDone, value } = await reader.read();
+    if (readerDone) break;
+    if (!value) continue;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      processBlock(block);
+      boundary = buffer.indexOf('\n\n');
+    }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) processBlock(buffer.trim());
+
+  if (!done) {
+    throw new Error('codex-gateway stream ended without done event');
+  }
+  if (!doneOk) {
+    throw new Error(doneError || 'codex-gateway execution failed');
+  }
+
+  return {
+    message: doneMessage || 'Codex completed with no response text.',
+  };
+};
+
+const executeCodex = async (input: CodexExecInput) => {
+  const mode = resolveCodexGatewayModeValue();
+  const gatewayEnabled = mode !== 'off' && mode !== 'none' && mode !== 'disabled';
+  const shouldUseGateway =
+    gatewayEnabled && (mode === 'container' || Boolean(resolveCodexGatewayUrl()));
+  if (shouldUseGateway) {
+    return executeCodexGateway(input);
+  }
+  return executeCodexCli(input);
 };
 
 type CodexOperation = {
@@ -1164,7 +1303,11 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   const tenant = await resolveTenant(req);
   const allowClientConfig = process.env.AI_ALLOW_CLIENT_CONFIG === 'true';
 
-  const { messages, config, stream } = req.body ?? {};
+  const { messages, config, stream, chatId: rawChatId } = req.body ?? {};
+  const chatId =
+    typeof rawChatId === 'string' && rawChatId.trim()
+      ? rawChatId.trim().slice(0, 128)
+      : 'default';
   const normalizedMessages = normalizeMessages(messages);
   if (!normalizedMessages.length) {
     const err = new Error('Messages are required');
@@ -1316,19 +1459,34 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
         emitRunEvent(createRunEvent(runId, 'CONTEXT_CAPTURED', 'S0_INIT'));
         emitRunEvent(createRunEvent(runId, 'EXECUTION_STARTED', 'S2_EXTRACTION'));
         sendEvent({ type: 'delta', content: '[codex] building prompt/context...\n' });
-        sendEvent({ type: 'delta', content: '[codex] launching codex-cli...\n' });
+        const gatewayMode = resolveCodexGatewayModeValue();
+        const gatewayEnabled =
+          gatewayMode !== 'off' &&
+          gatewayMode !== 'none' &&
+          gatewayMode !== 'disabled' &&
+          (gatewayMode === 'container' || Boolean(resolveCodexGatewayUrl()));
+        sendEvent({
+          type: 'delta',
+          content: gatewayEnabled
+            ? '[codex] launching codex-gateway...\n'
+            : '[codex] launching codex-cli...\n',
+        });
         const startedAt = Date.now();
+        sendEvent({ type: 'delta', content: '[codex] working... 0s\n' });
         const heartbeat = setInterval(() => {
           if (closed) return;
           const elapsed = Math.floor((Date.now() - startedAt) / 1000);
           sendEvent({ type: 'delta', content: `[codex] working... ${elapsed}s\n` });
-        }, 5000);
+        }, 1000);
         heartbeat.unref?.();
 
         const codex = await (async () => {
           try {
-            return await executeCodexCli({
+            return await executeCodex({
               runId,
+              userId: user.id,
+              userName: user.email,
+              chatId,
               messages: normalizedMessages,
               contextText,
               model: codexModel,
@@ -1500,8 +1658,11 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       );
       pushEvent(createRunEvent(runId, 'CONTEXT_CAPTURED', 'S0_INIT'));
       pushEvent(createRunEvent(runId, 'EXECUTION_STARTED', 'S2_EXTRACTION'));
-      const codex = await executeCodexCli({
+      const codex = await executeCodex({
         runId,
+        userId: user.id,
+        userName: user.email,
+        chatId,
         messages: normalizedMessages,
         contextText,
         model: codexModel,

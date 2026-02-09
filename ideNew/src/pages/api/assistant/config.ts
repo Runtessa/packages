@@ -3,6 +3,7 @@ import { withApiHandler } from '@/lib/api-helpers';
 import { requireUser } from '@/lib/auth';
 import { CODEX_SYSTEM_INSTRUCTIONS, resolveCodexModelFromEnv } from '@/lib/assistant/codex';
 import { ASSISTANT_SYSTEM_INSTRUCTIONS } from '@/lib/assistant/agent';
+import { resolveCodexGatewayBase, resolveCodexGatewayProvider } from '@/lib/assistant/gateway';
 
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method !== 'GET') {
@@ -15,12 +16,13 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
 
   const agentType = (process.env.AGENT_TYPE || 'orchestrator').trim().toLowerCase();
   if (agentType === 'codex') {
+    const gatewayUrl = resolveCodexGatewayBase();
     res.status(200).json({
       agentType,
       allowClientConfig: false,
       baseUrl: '',
       model: resolveCodexModelFromEnv() ?? '',
-      provider: 'codex-cli',
+      provider: gatewayUrl ? resolveCodexGatewayProvider() : 'codex-cli',
       hasApiKey: false,
       systemPrompt: CODEX_SYSTEM_INSTRUCTIONS,
     });

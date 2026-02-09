@@ -50,6 +50,38 @@ type AiSettings = {
   allowClientConfig: boolean;
 };
 
+type CodexLoginSession = {
+  sessionId: string;
+  status: string;
+  authUrl?: string;
+  userCode?: string;
+  callbackUrl?: string;
+  logs?: string[];
+  updatedAt?: string;
+  completedAt?: string | null;
+};
+
+type CodexGatewayRuntime = {
+  mode: string;
+  userKey: string;
+  userName: string;
+  containerName: string;
+  engine: "docker" | "podman" | null;
+  image: string;
+  host: string;
+  port: number | null;
+  baseUrl: string;
+  exists: boolean;
+  running: boolean;
+};
+
+type CodexGatewayAction =
+  | "create"
+  | "start"
+  | "stop"
+  | "restart"
+  | "remove";
+
 type AssistantRunSummary = {
   runId: string;
   status: "running" | "completed" | "failed";
@@ -82,6 +114,12 @@ type EditorAiPanelProps = {
 const STORAGE_PREFIX = "editor-ai-chat";
 
 const createId = () => Math.random().toString(36).slice(2, 10);
+const createChatSessionId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `chat-${Date.now()}-${createId()}`;
+};
 
 const formatChange = (change: AssistantChange) => {
   if (change.kind === "module") {
@@ -354,6 +392,7 @@ export function EditorAiPanel({
 }: EditorAiPanelProps) {
   const { success, error: showError } = useToast();
   const [messages, setMessages] = useState<AiMessage[]>([]);
+  const [chatSessionId, setChatSessionId] = useState<string>(createChatSessionId);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [pendingAssistantId, setPendingAssistantId] = useState<string | null>(
@@ -362,6 +401,20 @@ export function EditorAiPanel({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
+  const [agentType, setAgentType] = useState<string>("orchestrator");
+  const [codexAuthChecking, setCodexAuthChecking] = useState(false);
+  const [codexAuthStarting, setCodexAuthStarting] = useState(false);
+  const [codexAuthLoggedIn, setCodexAuthLoggedIn] = useState(false);
+  const [codexAuthStatus, setCodexAuthStatus] = useState("");
+  const [codexSession, setCodexSession] = useState<CodexLoginSession | null>(
+    null,
+  );
+  const [codexRuntime, setCodexRuntime] = useState<CodexGatewayRuntime | null>(
+    null,
+  );
+  const [codexRuntimeAction, setCodexRuntimeAction] =
+    useState<CodexGatewayAction | null>(null);
+  const [codexRuntimeStatus, setCodexRuntimeStatus] = useState("");
   const [runs, setRuns] = useState<AssistantRunSummary[]>([]);
   const [loadingRuns, setLoadingRuns] = useState(false);
   const [promptMaximized, setPromptMaximized] = useState(false);
@@ -380,6 +433,7 @@ export function EditorAiPanel({
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const stoppingRef = useRef(false);
+  const codexPollTimerRef = useRef<number | null>(null);
 
   const isAbortError = (err: unknown) => {
     if (!err) return false;
@@ -403,6 +457,7 @@ export function EditorAiPanel({
     const restore = async () => {
       try {
         const config = await apiFetch("/api/assistant/config");
+        setAgentType(String(config.agentType || "orchestrator"));
         setSettings((prev) => ({
           ...prev,
           baseUrl: config.baseUrl || "",
@@ -427,9 +482,13 @@ export function EditorAiPanel({
     try {
       const parsed = JSON.parse(raw) as {
         messages?: AiMessage[];
+        chatSessionId?: string;
         settings?: Partial<AiSettings>;
       };
       if (parsed.messages) setMessages(parsed.messages);
+      if (parsed.chatSessionId && parsed.chatSessionId.trim()) {
+        setChatSessionId(parsed.chatSessionId.trim());
+      }
       if (parsed.settings) {
         setSettings((prev) => ({ ...prev, ...parsed.settings }));
       }
@@ -442,6 +501,7 @@ export function EditorAiPanel({
     if (!tenantHost) return;
     const toStore = {
       messages,
+      chatSessionId,
       settings: {
         baseUrl: settings.baseUrl,
         model: settings.model,
@@ -451,7 +511,7 @@ export function EditorAiPanel({
       },
     };
     localStorage.setItem(storageKey, JSON.stringify(toStore));
-  }, [messages, settings, storageKey, tenantHost]);
+  }, [chatSessionId, messages, settings, storageKey, tenantHost]);
 
   const loadRuns = async () => {
     try {
@@ -474,6 +534,260 @@ export function EditorAiPanel({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, sending]);
+
+  const clearCodexPollTimer = () => {
+    if (codexPollTimerRef.current !== null) {
+      window.clearInterval(codexPollTimerRef.current);
+      codexPollTimerRef.current = null;
+    }
+  };
+
+  const loadCodexAuthStatus = async (silent = false) => {
+    if (agentType !== "codex") return;
+    if (!silent) setCodexAuthChecking(true);
+    try {
+      const result = await apiFetch("/api/assistant/auth/status");
+      setCodexAuthLoggedIn(Boolean(result?.loggedIn));
+      setCodexAuthStatus(String(result?.status || ""));
+    } catch (err) {
+      if (!silent) {
+        showError((err as Error).message || "Failed to load Codex auth status");
+      }
+    } finally {
+      if (!silent) setCodexAuthChecking(false);
+    }
+  };
+
+  const loadCodexRuntime = async (silent = false) => {
+    try {
+      const result = await apiFetch("/api/assistant/gateway/runtime");
+      const state = result?.state ?? null;
+      if (state && typeof state === "object") {
+        const nextRuntime: CodexGatewayRuntime = {
+          mode: String(state.mode || ""),
+          userKey: String(state.userKey || ""),
+          userName: String(state.userName || ""),
+          containerName: String(state.containerName || ""),
+          engine:
+            state.engine === "docker" || state.engine === "podman"
+              ? state.engine
+              : null,
+          image: String(state.image || ""),
+          host: String(state.host || ""),
+          port: Number.isFinite(Number(state.port))
+            ? Number(state.port)
+            : null,
+          baseUrl: String(state.baseUrl || ""),
+          exists: Boolean(state.exists),
+          running: Boolean(state.running),
+        };
+        setCodexRuntime(nextRuntime);
+        setCodexRuntimeStatus(
+          `Container ${nextRuntime.containerName || "unknown"}: ${
+            nextRuntime.running ? "running" : nextRuntime.exists ? "stopped" : "not created"
+          }`,
+        );
+      }
+    } catch (err) {
+      if (!silent) {
+        showError((err as Error).message || "Failed to load gateway runtime");
+      }
+    }
+  };
+
+  const runCodexRuntimeAction = async (action: CodexGatewayAction) => {
+    if (codexRuntimeAction) return;
+    setCodexRuntimeAction(action);
+    try {
+      const result = await apiFetch("/api/assistant/gateway/runtime", {
+        method: "POST",
+        body: { action },
+      });
+      const state = result?.state ?? null;
+      if (state && typeof state === "object") {
+        setCodexRuntime({
+          mode: String(state.mode || ""),
+          userKey: String(state.userKey || ""),
+          userName: String(state.userName || ""),
+          containerName: String(state.containerName || ""),
+          engine:
+            state.engine === "docker" || state.engine === "podman"
+              ? state.engine
+              : null,
+          image: String(state.image || ""),
+          host: String(state.host || ""),
+          port: Number.isFinite(Number(state.port))
+            ? Number(state.port)
+            : null,
+          baseUrl: String(state.baseUrl || ""),
+          exists: Boolean(state.exists),
+          running: Boolean(state.running),
+        });
+      }
+      setCodexRuntimeStatus(`Container action "${action}" completed`);
+      if (action !== "remove") {
+        await loadCodexAuthStatus(true);
+      } else {
+        setCodexAuthLoggedIn(false);
+        setCodexAuthStatus("");
+        setCodexSession(null);
+      }
+      success(`Container ${action} done`);
+    } catch (err) {
+      showError((err as Error).message || `Failed to ${action} container`);
+    } finally {
+      setCodexRuntimeAction(null);
+    }
+  };
+
+  const loadCodexLoginSession = async (
+    sessionId: string,
+    silent = false,
+  ) => {
+    if (!sessionId) return;
+    try {
+      const result = await apiFetch(
+        `/api/assistant/auth/session/${encodeURIComponent(sessionId)}`,
+      );
+      const nextSession: CodexLoginSession = {
+        sessionId: String(result?.sessionId || sessionId),
+        status: String(result?.status || "unknown"),
+        authUrl: String(result?.authUrl || ""),
+        userCode: String(result?.userCode || ""),
+        callbackUrl: String(result?.callbackUrl || ""),
+        logs: Array.isArray(result?.logs)
+          ? result.logs.map((entry: unknown) => String(entry))
+          : [],
+        updatedAt: result?.updatedAt ? String(result.updatedAt) : undefined,
+        completedAt: result?.completedAt
+          ? String(result.completedAt)
+          : result?.completedAt === null
+            ? null
+            : undefined,
+      };
+      setCodexSession(nextSession);
+      if (
+        nextSession.status === "completed" ||
+        nextSession.status === "failed" ||
+        nextSession.status === "cancelled"
+      ) {
+        clearCodexPollTimer();
+        void loadCodexAuthStatus(true);
+      }
+    } catch (err) {
+      if (!silent) {
+        showError((err as Error).message || "Failed to load login session");
+      }
+    }
+  };
+
+  const startCodexLogin = async () => {
+    if (agentType !== "codex") return;
+    setCodexAuthStarting(true);
+    try {
+      const result = await apiFetch("/api/assistant/auth/start", {
+        method: "POST",
+        body: { mode: "device-auth" },
+      });
+      const nextSession: CodexLoginSession = {
+        sessionId: String(result?.sessionId || ""),
+        status: String(result?.status || "starting"),
+        authUrl: String(result?.authUrl || ""),
+        userCode: String(result?.userCode || ""),
+        callbackUrl: String(result?.callbackUrl || ""),
+        logs: Array.isArray(result?.logs)
+          ? result.logs.map((entry: unknown) => String(entry))
+          : [],
+        updatedAt: result?.updatedAt ? String(result.updatedAt) : undefined,
+        completedAt: result?.completedAt
+          ? String(result.completedAt)
+          : result?.completedAt === null
+            ? null
+            : undefined,
+      };
+      setCodexSession(nextSession);
+      if (nextSession.authUrl) {
+        window.open(nextSession.authUrl, "_blank", "noopener,noreferrer");
+      }
+      if (!nextSession.authUrl) {
+        success("Login session started. Waiting for auth URL...");
+      }
+      if (nextSession.sessionId) {
+        await loadCodexLoginSession(nextSession.sessionId, true);
+      }
+    } catch (err) {
+      showError((err as Error).message || "Failed to start Codex login");
+    } finally {
+      setCodexAuthStarting(false);
+    }
+  };
+
+  const sendCodexCallback = async () => {
+    if (!codexSession?.sessionId) return;
+    try {
+      await apiFetch("/api/assistant/auth/callback", {
+        method: "POST",
+        body: {
+          sessionId: codexSession.sessionId,
+          callbackData: {
+            source: "ide",
+            at: new Date().toISOString(),
+          },
+        },
+      });
+      await loadCodexLoginSession(codexSession.sessionId, true);
+    } catch (err) {
+      showError((err as Error).message || "Failed to send callback payload");
+    }
+  };
+
+  const logoutCodex = async () => {
+    try {
+      await apiFetch("/api/assistant/auth/logout", {
+        method: "POST",
+        body: {},
+      });
+      setCodexSession(null);
+      clearCodexPollTimer();
+      await loadCodexAuthStatus(true);
+      success("Logged out from Codex");
+    } catch (err) {
+      showError((err as Error).message || "Failed to logout Codex");
+    }
+  };
+
+  useEffect(() => {
+    if (!settingsOpen || agentType !== "codex") return;
+    void loadCodexAuthStatus();
+    void loadCodexRuntime(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsOpen, agentType]);
+
+  useEffect(() => {
+    if (!settingsOpen || agentType !== "codex") return;
+    if (!codexSession?.sessionId) return;
+    if (
+      codexSession.status !== "starting" &&
+      codexSession.status !== "running"
+    ) {
+      clearCodexPollTimer();
+      return;
+    }
+    clearCodexPollTimer();
+    codexPollTimerRef.current = window.setInterval(() => {
+      void loadCodexLoginSession(codexSession.sessionId, true);
+    }, 2000);
+    return () => {
+      clearCodexPollTimer();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsOpen, agentType, codexSession?.sessionId, codexSession?.status]);
+
+  useEffect(() => {
+    return () => {
+      clearCodexPollTimer();
+    };
+  }, []);
 
   const activeFileContext = useMemo(() => {
     if (!activeFile) return null;
@@ -518,6 +832,7 @@ export function EditorAiPanel({
           role: msg.role,
           content: msg.content,
         })),
+        chatId: chatSessionId,
         context: {
           activeFile: activeFileContext,
           acl: aclConfig ?? undefined,
@@ -1043,7 +1358,10 @@ export function EditorAiPanel({
           <button
             type="button"
             className="flex h-8 w-8 items-center justify-center rounded border border-[#2a2d2e] text-gray-200 hover:bg-[#2a2d2e]"
-            onClick={() => setMessages([])}
+            onClick={() => {
+              setMessages([]);
+              setChatSessionId(createChatSessionId());
+            }}
             aria-label="Clear chat"
             title="Clear chat"
           >
@@ -1089,30 +1407,243 @@ export function EditorAiPanel({
         }
       >
         <div className="space-y-4">
+          {agentType === "codex" ? (
+            <div className="space-y-3 rounded-lg border border-[#2a2d2e] bg-[#171717] p-3">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold text-gray-100">
+                  Codex account
+                </div>
+                <span
+                  className={`rounded border px-2 py-0.5 text-[10px] ${
+                    codexAuthLoggedIn
+                      ? "border-emerald-700/50 bg-emerald-900/30 text-emerald-300"
+                      : "border-amber-700/50 bg-amber-900/30 text-amber-300"
+                  }`}
+                >
+                  {codexAuthLoggedIn ? "Logged in" : "Not logged in"}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  onClick={() => loadCodexAuthStatus()}
+                  disabled={codexAuthChecking}
+                >
+                  {codexAuthChecking ? "Checking..." : "Check status"}
+                </Button>
+                <Button
+                  variant="primary"
+                  size="xs"
+                  onClick={startCodexLogin}
+                  disabled={codexAuthStarting}
+                >
+                  {codexAuthStarting ? "Starting..." : "Login in browser"}
+                </Button>
+                <Button variant="secondary" size="xs" onClick={logoutCodex}>
+                  Logout
+                </Button>
+                {codexSession?.sessionId ? (
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={sendCodexCallback}
+                    title="Send IDE callback payload to gateway session"
+                  >
+                    Send callback
+                  </Button>
+                ) : null}
+              </div>
+              <div className="rounded border border-[#2a2d2e] bg-[#111111] p-2 text-[11px] text-gray-300">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-[10px] uppercase text-gray-500">
+                    Gateway container
+                  </span>
+                  <span
+                    className={`rounded border px-2 py-0.5 text-[10px] ${
+                      codexRuntime?.running
+                        ? "border-emerald-700/40 bg-emerald-900/20 text-emerald-300"
+                        : codexRuntime?.exists
+                          ? "border-amber-700/40 bg-amber-900/20 text-amber-300"
+                          : "border-[#2a2d2e] bg-[#171717] text-gray-400"
+                    }`}
+                  >
+                    {codexRuntime?.running
+                      ? "running"
+                      : codexRuntime?.exists
+                        ? "stopped"
+                        : "not created"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 gap-1 text-[10px] text-gray-400">
+                  <div>
+                    <span className="text-gray-500">Name:</span>{" "}
+                    <span className="font-mono text-gray-300">
+                      {codexRuntime?.containerName || "-"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Engine:</span>{" "}
+                    {codexRuntime?.engine || "-"}{" "}
+                    <span className="text-gray-500">Port:</span>{" "}
+                    {codexRuntime?.port ?? "-"}
+                  </div>
+                  <div className="break-all">
+                    <span className="text-gray-500">Base:</span>{" "}
+                    <span className="font-mono text-gray-300">
+                      {codexRuntime?.baseUrl || "-"}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => loadCodexRuntime()}
+                    disabled={Boolean(codexRuntimeAction)}
+                  >
+                    Refresh runtime
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => runCodexRuntimeAction("create")}
+                    disabled={Boolean(codexRuntimeAction)}
+                  >
+                    {codexRuntimeAction === "create" ? "Creating..." : "Create"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => runCodexRuntimeAction("start")}
+                    disabled={Boolean(codexRuntimeAction) || !codexRuntime?.exists}
+                  >
+                    {codexRuntimeAction === "start" ? "Starting..." : "Start"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => runCodexRuntimeAction("stop")}
+                    disabled={Boolean(codexRuntimeAction) || !codexRuntime?.exists}
+                  >
+                    {codexRuntimeAction === "stop" ? "Stopping..." : "Stop"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => runCodexRuntimeAction("restart")}
+                    disabled={Boolean(codexRuntimeAction) || !codexRuntime?.exists}
+                  >
+                    {codexRuntimeAction === "restart"
+                      ? "Restarting..."
+                      : "Restart"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => runCodexRuntimeAction("remove")}
+                    disabled={Boolean(codexRuntimeAction) || !codexRuntime?.exists}
+                  >
+                    {codexRuntimeAction === "remove" ? "Removing..." : "Remove"}
+                  </Button>
+                </div>
+              </div>
+              {codexSession ? (
+                <div className="rounded border border-[#2a2d2e] bg-[#111111] p-2 text-[11px] text-gray-300">
+                  <div>
+                    <span className="text-gray-500">Session:</span>{" "}
+                    <span className="font-mono">{codexSession.sessionId}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Status:</span>{" "}
+                    {codexSession.status}
+                  </div>
+                  {codexSession.userCode ? (
+                    <div>
+                      <span className="text-gray-500">Code:</span>{" "}
+                      <span className="font-mono tracking-wide">
+                        {codexSession.userCode}
+                      </span>
+                    </div>
+                  ) : null}
+                  {codexSession.authUrl ? (
+                    <div className="break-all">
+                      <span className="text-gray-500">URL:</span>{" "}
+                      <a
+                        href={codexSession.authUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[#3b82f6] hover:underline"
+                      >
+                        {codexSession.authUrl}
+                      </a>
+                    </div>
+                  ) : null}
+                  {codexSession.callbackUrl ? (
+                    <div className="break-all">
+                      <span className="text-gray-500">Callback:</span>{" "}
+                      <a
+                        href={`${codexSession.callbackUrl}?sessionId=${encodeURIComponent(codexSession.sessionId)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[#3b82f6] hover:underline"
+                      >
+                        {codexSession.callbackUrl}
+                      </a>
+                    </div>
+                  ) : null}
+                  {codexSession.logs?.length ? (
+                    <div className="mt-2 rounded border border-[#2a2d2e] bg-[#0f0f0f] p-2">
+                      <div className="mb-1 text-[10px] uppercase text-gray-500">
+                        Login log
+                      </div>
+                      <div className="max-h-32 overflow-auto whitespace-pre-wrap font-mono text-[10px] text-gray-300">
+                        {codexSession.logs.slice(-20).join("\n")}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              {codexAuthStatus ? (
+                <div className="max-h-24 overflow-auto whitespace-pre-wrap rounded border border-[#2a2d2e] bg-[#111111] p-2 text-[10px] text-gray-300">
+                  {codexAuthStatus}
+                </div>
+              ) : null}
+              {codexRuntimeStatus ? (
+                <div className="max-h-24 overflow-auto whitespace-pre-wrap rounded border border-[#2a2d2e] bg-[#111111] p-2 text-[10px] text-gray-300">
+                  {codexRuntimeStatus}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <div className="rounded-lg border border-borderSubtle bg-bgApp px-3 py-2 text-xs text-textMuted">
             {settings.allowClientConfig
               ? "Client-side overrides are enabled for this tenant."
               : "Settings are managed by server env (AI_ALLOW_CLIENT_CONFIG=false)."}
           </div>
-          <Input
-            label="Base URL"
-            value={settings.baseUrl}
-            onChange={(event) =>
-              setSettings((prev) => ({ ...prev, baseUrl: event.target.value }))
-            }
-            placeholder="https://api.openai.com/v1"
-            disabled={!settings.allowClientConfig}
-          />
-          <Input
-            label="API Key"
-            type="password"
-            value={settings.apiKey}
-            onChange={(event) =>
-              setSettings((prev) => ({ ...prev, apiKey: event.target.value }))
-            }
-            placeholder="sk-..."
-            disabled={!settings.allowClientConfig}
-          />
+          {agentType !== "codex" ? (
+            <>
+              <Input
+                label="Base URL"
+                value={settings.baseUrl}
+                onChange={(event) =>
+                  setSettings((prev) => ({ ...prev, baseUrl: event.target.value }))
+                }
+                placeholder="https://api.openai.com/v1"
+                disabled={!settings.allowClientConfig}
+              />
+              <Input
+                label="API Key"
+                type="password"
+                value={settings.apiKey}
+                onChange={(event) =>
+                  setSettings((prev) => ({ ...prev, apiKey: event.target.value }))
+                }
+                placeholder="sk-..."
+                disabled={!settings.allowClientConfig}
+              />
+            </>
+          ) : null}
           <Select
             label="Model"
             value={settings.model}
