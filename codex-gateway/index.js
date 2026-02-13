@@ -12,9 +12,18 @@ const HISTORY_FILE = path.resolve(
 const PROFILES_DIR = path.resolve(
   process.env.CODEX_GATEWAY_PROFILES_DIR || path.join(__dirname, "data", "profiles"),
 );
-const userHistory = new Map();
+const chatSessions = new Map();
 let historySaveQueue = Promise.resolve();
 const loginSessions = new Map();
+
+const CODEX_MAX_PROMPT_CHARS = Number(process.env.CODEX_GATEWAY_MAX_PROMPT_CHARS || 120000);
+const CODEX_MAX_CONTEXT_CHARS = Number(process.env.CODEX_GATEWAY_MAX_CONTEXT_CHARS || 60000);
+const CODEX_MAX_SUMMARY_CHARS = Number(process.env.CODEX_GATEWAY_MAX_SUMMARY_CHARS || 12000);
+const CODEX_MAX_HISTORY_ITEMS = Number(process.env.CODEX_GATEWAY_MAX_HISTORY_ITEMS || 120);
+const CODEX_RECENT_HISTORY_ITEMS = Number(process.env.CODEX_GATEWAY_RECENT_HISTORY_ITEMS || 12);
+const CODEX_HISTORY_ENTRY_CHARS = Number(
+  process.env.CODEX_GATEWAY_HISTORY_ENTRY_CHARS || 1800,
+);
 
 const LOGIN_SESSION_MAX_AGE_MS = Number(
   process.env.CODEX_GATEWAY_LOGIN_SESSION_MAX_AGE_MS || 24 * 60 * 60 * 1000,
@@ -22,6 +31,29 @@ const LOGIN_SESSION_MAX_AGE_MS = Number(
 const LOGIN_RATE_LIMIT_COOLDOWN_MS = Number(
   process.env.CODEX_GATEWAY_LOGIN_RATE_LIMIT_COOLDOWN_MS || 60 * 1000,
 );
+
+const resolveAvailableModels = () => {
+  const explicit = String(
+    process.env.AGENT_CODEX_MODELS || process.env.CODEX_MODELS || "",
+  )
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const fallback = String(process.env.AGENT_CODEX_MODEL || "").trim();
+  const defaults = String(
+    process.env.AGENT_CODEX_MODELS_DEFAULT ||
+      "gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex,codex-mini-latest",
+  )
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const unique = new Set(explicit);
+  if (fallback) unique.add(fallback);
+  if (!unique.size) {
+    defaults.forEach((model) => unique.add(model));
+  }
+  return Array.from(unique);
+};
 
 const nowIso = () => new Date().toISOString();
 
@@ -277,16 +309,140 @@ const parseBody = async (req) =>
     req.on("error", reject);
   });
 
-const normalizeHistory = (value) => {
+const normalizeHistoryEntries = (value) => {
   if (!Array.isArray(value)) return [];
   return value
     .filter((item) => item && typeof item === "object")
     .map((item) => ({
       role: String(item.role || "assistant"),
-      text: String(item.text || ""),
+      text: String(item.text || "").slice(0, CODEX_HISTORY_ENTRY_CHARS),
     }))
-    .filter((item) => item.text.trim().length > 0)
-    .slice(-20);
+    .filter(
+      (item) =>
+        item.text.trim().length > 0 && ["user", "assistant", "system"].includes(item.role),
+    );
+};
+
+const normalizeSummary = (value) => {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return trimmed.slice(-CODEX_MAX_SUMMARY_CHARS);
+};
+
+const createEmptySession = () => ({
+  summary: "",
+  history: [],
+  updatedAt: nowIso(),
+});
+
+const normalizeSession = (value) => {
+  if (Array.isArray(value)) {
+    return {
+      summary: "",
+      history: normalizeHistoryEntries(value).slice(-CODEX_MAX_HISTORY_ITEMS),
+      updatedAt: nowIso(),
+    };
+  }
+  if (!value || typeof value !== "object") return createEmptySession();
+  return {
+    summary: normalizeSummary(value.summary),
+    history: normalizeHistoryEntries(value.history).slice(-CODEX_MAX_HISTORY_ITEMS),
+    updatedAt:
+      typeof value.updatedAt === "string" && value.updatedAt.trim()
+        ? value.updatedAt
+        : nowIso(),
+  };
+};
+
+const summarizeEntries = (entries) =>
+  entries
+    .map((entry) => {
+      const role = entry.role === "assistant" ? "Assistant" : "User";
+      const compact = String(entry.text || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 220);
+      return compact ? `${role}: ${compact}` : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+
+const appendSummary = (existing, chunk) => {
+  const parts = [String(existing || "").trim(), String(chunk || "").trim()].filter(Boolean);
+  if (!parts.length) return "";
+  return parts.join("\n").slice(-CODEX_MAX_SUMMARY_CHARS);
+};
+
+const compactSession = (session) => {
+  if (!session || !Array.isArray(session.history)) return createEmptySession();
+  let history = normalizeHistoryEntries(session.history);
+  let summary = normalizeSummary(session.summary);
+
+  while (history.length > CODEX_MAX_HISTORY_ITEMS) {
+    const moved = history.splice(0, Math.max(1, history.length - CODEX_MAX_HISTORY_ITEMS));
+    summary = appendSummary(summary, summarizeEntries(moved));
+  }
+
+  while (history.length > CODEX_RECENT_HISTORY_ITEMS) {
+    const overflow = history.length - CODEX_RECENT_HISTORY_ITEMS;
+    if (overflow <= 0) break;
+    const moved = history.splice(0, overflow);
+    summary = appendSummary(summary, summarizeEntries(moved));
+  }
+
+  session.summary = summary;
+  session.history = history;
+  session.updatedAt = nowIso();
+  return session;
+};
+
+const getSession = (sessionKey) => {
+  const existing = chatSessions.get(sessionKey);
+  if (existing) return compactSession(existing);
+  const created = createEmptySession();
+  chatSessions.set(sessionKey, created);
+  return created;
+};
+
+const trimContext = (value) => {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length <= CODEX_MAX_CONTEXT_CHARS) return text;
+  return `${text.slice(0, CODEX_MAX_CONTEXT_CHARS)}\n…(context truncated by gateway)`;
+};
+
+const composePrompt = ({ systemPrompt, contextText, summary, history, prompt }) => {
+  const sections = [];
+  const sys = String(systemPrompt || "").trim();
+  const ctx = String(contextText || "").trim();
+  const sum = String(summary || "").trim();
+  const hist = Array.isArray(history)
+    ? history
+        .map((entry) => `[${entry.role}] ${entry.text}`)
+        .join("\n")
+        .trim()
+    : "";
+  const latest = String(prompt || "").trim();
+  if (sys) {
+    sections.push("SYSTEM INSTRUCTIONS:");
+    sections.push(sys);
+  }
+  if (ctx) {
+    sections.push("WORKSPACE CONTEXT:");
+    sections.push(ctx);
+  }
+  if (sum) {
+    sections.push("COMPACTED CHAT SUMMARY:");
+    sections.push(sum);
+  }
+  if (hist) {
+    sections.push("RECENT CHAT HISTORY:");
+    sections.push(hist);
+  }
+  sections.push("LATEST USER MESSAGE:");
+  sections.push(latest || "(empty)");
+  return sections.join("\n\n").trim();
 };
 
 const loadHistoryFromDisk = async () => {
@@ -295,8 +451,10 @@ const loadHistoryFromDisk = async () => {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return;
     Object.entries(parsed).forEach(([key, value]) => {
-      const normalized = normalizeHistory(value);
-      if (normalized.length) userHistory.set(key, normalized);
+      const normalized = normalizeSession(value);
+      if (normalized.history.length || normalized.summary) {
+        chatSessions.set(key, normalized);
+      }
     });
   } catch (error) {
     if (error && error.code !== "ENOENT") {
@@ -306,7 +464,17 @@ const loadHistoryFromDisk = async () => {
 };
 
 const queueSaveHistory = () => {
-  const snapshot = JSON.stringify(Object.fromEntries(userHistory.entries()));
+  const serializable = Object.fromEntries(
+    Array.from(chatSessions.entries()).map(([key, value]) => [
+      key,
+      {
+        summary: normalizeSummary(value.summary),
+        history: normalizeHistoryEntries(value.history),
+        updatedAt: value.updatedAt || nowIso(),
+      },
+    ]),
+  );
+  const snapshot = JSON.stringify(serializable);
   historySaveQueue = historySaveQueue
     .then(async () => {
       await fs.promises.mkdir(path.dirname(HISTORY_FILE), { recursive: true });
@@ -346,6 +514,9 @@ const buildPrompt = (payload) => {
   const sessionKey = `${userId}::${chatId}`;
   const prompt = String(payload.prompt || "").trim();
   const fullPromptInput = String(payload.fullPrompt || "").trim();
+  const systemPrompt = String(payload.systemPrompt || "").trim();
+  const contextTextRaw = String(payload.contextText || "");
+  const contextText = trimContext(contextTextRaw);
   if (!prompt && !fullPromptInput) throw new Error("prompt or fullPrompt is required");
 
   if (fullPromptInput) {
@@ -358,18 +529,46 @@ const buildPrompt = (payload) => {
     };
   }
 
-  const previous = userHistory.get(sessionKey) || [];
-  const historyText = previous
-    .slice(-6)
-    .map((entry) => `[${entry.role}] ${entry.text}`)
-    .join("\n");
+  const session = getSession(sessionKey);
+  const working = compactSession({
+    summary: session.summary,
+    history: [...session.history],
+    updatedAt: session.updatedAt,
+  });
+
+  let summary = working.summary;
+  let history = [...working.history];
+  let fullPrompt = composePrompt({
+    systemPrompt,
+    contextText,
+    summary,
+    history,
+    prompt,
+  });
+
+  while (fullPrompt.length > CODEX_MAX_PROMPT_CHARS && history.length > 2) {
+    const chunk = history.splice(0, Math.max(1, Math.ceil(history.length / 4)));
+    summary = appendSummary(summary, summarizeEntries(chunk));
+    fullPrompt = composePrompt({
+      systemPrompt,
+      contextText,
+      summary,
+      history,
+      prompt,
+    });
+  }
+
+  if (fullPrompt.length > CODEX_MAX_PROMPT_CHARS) {
+    fullPrompt = `${fullPrompt.slice(0, CODEX_MAX_PROMPT_CHARS)}\n…(prompt truncated by gateway)`;
+  }
 
   return {
     userId,
     chatId,
     sessionKey,
     prompt,
-    fullPrompt: historyText ? `${historyText}\n[user] ${prompt}` : prompt,
+    fullPrompt,
+    session,
   };
 };
 
@@ -507,12 +706,136 @@ const runCodexCommand = async ({
     child.stdin.end();
   });
 
+const runCodexAppServerModelList = async (userId) =>
+  new Promise((resolve, reject) => {
+    const child = spawn(CODEX_BIN, ["app-server"], {
+      cwd: ROOT_DIR,
+      env: buildCodexEnv(userId),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdoutBuffer = "";
+    let stderrText = "";
+    let settled = false;
+    const timeoutHandle = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // no-op
+      }
+      reject(new Error("codex app-server model/list timed out"));
+    }, 15000);
+
+    const finish = (fn) => (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutHandle);
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // no-op
+      }
+      fn(value);
+    };
+
+    const resolveOnce = finish(resolve);
+    const rejectOnce = finish(reject);
+
+    child.stderr.on("data", (chunk) => {
+      stderrText += chunk.toString("utf8");
+    });
+
+    const processLine = (line) => {
+      const text = String(line || "").trim();
+      if (!text) return;
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        return;
+      }
+      if (parsed && parsed.id === "2") {
+        if (parsed.error) {
+          const message =
+            parsed.error?.message ||
+            stderrText.trim() ||
+            "model/list request failed";
+          rejectOnce(new Error(String(message)));
+          return;
+        }
+        const data = Array.isArray(parsed?.result?.data)
+          ? parsed.result.data
+          : [];
+        resolveOnce(data);
+      }
+    };
+
+    child.stdout.on("data", (chunk) => {
+      stdoutBuffer += chunk.toString("utf8");
+      let idx = stdoutBuffer.indexOf("\n");
+      while (idx !== -1) {
+        const line = stdoutBuffer.slice(0, idx);
+        stdoutBuffer = stdoutBuffer.slice(idx + 1);
+        processLine(line);
+        idx = stdoutBuffer.indexOf("\n");
+      }
+    });
+
+    child.on("error", (error) => rejectOnce(error));
+    child.on("close", (code) => {
+      const pending = stdoutBuffer.trim();
+      if (pending) processLine(pending);
+      if (settled) return;
+      const message = stderrText.trim() || `codex app-server exited with code ${code}`;
+      rejectOnce(new Error(message));
+    });
+
+    const initReq = {
+      id: "1",
+      method: "initialize",
+      params: {
+        clientInfo: {
+          name: "idp-codex-gateway",
+          version: "1.0.0",
+        },
+      },
+    };
+    const initialized = { method: "initialized" };
+    const modelListReq = { id: "2", method: "model/list", params: {} };
+    child.stdin.write(`${JSON.stringify(initReq)}\n`);
+    child.stdin.write(`${JSON.stringify(initialized)}\n`);
+    child.stdin.write(`${JSON.stringify(modelListReq)}\n`);
+    child.stdin.end();
+  });
+
 const server = http.createServer(async (req, res) => {
   const requestUrl = new URL(req.url || "/", "http://127.0.0.1");
   const pathname = requestUrl.pathname;
 
   if (req.method === "GET" && pathname === "/health") {
     return json(res, 200, { ok: true, service: "codex-gateway", port: PORT, root: ROOT_DIR });
+  }
+
+  if (req.method === "GET" && pathname === "/v1/models") {
+    const userId = requestUrl.searchParams.get("userId") || "anonymous";
+    let rows = [];
+    try {
+      rows = await runCodexAppServerModelList(userId);
+    } catch {
+      rows = [];
+    }
+    const models =
+      Array.isArray(rows) && rows.length
+        ? rows
+            .map((item) => String(item?.id || item?.model || "").trim())
+            .filter(Boolean)
+        : resolveAvailableModels();
+    return json(res, 200, {
+      ok: true,
+      data: models.map((id) => ({ id })),
+    });
   }
 
   if (req.method === "GET" && pathname === "/v1/login/status") {
@@ -723,10 +1046,19 @@ const server = http.createServer(async (req, res) => {
         onStdout: (line) => res.write(`event: stdout\ndata: ${JSON.stringify({ line })}\n\n`),
         onStderr: (line) => res.write(`event: stderr\ndata: ${JSON.stringify({ line })}\n\n`),
         onClose: ({ code, lastMessage, stderr }) => {
-          const history = userHistory.get(promptData.sessionKey) || [];
-          history.push({ role: "user", text: promptData.prompt });
-          if (lastMessage) history.push({ role: "assistant", text: lastMessage });
-          userHistory.set(promptData.sessionKey, normalizeHistory(history));
+          const session = getSession(promptData.sessionKey);
+          session.history.push({
+            role: "user",
+            text: String(promptData.prompt || "").slice(0, CODEX_HISTORY_ENTRY_CHARS),
+          });
+          if (lastMessage) {
+            session.history.push({
+              role: "assistant",
+              text: String(lastMessage).slice(0, CODEX_HISTORY_ENTRY_CHARS),
+            });
+          }
+          compactSession(session);
+          chatSessions.set(promptData.sessionKey, session);
           void queueSaveHistory();
 
           res.write(
@@ -754,10 +1086,19 @@ const server = http.createServer(async (req, res) => {
       cwd,
       userId: promptData.userId,
       onClose: ({ code, stdout, stderr, lastMessage }) => {
-        const history = userHistory.get(promptData.sessionKey) || [];
-        history.push({ role: "user", text: promptData.prompt });
-        if (lastMessage) history.push({ role: "assistant", text: lastMessage });
-        userHistory.set(promptData.sessionKey, normalizeHistory(history));
+        const session = getSession(promptData.sessionKey);
+        session.history.push({
+          role: "user",
+          text: String(promptData.prompt || "").slice(0, CODEX_HISTORY_ENTRY_CHARS),
+        });
+        if (lastMessage) {
+          session.history.push({
+            role: "assistant",
+            text: String(lastMessage).slice(0, CODEX_HISTORY_ENTRY_CHARS),
+          });
+        }
+        compactSession(session);
+        chatSessions.set(promptData.sessionKey, session);
         void queueSaveHistory();
 
         json(res, code === 0 ? 200 : 500, {
@@ -781,7 +1122,7 @@ const start = async () => {
     sweepExpiredLoginSessions();
   }, 5 * 60 * 1000).unref?.();
   console.log(
-    `[codex-gateway] loaded ${userHistory.size} persisted chat context(s) from ${HISTORY_FILE}`,
+    `[codex-gateway] loaded ${chatSessions.size} persisted chat context(s) from ${HISTORY_FILE}`,
   );
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`[codex-gateway] listening on http://127.0.0.1:${PORT}`);
