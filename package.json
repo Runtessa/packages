@@ -14,6 +14,10 @@
     "start": "npm run build && npm run build:front && node dist/server.js",
     "monitoring:start": "npm --prefix monitoring run start",
     "monitoring:dev": "npm --prefix monitoring run dev",
+    "container-agent:start": "npm --prefix container-agent run start",
+    "container-agent:dev": "npm --prefix container-agent run dev",
+    "container-manager:start": "npm --prefix container-agent run start",
+    "container-manager:dev": "npm --prefix container-agent run dev",
     "seed": "ts-node src/seed.ts",
     "seed-packages": "ts-node src/seed-packages.ts",
     "dump": "node dump-project.js"

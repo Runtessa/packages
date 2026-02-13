@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import * as http from 'node:http';
+import * as https from 'node:https';
 
 const execFileAsync = promisify(execFile);
 
@@ -85,6 +87,79 @@ const resolveContainerPrefix = () =>
 const resolveGatewayHost = () =>
   String(process.env.AGENT_CODEX_GATEWAY_HOST || '127.0.0.1').trim() || '127.0.0.1';
 
+const resolveContainerAgentUrl = () =>
+  String(process.env.AGENT_CONTAINER_MANAGER_URL || '')
+    .trim()
+    .replace(/\/+$/, '');
+
+const resolveContainerAgentToken = () =>
+  String(process.env.AGENT_CONTAINER_MANAGER_TOKEN || '').trim();
+
+const isTruthy = (value: string) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+};
+
+const resolveContainerAgentInsecureTls = () =>
+  isTruthy(String(process.env.AGENT_CONTAINER_MANAGER_INSECURE_TLS || ''));
+
+const requestWithNodeClient = async (
+  urlString: string,
+  init: {
+    method: string;
+    headers: Record<string, string>;
+    body?: string;
+    insecureTls?: boolean;
+  }
+) =>
+  new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+    const target = new URL(urlString);
+    const isHttps = target.protocol === 'https:';
+    const client = isHttps ? https : http;
+    const req = client.request(
+      {
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port ? Number(target.port) : undefined,
+        path: `${target.pathname}${target.search}`,
+        method: init.method,
+        headers: init.headers,
+        rejectUnauthorized: isHttps ? !Boolean(init.insecureTls) : undefined,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+        });
+        res.on('end', () => {
+          resolve({
+            statusCode: Number(res.statusCode || 0),
+            body: Buffer.concat(chunks).toString('utf8'),
+          });
+        });
+      }
+    );
+    req.setTimeout(20_000, () => {
+      req.destroy(new Error('request timeout'));
+    });
+    req.on('error', reject);
+    if (typeof init.body === 'string' && init.body.length > 0) {
+      req.write(init.body);
+    }
+    req.end();
+  });
+
+const hasRemoteContainerAgent = () => Boolean(resolveContainerAgentUrl());
+
+const assertRemoteContainerAgentForContainerMode = (mode: string) => {
+  if (mode !== 'container') return;
+  if (!hasRemoteContainerAgent()) {
+    throw new Error(
+      'Container mode requires remote container-manager. Set AGENT_CONTAINER_MANAGER_URL and AGENT_CONTAINER_MANAGER_TOKEN. Local Docker/Podman access from IDE is disabled.'
+    );
+  }
+};
+
 const resolveProfilesFile = () =>
   path.join(resolveRepoRoot(), 'ideNew', '.codex-gateway', 'runtime-profiles.json');
 
@@ -112,6 +187,147 @@ const maybeNumber = (value: unknown) => {
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
   return n;
+};
+
+const mapEngine = (value: unknown): 'docker' | 'podman' => {
+  const raw = String(value || '').trim().toLowerCase();
+  return raw === 'podman' ? 'podman' : 'docker';
+};
+
+const requestContainerAgent = async <T = any>(
+  pathName: string,
+  init?: RequestInit
+): Promise<T> => {
+  const base = resolveContainerAgentUrl();
+  if (!base) {
+    throw new Error('AGENT_CONTAINER_MANAGER_URL is not configured');
+  }
+  const token = resolveContainerAgentToken();
+  const headers = new Headers(init?.headers || {});
+  headers.set('content-type', 'application/json');
+  if (token) headers.set('authorization', `Bearer ${token}`);
+  const url = `${base}${pathName}`;
+  let statusCode = 0;
+  let text = '';
+  try {
+    const result = await requestWithNodeClient(url, {
+      method: String(init?.method || 'GET').toUpperCase(),
+      headers: Object.fromEntries(headers.entries()),
+      body: typeof init?.body === 'string' ? init.body : undefined,
+      insecureTls: resolveContainerAgentInsecureTls(),
+    });
+    statusCode = result.statusCode;
+    text = result.body;
+  } catch (error: any) {
+    const causeCode = String(error?.cause?.code || '').trim();
+    const causeMessage = String(error?.cause?.message || '').trim();
+    const errorCode = String(error?.code || '').trim();
+    const detail =
+      causeCode || errorCode || causeMessage || String(error?.message || 'fetch failed');
+    throw new Error(`Failed to reach container-manager at ${url}: ${detail}`);
+  }
+  let parsed: any = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = null;
+  }
+  if (statusCode < 200 || statusCode >= 300) {
+    const detail =
+      parsed?.error || parsed?.message || text || `container-manager request failed (${statusCode})`;
+    throw new Error(String(detail));
+  }
+  return (parsed || {}) as T;
+};
+
+type RemoteCodexStatePayload = {
+  service?: string;
+  containerName?: string;
+  engine?: string;
+  image?: string;
+  exists?: boolean;
+  running?: boolean;
+  port?: number | null;
+  host?: string;
+  baseUrl?: string;
+};
+
+const toRuntimeStateFromRemote = (
+  mode: string,
+  userKey: string,
+  userName: string,
+  state: RemoteCodexStatePayload
+): CodexGatewayRuntimeState => {
+  const host = String(state.host || resolveGatewayHost()).trim() || resolveGatewayHost();
+  const port = maybeNumber(state.port) ?? choosePort(userKey);
+  const baseUrl = String(state.baseUrl || `http://${host}:${port}`).replace(/\/+$/, '');
+  return {
+    mode,
+    userKey,
+    userName,
+    containerName: String(state.containerName || buildContainerName(userKey, userName)),
+    engine: mapEngine(state.engine),
+    image: String(state.image || resolveGatewayImage()),
+    host,
+    port,
+    baseUrl,
+    exists: Boolean(state.exists),
+    running: Boolean(state.running),
+  };
+};
+
+const ensureRemoteCodexGatewayForUser = async (
+  mode: string,
+  userKey: string,
+  userName: string
+): Promise<CodexGatewayRuntimeState> => {
+  const response = await requestContainerAgent<{ ok?: boolean; state?: RemoteCodexStatePayload }>(
+    '/v1/services/codex-gateway/ensure',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        userId: userKey,
+        userName,
+      }),
+    }
+  );
+  return toRuntimeStateFromRemote(mode, userKey, userName, response.state || {});
+};
+
+const getRemoteCodexGatewayStateForUser = async (
+  mode: string,
+  userKey: string,
+  userName: string
+): Promise<CodexGatewayRuntimeState> => {
+  const query = new URLSearchParams({
+    userId: userKey,
+    userName,
+  });
+  const response = await requestContainerAgent<{ ok?: boolean; state?: RemoteCodexStatePayload }>(
+    `/v1/services/codex-gateway/state?${query.toString()}`,
+    { method: 'GET' }
+  );
+  return toRuntimeStateFromRemote(mode, userKey, userName, response.state || {});
+};
+
+const controlRemoteCodexGatewayForUser = async (
+  mode: string,
+  userKey: string,
+  userName: string,
+  action: CodexGatewayContainerAction
+): Promise<CodexGatewayRuntimeState> => {
+  const response = await requestContainerAgent<{ ok?: boolean; state?: RemoteCodexStatePayload }>(
+    '/v1/services/codex-gateway/action',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        action,
+        userId: userKey,
+        userName,
+      }),
+    }
+  );
+  return toRuntimeStateFromRemote(mode, userKey, userName, response.state || {});
 };
 
 const choosePort = (userKey: string) => {
@@ -457,68 +673,23 @@ export const resolveCodexGatewayBaseForUser = async (
     };
   }
 
+  assertRemoteContainerAgentForContainerMode(mode);
   const userKey = sanitizeUserKey(userId);
-  const profiles = await loadProfiles();
-  const storedProfile = profiles[userKey];
-  const engine = await detectEngine();
-  const containerName = buildContainerName(userKey, userName);
-  const { image, port, host: inspectHost } = await ensureContainerRunning(
-    engine,
-    containerName,
-    userKey,
-    storedProfile?.port ?? null
-  );
-  const candidates = Array.from(
-    new Set(
-      [
-        storedProfile?.host,
-        inspectHost,
-        resolveGatewayHost(),
-        '127.0.0.1',
-        'localhost',
-      ]
-        .map((item) => String(item || '').trim())
-        .filter(Boolean)
-    )
-  );
-  let host = candidates[0] || '127.0.0.1';
-  let lastError = '';
-  for (const candidate of candidates) {
-    const candidateUrl = `http://${candidate}:${port}`;
-    try {
-      await waitForHealth(candidateUrl);
-      host = candidate;
-      lastError = '';
-      break;
-    } catch (error: any) {
-      lastError = String(error?.message || error || '');
-    }
-  }
-  if (lastError) {
+  const safeUserName = String(userName || '');
+  const state = await ensureRemoteCodexGatewayForUser(mode, userKey, safeUserName);
+  if (!state.running) {
     throw new Error(
-      `codex gateway container ${containerName} is running but unreachable on port ${port}. Tried hosts: ${candidates.join(', ')}. Last error: ${lastError}`
+      `remote container-manager returned non-running state for ${state.containerName}`
     );
   }
-  const baseUrl = `http://${host}:${port}`;
-
-  profiles[userKey] = {
-    userKey,
-    userName: String(userName || storedProfile?.userName || ''),
-    containerName,
-    port,
-    host,
-    engine,
-    image,
-    updatedAt: new Date().toISOString(),
-  };
-  await queueSaveProfiles(profiles);
+  await waitForHealth(state.baseUrl);
 
   return {
-    baseUrl,
-    engine,
-    containerName,
-    image,
-    port,
+    baseUrl: state.baseUrl,
+    engine: state.engine || 'docker',
+    containerName: state.containerName,
+    image: state.image,
+    port: state.port || 4040,
   };
 };
 
@@ -561,35 +732,8 @@ export const getCodexGatewayRuntimeStateForUser = async (
     };
   }
 
-  const profiles = await loadProfiles();
-  const storedProfile = profiles[userKey];
-  const engine = await detectEngine();
-  const containerName = buildContainerName(userKey, userName);
-  const inspect = await inspectContainer(engine, containerName);
-  const binding = extractHostBinding(inspect);
-  const port =
-    binding?.port ??
-    (Number.isFinite(Number(storedProfile?.port)) ? Number(storedProfile?.port) : null) ??
-    choosePort(userKey);
-  const host =
-    String(storedProfile?.host || '').trim() ||
-    binding?.host ||
-    resolveGatewayHost() ||
-    '127.0.0.1';
-
-  return {
-    mode,
-    userKey,
-    userName: safeUserName,
-    containerName,
-    engine,
-    image,
-    host,
-    port,
-    baseUrl: `http://${host}:${port}`,
-    exists: Boolean(inspect),
-    running: Boolean(inspect?.State?.Running),
-  };
+  assertRemoteContainerAgentForContainerMode(mode);
+  return getRemoteCodexGatewayStateForUser(mode, userKey, safeUserName);
 };
 
 export const controlCodexGatewayContainerForUser = async (
@@ -597,12 +741,19 @@ export const controlCodexGatewayContainerForUser = async (
   userName: string | null | undefined,
   action: CodexGatewayContainerAction,
 ) => {
+  const mode = resolveGatewayMode();
+  const userKey = sanitizeUserKey(userId);
+  const safeUserName = String(userName || '');
+  if (mode === 'container') {
+    assertRemoteContainerAgentForContainerMode(mode);
+    return controlRemoteCodexGatewayForUser(mode, userKey, safeUserName, action);
+  }
+
   const state = await getCodexGatewayRuntimeStateForUser(userId, userName);
   if (state.mode !== 'container' || !state.engine) {
     throw new Error('Container controls are available only in AGENT_CODEX_GATEWAY_MODE=container');
   }
 
-  const userKey = sanitizeUserKey(userId);
   const containerName = state.containerName;
   const engine = state.engine;
   const profiles = await loadProfiles();

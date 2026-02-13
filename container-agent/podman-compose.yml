@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:
+  idp-container-manager:
+    container_name: idp-container-manager
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${CONTAINER_MANAGER_BIND_PORT:-4070}:${CONTAINER_MANAGER_PORT:-4070}"
+    userns_mode: keep-id
+    security_opt:
+      - label=disable
+    volumes:
+      - "${CONTAINER_MANAGER_SOCKET_HOST_PATH:-/run/user/1000/podman/podman.sock}:${CONTAINER_MANAGER_SOCKET:-/var/run/docker.sock}:Z,U"
+      - "${CONTAINER_MANAGER_WORKSPACE_HOST_PATH:-..}:${CONTAINER_MANAGER_WORKSPACE_MOUNT_PATH:-/srv/idp}:Z,U"
