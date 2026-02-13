@@ -1,5 +1,30 @@
 import type React from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ActiveFile } from '@/components/editor/types';
+
+const TAB_SCROLL_STEP = 220;
+const SCROLL_EPSILON = 2;
+
+type TabScrollState = {
+  canLeft: boolean;
+  canRight: boolean;
+  hasOverflow: boolean;
+};
+
+const DEFAULT_SCROLL_STATE: TabScrollState = {
+  canLeft: false,
+  canRight: false,
+  hasOverflow: false,
+};
+
+const getTabScrollState = (element: HTMLDivElement): TabScrollState => {
+  const maxScrollLeft = Math.max(0, element.scrollWidth - element.clientWidth);
+  return {
+    canLeft: element.scrollLeft > SCROLL_EPSILON,
+    canRight: maxScrollLeft - element.scrollLeft > SCROLL_EPSILON,
+    hasOverflow: maxScrollLeft > SCROLL_EPSILON,
+  };
+};
 
 type EditorTabBarProps = {
   editorView: 'code' | 'preview';
@@ -53,6 +78,48 @@ export function EditorTabBar({
   onExitCompare,
 }: EditorTabBarProps) {
   const showSplitEditor = rightTabs.length > 0;
+  const leftTabsRef = useRef<HTMLDivElement | null>(null);
+  const rightTabsRef = useRef<HTMLDivElement | null>(null);
+  const [leftScrollState, setLeftScrollState] = useState<TabScrollState>(DEFAULT_SCROLL_STATE);
+  const [rightScrollState, setRightScrollState] = useState<TabScrollState>(DEFAULT_SCROLL_STATE);
+
+  const updateLeftScrollState = useCallback(() => {
+    const element = leftTabsRef.current;
+    setLeftScrollState(element ? getTabScrollState(element) : DEFAULT_SCROLL_STATE);
+  }, []);
+
+  const updateRightScrollState = useCallback(() => {
+    const element = rightTabsRef.current;
+    setRightScrollState(element ? getTabScrollState(element) : DEFAULT_SCROLL_STATE);
+  }, []);
+
+  const scrollTabs = useCallback(
+    (pane: 'left' | 'right', direction: 'left' | 'right') => {
+      const target = pane === 'left' ? leftTabsRef.current : rightTabsRef.current;
+      if (!target) return;
+      const delta = direction === 'left' ? -TAB_SCROLL_STEP : TAB_SCROLL_STEP;
+      target.scrollBy({ left: delta, behavior: 'smooth' });
+      requestAnimationFrame(() => {
+        if (pane === 'left') updateLeftScrollState();
+        else updateRightScrollState();
+      });
+    },
+    [updateLeftScrollState, updateRightScrollState]
+  );
+
+  useEffect(() => {
+    updateLeftScrollState();
+    updateRightScrollState();
+  }, [leftTabs, rightTabs, splitRatio, updateLeftScrollState, updateRightScrollState]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      updateLeftScrollState();
+      updateRightScrollState();
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [updateLeftScrollState, updateRightScrollState]);
 
   const renderTab = (file: ActiveFile, isActive: boolean, pane: 'left' | 'right') => (
     <div
@@ -118,7 +185,7 @@ export function EditorTabBar({
     >
       <div className="flex min-w-0 flex-1 items-stretch">
         <div
-          className="flex min-w-0 items-end overflow-x-auto overflow-y-hidden"
+          className="flex min-w-0 items-end overflow-hidden"
           style={
             showSplitEditor
               ? {
@@ -131,9 +198,37 @@ export function EditorTabBar({
           onDragOver={onTabDragOver}
           onDrop={(event) => onTabBarDrop(event, 'left')}
         >
-          <div className="flex min-w-max items-end gap-1 px-2">
-            {leftTabs.map((file) => renderTab(file, activeFileId === file.id, 'left'))}
+          <div
+            ref={leftTabsRef}
+            className="hide-scrollbar flex min-w-0 flex-1 items-end overflow-x-auto overflow-y-hidden"
+            onScroll={updateLeftScrollState}
+          >
+            <div className="flex min-w-max items-end gap-1 px-2">
+              {leftTabs.map((file) => renderTab(file, activeFileId === file.id, 'left'))}
+            </div>
           </div>
+          {leftScrollState.hasOverflow && (
+            <div className="flex h-full items-center gap-0.5 border-l border-[#2a2d2e] bg-[#252526] px-1">
+              <button
+                type="button"
+                onClick={() => scrollTabs('left', 'left')}
+                disabled={!leftScrollState.canLeft}
+                aria-label="Scroll tabs left"
+                className="flex h-5 w-5 items-center justify-center rounded text-[11px] text-gray-300 transition hover:bg-[#2a2d2e] hover:text-white disabled:cursor-default disabled:opacity-35"
+              >
+                ◀
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollTabs('left', 'right')}
+                disabled={!leftScrollState.canRight}
+                aria-label="Scroll tabs right"
+                className="flex h-5 w-5 items-center justify-center rounded text-[11px] text-gray-300 transition hover:bg-[#2a2d2e] hover:text-white disabled:cursor-default disabled:opacity-35"
+              >
+                ▶
+              </button>
+            </div>
+          )}
         </div>
         {rightTabs.length > 0 && (
           <>
@@ -145,7 +240,7 @@ export function EditorTabBar({
               aria-label="Resize editor split"
             />
             <div
-              className="flex min-w-0 items-end overflow-x-auto overflow-y-hidden"
+              className="flex min-w-0 items-end overflow-hidden"
               style={{
                 flexBasis: `${(1 - splitRatio) * 100}%`,
                 flexGrow: 0,
@@ -154,9 +249,37 @@ export function EditorTabBar({
               onDragOver={onTabDragOver}
               onDrop={(event) => onTabBarDrop(event, 'right')}
             >
-              <div className="flex min-w-max items-end gap-1 px-2">
-                {rightTabs.map((file) => renderTab(file, sideFileId === file.id, 'right'))}
+              <div
+                ref={rightTabsRef}
+                className="hide-scrollbar flex min-w-0 flex-1 items-end overflow-x-auto overflow-y-hidden"
+                onScroll={updateRightScrollState}
+              >
+                <div className="flex min-w-max items-end gap-1 px-2">
+                  {rightTabs.map((file) => renderTab(file, sideFileId === file.id, 'right'))}
+                </div>
               </div>
+              {rightScrollState.hasOverflow && (
+                <div className="flex h-full items-center gap-0.5 border-l border-[#2a2d2e] bg-[#252526] px-1">
+                  <button
+                    type="button"
+                    onClick={() => scrollTabs('right', 'left')}
+                    disabled={!rightScrollState.canLeft}
+                    aria-label="Scroll side tabs left"
+                    className="flex h-5 w-5 items-center justify-center rounded text-[11px] text-gray-300 transition hover:bg-[#2a2d2e] hover:text-white disabled:cursor-default disabled:opacity-35"
+                  >
+                    ◀
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => scrollTabs('right', 'right')}
+                    disabled={!rightScrollState.canRight}
+                    aria-label="Scroll side tabs right"
+                    className="flex h-5 w-5 items-center justify-center rounded text-[11px] text-gray-300 transition hover:bg-[#2a2d2e] hover:text-white disabled:cursor-default disabled:opacity-35"
+                  >
+                    ▶
+                  </button>
+                </div>
+              )}
             </div>
           </>
         )}
