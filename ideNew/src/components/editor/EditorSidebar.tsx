@@ -5,6 +5,7 @@ import {
   FiClock,
   FiFlag,
   FiFolder,
+  FiMessageSquare,
   FiSearch,
 } from 'react-icons/fi';
 
@@ -14,6 +15,8 @@ type EditorSidebarProps = {
   leftPanel: LeftPanelKey;
   onSelectPanel: (panel: LeftPanelKey) => void;
   onTogglePanel: (panel: LeftPanelKey) => void;
+  assistantOpen: boolean;
+  onToggleAssistant: () => void;
   sidebarLabel: string;
   sidebarLabelTone: string;
   exitHref: string;
@@ -23,6 +26,8 @@ export function EditorSidebar({
   leftPanel,
   onSelectPanel,
   onTogglePanel,
+  assistantOpen,
+  onToggleAssistant,
   sidebarLabel,
   sidebarLabelTone,
   exitHref,
@@ -48,6 +53,17 @@ export function EditorSidebar({
       {makeButton('search', 'Search', <FiSearch />)}
       {makeButton('history', 'History', <FiClock />)}
       {makeButton('staging', 'Staging', <FiFlag />)}
+      <button
+        title={assistantOpen ? 'Hide Assistant' : 'Show Assistant'}
+        className={`mb-2 flex h-8 w-8 items-center justify-center rounded-lg text-base transition ${
+          assistantOpen
+            ? 'bg-[#094771] text-white'
+            : 'text-gray-400 hover:bg-[#2a2d2e] hover:text-gray-200'
+        }`}
+        onClick={onToggleAssistant}
+      >
+        <FiMessageSquare />
+      </button>
       <div className="mt-auto flex w-full flex-col items-center px-1 pb-2">
         <div
           className={`flex w-full flex-col items-center gap-2 px-1 py-2 text-[10px] ${sidebarLabelTone}`}

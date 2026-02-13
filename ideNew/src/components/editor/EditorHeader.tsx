@@ -9,6 +9,7 @@ type EditorHeaderProps = {
   onPreviewPortChange: (value: string) => void;
   onSwitchToCode: () => void;
   onSwitchToPreview: () => void;
+  onRefreshPreview: () => void;
 };
 
 export function EditorHeader({
@@ -19,6 +20,7 @@ export function EditorHeader({
   onPreviewPortChange,
   onSwitchToCode,
   onSwitchToPreview,
+  onRefreshPreview,
 }: EditorHeaderProps) {
   return (
     <header className="relative flex h-[34px] items-center border-b border-[#2a2d2e] bg-[#252526] px-2">
@@ -76,6 +78,14 @@ export function EditorHeader({
                 placeholder={defaultPreviewPort}
                 className="h-5 w-16 rounded border border-[#2a2d2e] bg-[#1b1b1b] px-2 text-[10px] text-gray-200 placeholder:text-gray-500 focus:border-[#0b5b96] focus:outline-none"
               />
+              <button
+                type="button"
+                onClick={onRefreshPreview}
+                className="h-5 rounded border border-[#2a2d2e] bg-[#1b1b1b] px-2 text-[10px] text-gray-200 hover:bg-[#2a2d2e]"
+                title="Refresh preview"
+              >
+                Refresh
+              </button>
             </div>
           )}
         </div>

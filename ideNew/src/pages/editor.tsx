@@ -14,12 +14,16 @@ import { EditorExplorerPanel } from '@/components/editor/EditorExplorerPanel';
 import { EditorHistoryPanel } from '@/components/editor/EditorHistoryPanel';
 import { EditorSearchPanel } from '@/components/editor/EditorSearchPanel';
 import { EditorStagingPanel } from '@/components/editor/EditorStagingPanel';
+import { EditorAiPanel } from '@/components/editor/EditorAiPanel';
 import { EditorBottomBar } from '@/components/editor/EditorBottomBar';
 import { EditorTabBar } from '@/components/editor/EditorTabBar';
 import { EditorTabContextMenu } from '@/components/editor/EditorTabContextMenu';
 import { EditorWorkspace } from '@/components/editor/EditorWorkspace';
 import { EditorModals } from '@/components/editor/EditorModals';
 import {
+  ASSISTANT_PANEL_OPEN_STORAGE_KEY,
+  ASSISTANT_PANEL_WIDTH_STORAGE_KEY,
+  DEFAULT_ASSISTANT_PANEL_WIDTH,
   DEFAULT_CSS_CODE,
   DEFAULT_LEFT_PANEL_WIDTH,
   DEFAULT_MODEL_CODE,
@@ -34,7 +38,9 @@ import {
   HISTORY_PAGE_SIZE,
   LANGUAGE_OPTIONS,
   LEFT_PANEL_STORAGE_KEY,
+  MAX_ASSISTANT_PANEL_WIDTH,
   MAX_LEFT_PANEL_WIDTH,
+  MIN_ASSISTANT_PANEL_WIDTH,
   MIN_LEFT_PANEL_WIDTH,
   MIN_SPLIT_PX,
   MODULE_EXTENSION,
@@ -107,6 +113,9 @@ import type {
 } from '@/components/editor/types';
 
 const CORE_API_BASE = process.env.NEXT_PUBLIC_CORE_API_URL?.trim() || '';
+const PREVIEW_EXCEPTION_BATCH_DELAY_MS = 800;
+const PREVIEW_EXCEPTION_DEDUPE_MS = 3000;
+const PREVIEW_EXCEPTION_MAX_QUEUE = 40;
 
 declare global {
   interface Window {
@@ -121,6 +130,35 @@ type HistoryResponse<T> = {
   total: number;
   page: number;
   pageSize: number;
+};
+
+type AssistantDiffPreview = {
+  id: string;
+  path: string;
+  before: string;
+  after: string;
+  language: string;
+};
+
+type PreviewExceptionPayload = {
+  id?: string;
+  kind?: string;
+  level?: 'error' | 'warn' | 'info' | string;
+  message?: string;
+  stack?: string;
+  sourceUrl?: string;
+  line?: number | null;
+  column?: number | null;
+  requestUrl?: string;
+  method?: string;
+  status?: number | null;
+  responseSnippet?: string;
+  previewName?: string;
+  previewVersion?: string;
+  previewSession?: string;
+  tenantHost?: string;
+  href?: string;
+  createdAt?: string;
 };
 
 export default function EditorPage() {
@@ -267,6 +305,18 @@ export default function EditorPage() {
   const [leftPanel, setLeftPanel] = useState<
     'explorer' | 'history' | 'search' | 'staging'
   >('explorer');
+  const [assistantPanelOpen, setAssistantPanelOpen] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const stored = localStorage.getItem(ASSISTANT_PANEL_OPEN_STORAGE_KEY);
+    if (stored === null) return false;
+    return stored === '1';
+  });
+  const [assistantPanelWidth, setAssistantPanelWidth] = useState(() => {
+    if (typeof window === 'undefined') return DEFAULT_ASSISTANT_PANEL_WIDTH;
+    const stored = localStorage.getItem(ASSISTANT_PANEL_WIDTH_STORAGE_KEY);
+    const parsed = stored ? Number.parseInt(stored, 10) : NaN;
+    return Number.isFinite(parsed) ? parsed : DEFAULT_ASSISTANT_PANEL_WIDTH;
+  });
   const [stagingBusy, setStagingBusy] = useState(false);
   const [stagingBusyId, setStagingBusyId] = useState<string | null>(null);
   const [modelMigrationBusy, setModelMigrationBusy] = useState(false);
@@ -288,6 +338,16 @@ export default function EditorPage() {
   >(null);
   const [rightPaneIds, setRightPaneIds] = useState<string[]>([]);
   const editorAreaRef = useRef<HTMLDivElement | null>(null);
+  const assistantPanelWidthRef = useRef(assistantPanelWidth);
+  const assistantResizeRef = useRef<{
+    active: boolean;
+    startX: number;
+    startWidth: number;
+  }>({
+    active: false,
+    startX: 0,
+    startWidth: DEFAULT_ASSISTANT_PANEL_WIDTH,
+  });
   const mainEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const sideEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const handleSaveRef = useRef<() => void>(() => {});
@@ -302,10 +362,21 @@ export default function EditorPage() {
   const [searchReplace, setSearchReplace] = useState('');
   const [searchIncludePattern, setSearchIncludePattern] = useState('');
   const [searchExcludePattern, setSearchExcludePattern] = useState('');
+  const [assistantDiff, setAssistantDiff] = useState<AssistantDiffPreview | null>(
+    null
+  );
 
   const [editorView, setEditorView] = useState<'code' | 'preview'>('code');
   const [previewNonce, setPreviewNonce] = useState(0);
   const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
+  const previewSession = useMemo(
+    () => `${previewTarget?.name || 'preview'}-${previewNonce}`,
+    [previewNonce, previewTarget?.name]
+  );
+  const previewFrameRef = useRef<HTMLIFrameElement | null>(null);
+  const previewExceptionQueueRef = useRef<PreviewExceptionPayload[]>([]);
+  const previewExceptionFlushTimerRef = useRef<number | null>(null);
+  const previewExceptionLastSeenRef = useRef<Record<string, number>>({});
   const [previewPort, setPreviewPort] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_PREVIEW_PORT;
     const stored = localStorage.getItem(PREVIEW_PORT_STORAGE_KEY);
@@ -423,6 +494,152 @@ export default function EditorPage() {
     [clear, resolveApiUrl, token]
   );
 
+  const apiStreamFetch = useCallback(
+    async (
+      url: string,
+      options: { method?: string; body?: unknown; signal?: AbortSignal } = {}
+    ) => {
+      if (!token) {
+        const err = new Error('Session token is missing');
+        (err as any).statusCode = 401;
+        throw err;
+      }
+      const tenantHost = getSelectedTenantHost();
+      if (!tenantHost) {
+        const err = new Error('Select a tenant in /admin/tenants to use the editor.');
+        (err as any).statusCode = 400;
+        throw err;
+      }
+      const res = await fetch(resolveApiUrl(url), {
+        method: options.method ?? 'GET',
+        signal: options.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(tenantHost ? { 'X-Tenant-Host': tenantHost } : {}),
+          ...(token ? { Authorization: `Session ${token}` } : {}),
+        },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+      });
+      if (!res.ok) {
+        if (res.status === 401) {
+          clear();
+        }
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : {};
+        throw new Error(data.error || 'Request failed');
+      }
+      return res;
+    },
+    [clear, resolveApiUrl, token]
+  );
+
+  const flushPreviewExceptionQueue = useCallback(async () => {
+    if (previewExceptionFlushTimerRef.current !== null) {
+      window.clearTimeout(previewExceptionFlushTimerRef.current);
+      previewExceptionFlushTimerRef.current = null;
+    }
+    const queued = previewExceptionQueueRef.current.splice(0, PREVIEW_EXCEPTION_MAX_QUEUE);
+    if (!queued.length) return;
+    try {
+      await apiFetch('/api/assistant/preview/exceptions', {
+        method: 'POST',
+        body: { events: queued },
+      });
+    } catch {
+      // Keep preview telemetry non-blocking for editor UX.
+    }
+  }, [apiFetch]);
+
+  useEffect(() => {
+    const scheduleFlush = () => {
+      if (previewExceptionFlushTimerRef.current !== null) return;
+      previewExceptionFlushTimerRef.current = window.setTimeout(() => {
+        void flushPreviewExceptionQueue();
+      }, PREVIEW_EXCEPTION_BATCH_DELAY_MS);
+    };
+
+    const handlePreviewMessage = (event: MessageEvent) => {
+      const frameWindow = previewFrameRef.current?.contentWindow;
+      if (!frameWindow || event.source !== frameWindow) return;
+      const data = event.data;
+      if (!data || typeof data !== 'object') return;
+      const source = String((data as { source?: string }).source || '');
+      if (source !== 'idp-preview-exception') return;
+
+      const payloadCandidate = (data as { payload?: unknown }).payload;
+      const payload =
+        payloadCandidate && typeof payloadCandidate === 'object'
+          ? (payloadCandidate as PreviewExceptionPayload)
+          : null;
+      if (!payload) return;
+
+      const message = String(payload.message || '').trim();
+      if (!message) return;
+      if (payload.previewSession && payload.previewSession !== previewSession) return;
+
+      const dedupeKey = [
+        String(payload.kind || ''),
+        message,
+        String(payload.requestUrl || ''),
+        String(payload.status ?? ''),
+        String(payload.sourceUrl || ''),
+        String(payload.line ?? ''),
+        String(payload.column ?? ''),
+      ].join('|');
+      const now = Date.now();
+      const lastSeen = previewExceptionLastSeenRef.current[dedupeKey] || 0;
+      if (now - lastSeen < PREVIEW_EXCEPTION_DEDUPE_MS) return;
+      previewExceptionLastSeenRef.current[dedupeKey] = now;
+
+      previewExceptionQueueRef.current.push({
+        id: payload.id,
+        kind: payload.kind || 'runtime-error',
+        level: payload.level || 'error',
+        message,
+        stack: payload.stack || '',
+        sourceUrl: payload.sourceUrl || '',
+        line:
+          typeof payload.line === 'number' && Number.isFinite(payload.line)
+            ? payload.line
+            : null,
+        column:
+          typeof payload.column === 'number' && Number.isFinite(payload.column)
+            ? payload.column
+            : null,
+        requestUrl: payload.requestUrl || '',
+        method: payload.method || '',
+        status:
+          typeof payload.status === 'number' && Number.isFinite(payload.status)
+            ? payload.status
+            : null,
+        responseSnippet: payload.responseSnippet || '',
+        previewName: payload.previewName || previewTarget?.name || '',
+        previewVersion: payload.previewVersion || previewTarget?.version || '',
+        previewSession: payload.previewSession || previewSession,
+        tenantHost: payload.tenantHost || tenantHost || '',
+        href: payload.href || '',
+        createdAt: payload.createdAt || new Date().toISOString(),
+      });
+      if (previewExceptionQueueRef.current.length >= PREVIEW_EXCEPTION_MAX_QUEUE) {
+        void flushPreviewExceptionQueue();
+        return;
+      }
+      scheduleFlush();
+    };
+
+    window.addEventListener('message', handlePreviewMessage);
+    return () => {
+      window.removeEventListener('message', handlePreviewMessage);
+      void flushPreviewExceptionQueue();
+    };
+  }, [
+    flushPreviewExceptionQueue,
+    previewSession,
+    previewTarget?.name,
+    previewTarget?.version,
+    tenantHost,
+  ]);
+
   const adminFetch = useCallback(
     async (url: string, options: { method?: string; body?: unknown } = {}) => {
       if (!token) {
@@ -462,8 +679,20 @@ export default function EditorPage() {
   }, [previewPort]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(
+      ASSISTANT_PANEL_OPEN_STORAGE_KEY,
+      assistantPanelOpen ? '1' : '0'
+    );
+  }, [assistantPanelOpen]);
+
+  useEffect(() => {
     leftPanelWidthRef.current = leftPanelWidth;
   }, [leftPanelWidth]);
+
+  useEffect(() => {
+    assistantPanelWidthRef.current = assistantPanelWidth;
+  }, [assistantPanelWidth]);
 
   useEffect(() => {
     const handleMove = (event: MouseEvent) => {
@@ -485,6 +714,38 @@ export default function EditorPage() {
         localStorage.setItem(
           LEFT_PANEL_STORAGE_KEY,
           String(leftPanelWidthRef.current)
+        );
+      }
+    };
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleMove = (event: MouseEvent) => {
+      if (!assistantResizeRef.current.active) return;
+      const delta = assistantResizeRef.current.startX - event.clientX;
+      const nextWidth = Math.min(
+        MAX_ASSISTANT_PANEL_WIDTH,
+        Math.max(MIN_ASSISTANT_PANEL_WIDTH, assistantResizeRef.current.startWidth + delta)
+      );
+      setAssistantPanelWidth(nextWidth);
+    };
+
+    const handleUp = () => {
+      if (!assistantResizeRef.current.active) return;
+      assistantResizeRef.current.active = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(
+          ASSISTANT_PANEL_WIDTH_STORAGE_KEY,
+          String(assistantPanelWidthRef.current)
         );
       }
     };
@@ -1263,6 +1524,10 @@ export default function EditorPage() {
     const published = stagingItems.filter((item) => item.publishedVersion).length;
     return { total, published, drafts: total - published };
   }, [stagingItems]);
+  const stagingPublishableCount = useMemo(
+    () => stagingItems.filter((item) => !item.dirty).length,
+    [stagingItems]
+  );
 
   const requestCloseTabs = useCallback(
     (ids: Set<string>) => {
@@ -1706,40 +1971,45 @@ export default function EditorPage() {
     pendingDirtyFiles,
   ]);
 
+  const publishStagingItem = useCallback(
+    async (target: StagingItem) => {
+      if (target.kind === 'module') {
+        if (!target.backendId) {
+          throw new Error('Module id is missing.');
+        }
+        await apiFetch(`/api/modules/${target.backendId}/publish`, { method: 'POST' });
+        return 'Module published';
+      }
+      if (target.kind === 'ui') {
+        if (!target.backendId) {
+          throw new Error('UI entity id is missing.');
+        }
+        await apiFetch(`/api/ui-entities/${target.backendId}/publish`, { method: 'POST' });
+        return 'UI entity published';
+      }
+      const projectId = target.projectId || sharedProject?.id;
+      if (!projectId) {
+        throw new Error('Shared project is not loaded.');
+      }
+      await adminFetch(`${sharedBasePath}/${projectId}/publish`, {
+        method: 'POST',
+      });
+      const refreshed = await adminFetch(`${sharedBasePath}/${projectId}`);
+      setSharedProject(refreshed.package ?? refreshed);
+      return 'Shared project published';
+    },
+    [adminFetch, apiFetch, sharedBasePath, sharedProject?.id]
+  );
+
   const publishTarget = useCallback(
     async (target: StagingItem) => {
       if (stagingBusy) return;
       try {
         setStagingBusy(true);
         setStagingBusyId(target.id);
-        if (target.kind === 'module') {
-          if (!target.backendId) {
-            throw new Error('Module id is missing.');
-          }
-          await apiFetch(`/api/modules/${target.backendId}/publish`, { method: 'POST' });
-          success('Module published');
-          await reloadTree();
-          return;
-        }
-        if (target.kind === 'ui') {
-          if (!target.backendId) {
-            throw new Error('UI entity id is missing.');
-          }
-          await apiFetch(`/api/ui-entities/${target.backendId}/publish`, { method: 'POST' });
-          success('UI entity published');
-          await reloadTree();
-          return;
-        }
-        const projectId = target.projectId || sharedProject?.id;
-        if (!projectId) {
-          throw new Error('Shared project is not loaded.');
-        }
-        await adminFetch(`${sharedBasePath}/${projectId}/publish`, {
-          method: 'POST',
-        });
-        const refreshed = await adminFetch(`${sharedBasePath}/${projectId}`);
-        setSharedProject(refreshed.package ?? refreshed);
-        success('Shared project published');
+        const message = await publishStagingItem(target);
+        await reloadTree();
+        success(message);
       } catch (err) {
         showError((err as Error).message || 'Publish failed');
       } finally {
@@ -1747,17 +2017,43 @@ export default function EditorPage() {
         setStagingBusyId(null);
       }
     },
-    [
-      adminFetch,
-      apiFetch,
-      reloadTree,
-      sharedBasePath,
-      sharedProject?.id,
-      showError,
-      stagingBusy,
-      success,
-    ]
+    [publishStagingItem, reloadTree, showError, stagingBusy, success]
   );
+
+  const publishAllStagingTargets = useCallback(async () => {
+    if (stagingBusy) return;
+    const queue = stagingItems.filter((item) => !item.dirty);
+    if (queue.length === 0) {
+      showError('No publishable items. Save dirty files first.');
+      return;
+    }
+    const failures: string[] = [];
+    try {
+      setStagingBusy(true);
+      setStagingBusyId('__all__');
+      for (const target of queue) {
+        setStagingBusyId(target.id);
+        try {
+          await publishStagingItem(target);
+        } catch (err) {
+          failures.push(
+            `${target.title}: ${String((err as Error).message || 'Publish failed')}`
+          );
+        }
+      }
+      await reloadTree();
+      if (failures.length === 0) {
+        success(`Published ${queue.length} item${queue.length === 1 ? '' : 's'}`);
+      } else {
+        showError(
+          `Published ${queue.length - failures.length}/${queue.length}. ${failures[0]}`
+        );
+      }
+    } finally {
+      setStagingBusy(false);
+      setStagingBusyId(null);
+    }
+  }, [publishStagingItem, reloadTree, showError, stagingBusy, stagingItems, success]);
 
   const handleCloseFile = (id: string) => {
     requestCloseTabs(new Set([id]));
@@ -1768,6 +2064,16 @@ export default function EditorPage() {
       active: true,
       startX: event.clientX,
       startWidth: leftPanelWidthRef.current,
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const handleAssistantResizeStart = (event: React.MouseEvent) => {
+    assistantResizeRef.current = {
+      active: true,
+      startX: event.clientX,
+      startWidth: assistantPanelWidthRef.current,
     };
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
@@ -3140,8 +3446,9 @@ export default function EditorPage() {
       tenantHost.replace(/^https?:\/\//, '').split('/')[0].split(':')[0]
     );
     const base = previewBaseUrl.replace(/\/$/, '');
-    return `${base}/preview.html?name=${name}&version=${version}&tenantHost=${tenant}&t=${previewNonce}`;
-  }, [previewBaseUrl, previewNonce, previewTarget, tenantHost]);
+    const session = encodeURIComponent(previewSession);
+    return `${base}/preview.html?name=${name}&version=${version}&tenantHost=${tenant}&previewSession=${session}&t=${previewNonce}`;
+  }, [previewBaseUrl, previewNonce, previewSession, previewTarget, tenantHost]);
 
   useEffect(() => {
     if (!searchQuery.trim()) {
@@ -3249,6 +3556,12 @@ export default function EditorPage() {
     return `inmemory://model/${activeFile.id}`;
   }, [activeFile]);
   const diffModelPaths = useMemo(() => {
+    if (assistantDiff) {
+      return {
+        original: `inmemory://assistant-diff/${assistantDiff.id}/original`,
+        modified: `inmemory://assistant-diff/${assistantDiff.id}/modified`,
+      };
+    }
     if (!activeFile || !selectedRevision) {
       return {
         original: 'inmemory://model/diff/original',
@@ -3259,7 +3572,7 @@ export default function EditorPage() {
       original: `inmemory://model/${activeFile.id}/revision/${selectedRevision.id}`,
       modified: `inmemory://model/${activeFile.id}/current`,
     };
-  }, [activeFile, selectedRevision]);
+  }, [activeFile, assistantDiff, selectedRevision]);
 
   const monacoLanguage = useMemo(() => {
     if (!activeFile) return 'plaintext';
@@ -3280,13 +3593,23 @@ export default function EditorPage() {
     ? fileContents[sideFile.id] ?? getPersistedContent(sideFile.id)
     : '';
   const showSplitEditor = rightTabs.length > 0;
-  const showDiff = Boolean(selectedRevision);
-  const diffOriginal = selectedRevision ? getRevisionContent(selectedRevision) : '';
-  const mainEditorPath = activeFile
+  const showDiff = Boolean(selectedRevision || assistantDiff);
+  const diffOriginal = assistantDiff
+    ? assistantDiff.before
+    : selectedRevision
+    ? getRevisionContent(selectedRevision)
+    : '';
+  const mainEditorPath = assistantDiff
+    ? `inmemory://assistant-diff/${assistantDiff.id}/current`
+    : activeFile
     ? editorModelPath ?? 'inmemory://model/empty-main'
     : 'inmemory://model/empty-main';
-  const mainEditorValue = activeFile ? activeContent : '';
-  const mainEditorLanguage = activeFile ? monacoLanguage : 'plaintext';
+  const mainEditorValue = assistantDiff ? assistantDiff.after : activeFile ? activeContent : '';
+  const mainEditorLanguage = assistantDiff
+    ? assistantDiff.language
+    : activeFile
+    ? monacoLanguage
+    : 'plaintext';
   const sideEditorPath = sideFile
     ? sideEditorModelPath ?? 'inmemory://model/side-empty'
     : 'inmemory://model/side-empty';
@@ -3376,6 +3699,39 @@ export default function EditorPage() {
     setEditorView('preview');
   }, [isSharedMode, previewTarget, sharedProject, uiData]);
 
+  const handleRefreshPreview = useCallback(() => {
+    setPreviewNonce((prev) => prev + 1);
+  }, []);
+
+  const refreshWorkspace = useCallback(() => {
+    reloadTree();
+    loadHistory();
+  }, [loadHistory, reloadTree]);
+
+  const openAssistantDiffPreview = useCallback(
+    (payload: {
+      path: string;
+      before: string;
+      after: string;
+      language: string;
+    }) => {
+      const seed = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setHistorySelectedId(null);
+      setAssistantDiff({
+        id: `assistant-${seed}`,
+        path: payload.path,
+        before: payload.before,
+        after: payload.after,
+        language: payload.language || 'plaintext',
+      });
+      setEditorView('code');
+      success(`Opened diff: ${payload.path}`);
+    },
+    [success]
+  );
+
+  
+
   return (
     <>
       <Script src="/babel/bable.js" strategy="afterInteractive" />
@@ -3388,6 +3744,7 @@ export default function EditorPage() {
           onPreviewPortChange={setPreviewPort}
           onSwitchToCode={() => setEditorView('code')}
           onSwitchToPreview={handleSwitchToPreview}
+          onRefreshPreview={handleRefreshPreview}
         />
 
         <div className="flex flex-1 min-h-0">
@@ -3405,6 +3762,10 @@ export default function EditorPage() {
                 setLeftPanelOpen(true);
               }
             }}
+            assistantOpen={assistantPanelOpen}
+            onToggleAssistant={() =>
+              setAssistantPanelOpen((prev) => !prev)
+            }
             sidebarLabel={sidebarLabel}
             sidebarLabelTone={sidebarLabelTone}
             exitHref={exitHref}
@@ -3443,7 +3804,10 @@ export default function EditorPage() {
                   historyListRef={historyListRef}
                   historyRowRef={historyRowRef}
                   onRefresh={loadHistory}
-                  onSelectRevision={setHistorySelectedId}
+                  onSelectRevision={(revisionId) => {
+                    setAssistantDiff(null);
+                    setHistorySelectedId(revisionId);
+                  }}
                   onRollback={handleRollback}
                   onPrevPage={() => setHistoryPage((prev) => Math.max(1, prev - 1))}
                   onNextPage={() =>
@@ -3455,9 +3819,11 @@ export default function EditorPage() {
                 <EditorStagingPanel
                   stagingItems={stagingItems}
                   stagingCounts={stagingCounts}
+                  stagingPublishableCount={stagingPublishableCount}
                   stagingBusy={stagingBusy}
                   stagingBusyId={stagingBusyId}
                   onPublish={publishTarget}
+                  onPublishAll={publishAllStagingTargets}
                   formatTimestamp={formatHistoryTimestamp}
                 />
               ) : (
@@ -3504,10 +3870,15 @@ export default function EditorPage() {
               activeFileId={activeFile?.id ?? null}
               sideFileId={sideFile?.id ?? null}
               splitRatio={splitRatio}
-              showExitCompare={Boolean(selectedRevision)}
               isFileDirty={isFileDirty}
-              onSelectTab={setActiveFile}
-              onSelectSideTab={(file) => setSideFileId(file.id)}
+              onSelectTab={(file) => {
+                setAssistantDiff(null);
+                setActiveFile(file);
+              }}
+              onSelectSideTab={(file) => {
+                setAssistantDiff(null);
+                setSideFileId(file.id);
+              }}
               onCloseTab={handleCloseFile}
               onTabDragStart={handleTabDragStart}
               onTabDragOver={handleTabDragOver}
@@ -3516,7 +3887,11 @@ export default function EditorPage() {
               onTabBarDrop={handleTabBarDrop}
               onSplitResizeStart={handleSplitResizeStart}
               onTabContextMenu={handleTabContextMenu}
-              onExitCompare={() => setHistorySelectedId(null)}
+              showExitCompare={Boolean(selectedRevision || assistantDiff)}
+              onExitCompare={() => {
+                setHistorySelectedId(null);
+                setAssistantDiff(null);
+              }}
             />
 
             <EditorWorkspace
@@ -3553,12 +3928,39 @@ export default function EditorPage() {
               onEditorDrop={handleEditorDrop}
               previewTarget={previewTarget}
               previewSrc={previewSrc}
+              previewFrameRef={previewFrameRef}
               tenantHost={tenantHost}
               isSharedMode={isSharedMode}
               uiCount={uiData.length}
               editorAreaRef={editorAreaRef}
             />
           </main>
+
+          {assistantPanelOpen && (
+            <aside
+              className="relative flex h-full min-w-0 flex-col overflow-hidden border-l border-[#2a2d2e] bg-[#252526] text-gray-100"
+              style={{ width: assistantPanelWidth }}
+            >
+              <div
+                className="absolute left-0 top-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-[#2a2d2e]"
+                onMouseDown={handleAssistantResizeStart}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize assistant panel"
+              />
+              <EditorAiPanel
+                apiFetch={apiFetch}
+                apiStreamFetch={apiStreamFetch}
+                tenantHost={tenantHost}
+                activeFile={activeFile}
+                fileContents={fileContents}
+                savedContents={savedContents}
+                aclConfig={aclConfig}
+                onWorkspaceRefresh={refreshWorkspace}
+                onOpenChangeInMainEditor={openAssistantDiffPreview}
+              />
+            </aside>
+          )}
         </div>
 
         <EditorBottomBar

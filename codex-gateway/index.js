@@ -12,6 +12,21 @@ const HISTORY_FILE = path.resolve(
 const PROFILES_DIR = path.resolve(
   process.env.CODEX_GATEWAY_PROFILES_DIR || path.join(__dirname, "data", "profiles"),
 );
+const STARTED_AT = new Date();
+const resolveGatewayVersion = () => {
+  const fromEnv = String(process.env.CODEX_GATEWAY_VERSION || "").trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const pkgPath = path.join(__dirname, "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    const version = String(pkg?.version || "").trim();
+    if (version) return version;
+  } catch {
+    // no-op
+  }
+  return "0.0.0-dev";
+};
+const GATEWAY_VERSION = resolveGatewayVersion();
 const chatSessions = new Map();
 let historySaveQueue = Promise.resolve();
 const loginSessions = new Map();
@@ -219,11 +234,26 @@ const streamChildLines = (child, onStdoutLine, onStderrLine) => {
 };
 
 const startDeviceAuthLogin = (session) => {
-  const child = spawn(CODEX_BIN, ["login", "--device-auth"], {
-    cwd: ROOT_DIR,
-    env: buildCodexEnv(session.userId),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  let child;
+  try {
+    child = spawnCodexWithFallback({
+      args: ["login", "--device-auth"],
+      cwd: ROOT_DIR,
+      userId: session.userId,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).child;
+  } catch (error) {
+    const message = error?.message || String(error) || "failed to spawn codex login";
+    appendLoginLog(session, message, "stderr");
+    session.errorCode = "spawn_error";
+    session.errorMessage = message;
+    session.status = "failed";
+    session.exitCode = 1;
+    session.completedAt = nowIso();
+    session.updatedAt = session.completedAt;
+    session.child = null;
+    return;
+  }
   session.child = child;
   session.status = "running";
   session.updatedAt = nowIso();
@@ -508,6 +538,64 @@ const buildCodexEnv = (userId) => {
   };
 };
 
+const buildSlimCodexEnv = (userId) => {
+  const codexHome = resolveCodexHome(userId);
+  fs.mkdirSync(codexHome, { recursive: true });
+
+  const keepKeys = new Set([
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "ALL_PROXY",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
+  ]);
+  const keepPrefixes = ["OPENAI_", "CODEX_"];
+
+  const env = {};
+  Object.entries(process.env || {}).forEach(([key, value]) => {
+    if (typeof value !== "string") return;
+    if (keepKeys.has(key) || keepPrefixes.some((prefix) => key.startsWith(prefix))) {
+      env[key] = value;
+    }
+  });
+  env.CODEX_HOME = codexHome;
+  return env;
+};
+
+const spawnCodexWithFallback = ({ args, cwd, userId, stdio }) => {
+  try {
+    return {
+      child: spawn(CODEX_BIN, args, {
+        cwd,
+        env: buildCodexEnv(userId),
+        stdio,
+      }),
+      usedSlimEnv: false,
+    };
+  } catch (error) {
+    if (error?.code !== "E2BIG") throw error;
+    return {
+      child: spawn(CODEX_BIN, args, {
+        cwd,
+        env: buildSlimCodexEnv(userId),
+        stdio,
+      }),
+      usedSlimEnv: true,
+    };
+  }
+};
+
 const buildPrompt = (payload) => {
   const userId = String(payload.userId || "anonymous");
   const chatId = String(payload.chatId || "default");
@@ -620,9 +708,31 @@ const extractLastMessageFromStdout = (stdoutText) => {
 const runCodex = ({ prompt, model, cwd, userId, onStdout, onStderr, onClose }) => {
   const args = ["exec", "--skip-git-repo-check", "--full-auto", "--json"];
   if (model) args.push("-m", String(model));
-  args.push(prompt);
+  args.push("-");
 
-  const child = spawn(CODEX_BIN, args, { cwd, env: buildCodexEnv(userId) });
+  let child;
+  try {
+    const spawned = spawnCodexWithFallback({
+      args,
+      cwd,
+      userId,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    child = spawned.child;
+    if (spawned.usedSlimEnv) {
+      onStderr?.("[gateway] spawn fallback: slim env used after E2BIG");
+    }
+  } catch (error) {
+    const message = error?.message || String(error) || "failed to spawn codex";
+    onStderr?.(`[gateway] spawn failed: ${message}`);
+    onClose?.({ code: 1, signal: "", stdout: "", stderr: message, lastMessage: "" });
+    return {
+      killed: true,
+      kill: () => {},
+      on: () => {},
+      once: () => {},
+    };
+  }
   let stdout = "";
   let stderr = "";
   let lastMessage = "";
@@ -649,12 +759,30 @@ const runCodex = ({ prompt, model, cwd, userId, onStdout, onStderr, onClose }) =
       .forEach((line) => onStderr?.(line));
   });
 
-  child.on("close", (code) => {
+  child.on("close", (code, signal) => {
     if (!lastMessage && stdout) {
       lastMessage = extractLastMessageFromStdout(stdout);
     }
-    onClose?.({ code, stdout, stderr, lastMessage });
+    onClose?.({ code, signal, stdout, stderr, lastMessage });
   });
+
+  try {
+    child.stdin.write(String(prompt || ""));
+    child.stdin.end();
+  } catch (error) {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // no-op
+    }
+    onClose?.({
+      code: 1,
+      signal: "",
+      stdout,
+      stderr: String(error?.message || error || "failed to write prompt to stdin"),
+      lastMessage,
+    });
+  }
 
   return child;
 };
@@ -667,11 +795,18 @@ const runCodexCommand = async ({
   timeoutMs = 0,
 }) =>
   new Promise((resolve, reject) => {
-    const child = spawn(CODEX_BIN, args, {
-      cwd,
-      env: buildCodexEnv(userId),
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    let child;
+    try {
+      child = spawnCodexWithFallback({
+        args,
+        cwd,
+        userId,
+        stdio: ["pipe", "pipe", "pipe"],
+      }).child;
+    } catch (error) {
+      reject(error);
+      return;
+    }
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -708,11 +843,18 @@ const runCodexCommand = async ({
 
 const runCodexAppServerModelList = async (userId) =>
   new Promise((resolve, reject) => {
-    const child = spawn(CODEX_BIN, ["app-server"], {
-      cwd: ROOT_DIR,
-      env: buildCodexEnv(userId),
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    let child;
+    try {
+      child = spawnCodexWithFallback({
+        args: ["app-server"],
+        cwd: ROOT_DIR,
+        userId,
+        stdio: ["pipe", "pipe", "pipe"],
+      }).child;
+    } catch (error) {
+      reject(error);
+      return;
+    }
 
     let stdoutBuffer = "";
     let stderrText = "";
@@ -816,6 +958,16 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && pathname === "/health") {
     return json(res, 200, { ok: true, service: "codex-gateway", port: PORT, root: ROOT_DIR });
+  }
+
+  if (req.method === "GET" && pathname === "/api/version") {
+    return json(res, 200, {
+      ok: true,
+      service: "codex-gateway",
+      version: GATEWAY_VERSION,
+      startedAt: STARTED_AT.toISOString(),
+      uptimeMs: Date.now() - STARTED_AT.getTime(),
+    });
   }
 
   if (req.method === "GET" && pathname === "/v1/models") {
@@ -1045,7 +1197,7 @@ const server = http.createServer(async (req, res) => {
         userId: promptData.userId,
         onStdout: (line) => res.write(`event: stdout\ndata: ${JSON.stringify({ line })}\n\n`),
         onStderr: (line) => res.write(`event: stderr\ndata: ${JSON.stringify({ line })}\n\n`),
-        onClose: ({ code, lastMessage, stderr }) => {
+        onClose: ({ code, signal, lastMessage, stderr }) => {
           const session = getSession(promptData.sessionKey);
           session.history.push({
             role: "user",
@@ -1064,18 +1216,25 @@ const server = http.createServer(async (req, res) => {
           res.write(
             `event: done\ndata: ${JSON.stringify({
               code,
+              signal: signal || "",
               ok: code === 0,
               message: lastMessage || "",
-              error: code === 0 ? "" : stderr.trim(),
+              error:
+                code === 0
+                  ? ""
+                  : stderr.trim() || (signal ? `terminated by ${signal}` : "process failed"),
             })}\n\n`,
           );
           res.end();
         },
       });
 
-      req.on("close", () => {
+      const stopChildIfStreamingClientGone = () => {
+        if (res.writableEnded || res.destroyed) return;
         if (!child.killed) child.kill("SIGTERM");
-      });
+      };
+      req.on("aborted", stopChildIfStreamingClientGone);
+      res.on("close", stopChildIfStreamingClientGone);
 
       return;
     }

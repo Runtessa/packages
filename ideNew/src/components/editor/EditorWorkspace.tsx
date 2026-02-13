@@ -48,6 +48,7 @@ type EditorWorkspaceProps = {
   onEditorDrop: (event: React.DragEvent<HTMLDivElement>) => void;
   previewTarget: PreviewTarget | null;
   previewSrc: string;
+  previewFrameRef: React.RefObject<HTMLIFrameElement | null>;
   tenantHost: string | null;
   isSharedMode: boolean;
   uiCount: number;
@@ -80,6 +81,7 @@ export function EditorWorkspace({
   onEditorDrop,
   previewTarget,
   previewSrc,
+  previewFrameRef,
   tenantHost,
   isSharedMode,
   uiCount,
@@ -96,7 +98,7 @@ export function EditorWorkspace({
       onDragLeave={onEditorDragLeave}
       onDrop={onEditorDrop}
     >
-      {editorView === 'code' && activeFile && (
+      {editorView === 'code' && (activeFile || showDiff) && (
         <div className="flex flex-1 min-h-0 min-w-0">
           <div className={`flex min-h-0 min-w-0 flex-1 ${showDiff ? 'hidden' : ''}`}>
             <div
@@ -214,6 +216,7 @@ export function EditorWorkspace({
         ) : (
           <iframe
             key={previewSrc}
+            ref={previewFrameRef}
             title="UI preview"
             className="h-full w-full border-0 bg-white"
             src={previewSrc}
@@ -233,7 +236,7 @@ export function EditorWorkspace({
           </div>
         </div>
       )}
-      {!activeFile && editorView === 'code' && (
+      {!activeFile && editorView === 'code' && !showDiff && (
         <div className="absolute inset-0 flex items-center justify-center text-gray-400">
           <div className="flex flex-col items-center gap-8">
             <img
