@@ -1,6 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
-import { monitoringStore, MonitoringAlertEvent, MonitoringSnapshot } from '@/lib/monitoring-store';
 
 const asBearer = (header: string | undefined) => {
   if (!header) return '';
@@ -8,39 +7,28 @@ const asBearer = (header: string | undefined) => {
   return match ? match[1].trim() : '';
 };
 
-const isValidSnapshot = (value: unknown): value is MonitoringSnapshot => {
-  if (!value || typeof value !== 'object') return false;
-  const row = value as MonitoringSnapshot;
-  return (
-    typeof row.id === 'string' &&
-    typeof row.createdAt === 'string' &&
-    typeof row.serverName === 'string' &&
-    typeof row.instanceId === 'string' &&
-    Array.isArray(row.tenantSamples)
-  );
+const asBool = (value: string | undefined, fallback = false) => {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return fallback;
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 };
 
-const isValidAlert = (value: unknown): value is MonitoringAlertEvent => {
-  if (!value || typeof value !== 'object') return false;
-  const row = value as MonitoringAlertEvent;
-  return (
-    typeof row.id === 'string' &&
-    typeof row.createdAt === 'string' &&
-    typeof row.serverName === 'string' &&
-    typeof row.instanceId === 'string' &&
-    typeof row.metricKey === 'string'
-  );
+const resolveIngestProxyUrl = () => {
+  const explicit = process.env.MONITORING_INGEST_PROXY_URL?.trim();
+  if (explicit) return explicit;
+  const full = process.env.MONITORING_SERVER_INGEST_URL?.trim();
+  if (full) return full;
+  const base = process.env.MONITORING_SERVER_URL?.trim();
+  if (!base) return '';
+  if (
+    /\/api\/admin\/monitoring\/ingest\/?$/i.test(base) ||
+    /\/ingest\/?$/i.test(base)
+  ) {
+    return base;
+  }
+  return `${base.replace(/\/+$/, '')}/api/admin/monitoring/ingest`;
 };
-
-const normalizeSnapshot = (row: MonitoringSnapshot): MonitoringSnapshot => ({
-  ...row,
-  instanceName: typeof row.instanceName === 'string' && row.instanceName.trim() ? row.instanceName : row.instanceId,
-});
-
-const normalizeAlert = (row: MonitoringAlertEvent): MonitoringAlertEvent => ({
-  ...row,
-  instanceName: typeof row.instanceName === 'string' && row.instanceName.trim() ? row.instanceName : row.instanceId,
-});
 
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method !== 'POST') {
@@ -49,56 +37,53 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     return;
   }
 
-  const expectedToken = process.env.MONITORING_INGEST_TOKEN || process.env.MONITORING_SERVER_TOKEN || '';
-  if (expectedToken) {
-    const provided = asBearer(req.headers.authorization as string | undefined);
-    if (!provided || provided !== expectedToken) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
+  const targetUrl = resolveIngestProxyUrl();
+  if (!targetUrl) {
+    res.status(503).json({
+      error:
+        'Monitoring ingest moved to standalone service. Set MONITORING_INGEST_PROXY_URL or MONITORING_SERVER_URL.',
+    });
+    return;
   }
-
-  const payload = (req.body || {}) as {
-    snapshot?: unknown;
-    alert?: unknown;
-    snapshots?: unknown[];
-    alerts?: unknown[];
-    snapshotRetention?: unknown;
-    alertRetention?: unknown;
-  };
-
-  const snapshots = [payload.snapshot, ...(Array.isArray(payload.snapshots) ? payload.snapshots : [])]
-    .filter(isValidSnapshot)
-    .map(normalizeSnapshot);
-  const alerts = [payload.alert, ...(Array.isArray(payload.alerts) ? payload.alerts : [])]
-    .filter(isValidAlert)
-    .map(normalizeAlert);
-
-  const snapshotRetentionRaw = Number(payload.snapshotRetention);
-  const snapshotRetention = Number.isFinite(snapshotRetentionRaw)
-    ? Math.min(Math.max(Math.floor(snapshotRetentionRaw), 100), 30_000)
-    : 21600;
-
-  const alertRetentionRaw = Number(payload.alertRetention);
-  const alertRetention = Number.isFinite(alertRetentionRaw)
-    ? Math.min(Math.max(Math.floor(alertRetentionRaw), 100), 50_000)
-    : 5000;
-
-  if (!snapshots.length && !alerts.length) {
-    res.status(400).json({ error: 'No valid snapshot or alert payloads' });
+  const enforceTls = asBool(process.env.MONITORING_ENFORCE_TLS, true);
+  if (enforceTls && !/^https:\/\//i.test(targetUrl)) {
+    res.status(503).json({
+      error:
+        'MONITORING_ENFORCE_TLS is enabled. Configure MONITORING_INGEST_PROXY_URL / MONITORING_SERVER_URL with HTTPS.',
+    });
     return;
   }
 
-  await Promise.all([
-    ...snapshots.map((snapshot) => monitoringStore.ingestSnapshot(snapshot, snapshotRetention)),
-    ...alerts.map((alert) => monitoringStore.ingestAlert(alert, alertRetention)),
-  ]);
+  const passthroughAuth = asBearer(req.headers.authorization as string | undefined);
+  const fallbackToken =
+    process.env.MONITORING_INGEST_TOKEN?.trim() ||
+    process.env.MONITORING_SERVER_TOKEN?.trim() ||
+    '';
 
-  res.status(200).json({
-    ok: true,
-    ingested: {
-      snapshots: snapshots.length,
-      alerts: alerts.length,
+  const upstream = await fetch(targetUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(passthroughAuth
+        ? { authorization: `Bearer ${passthroughAuth}` }
+        : fallbackToken
+          ? { authorization: `Bearer ${fallbackToken}` }
+          : {}),
     },
+    body: JSON.stringify(req.body || {}),
   });
+
+  const contentType = upstream.headers.get('content-type') || '';
+  const text = await upstream.text();
+  res.status(upstream.status);
+  if (contentType.includes('application/json')) {
+    try {
+      res.json(JSON.parse(text));
+      return;
+    } catch {
+      // fall back to text
+    }
+  }
+
+  res.send(text);
 });

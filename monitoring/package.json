@@ -1,0 +1,26 @@
+{
+  "name": "idp-monitoring-service",
+  "version": "1.1.0",
+  "description": "Standalone monitoring ingest service for IDP Core",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "keywords": [
+    "monitoring",
+    "ingest",
+    "idp"
+  ],
+  "author": "IDP Core",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^4.19.2",
+    "ioredis": "^5.4.1",
+    "selfsigned": "^3.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}

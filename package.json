@@ -12,6 +12,8 @@
     "build": "npm run build:shared && tsc",
     "build:front": "cd kernel && npm run build && cd ..",
     "start": "npm run build && npm run build:front && node dist/server.js",
+    "monitoring:start": "npm --prefix monitoring run start",
+    "monitoring:dev": "npm --prefix monitoring run dev",
     "seed": "ts-node src/seed.ts",
     "seed-packages": "ts-node src/seed-packages.ts",
     "dump": "node dump-project.js"
