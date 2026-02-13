@@ -14,15 +14,12 @@ import { EditorExplorerPanel } from '@/components/editor/EditorExplorerPanel';
 import { EditorHistoryPanel } from '@/components/editor/EditorHistoryPanel';
 import { EditorSearchPanel } from '@/components/editor/EditorSearchPanel';
 import { EditorStagingPanel } from '@/components/editor/EditorStagingPanel';
-import { EditorAiPanel } from '@/components/editor/EditorAiPanel';
 import { EditorBottomBar } from '@/components/editor/EditorBottomBar';
 import { EditorTabBar } from '@/components/editor/EditorTabBar';
 import { EditorTabContextMenu } from '@/components/editor/EditorTabContextMenu';
 import { EditorWorkspace } from '@/components/editor/EditorWorkspace';
 import { EditorModals } from '@/components/editor/EditorModals';
 import {
-  ASSISTANT_PANEL_OPEN_STORAGE_KEY,
-  DEFAULT_ASSISTANT_PANEL_WIDTH,
   DEFAULT_CSS_CODE,
   DEFAULT_LEFT_PANEL_WIDTH,
   DEFAULT_MODEL_CODE,
@@ -270,12 +267,6 @@ export default function EditorPage() {
   const [leftPanel, setLeftPanel] = useState<
     'explorer' | 'history' | 'search' | 'staging'
   >('explorer');
-  const [assistantPanelOpen, setAssistantPanelOpen] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    const stored = localStorage.getItem(ASSISTANT_PANEL_OPEN_STORAGE_KEY);
-    if (stored === null) return false;
-    return stored === '1';
-  });
   const [stagingBusy, setStagingBusy] = useState(false);
   const [stagingBusyId, setStagingBusyId] = useState<string | null>(null);
   const [modelMigrationBusy, setModelMigrationBusy] = useState(false);
@@ -432,45 +423,6 @@ export default function EditorPage() {
     [clear, resolveApiUrl, token]
   );
 
-  const apiStreamFetch = useCallback(
-    async (
-      url: string,
-      options: { method?: string; body?: unknown; signal?: AbortSignal } = {}
-    ) => {
-      if (!token) {
-        const err = new Error('Session token is missing');
-        (err as any).statusCode = 401;
-        throw err;
-      }
-      const tenantHost = getSelectedTenantHost();
-      if (!tenantHost) {
-        const err = new Error('Select a tenant in /admin/tenants to use the editor.');
-        (err as any).statusCode = 400;
-        throw err;
-      }
-      const res = await fetch(resolveApiUrl(url), {
-        method: options.method ?? 'GET',
-        signal: options.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(tenantHost ? { 'X-Tenant-Host': tenantHost } : {}),
-          ...(token ? { Authorization: `Session ${token}` } : {}),
-        },
-        body: options.body ? JSON.stringify(options.body) : undefined,
-      });
-      if (!res.ok) {
-        if (res.status === 401) {
-          clear();
-        }
-        const text = await res.text();
-        const data = text ? JSON.parse(text) : {};
-        throw new Error(data.error || 'Request failed');
-      }
-      return res;
-    },
-    [clear, resolveApiUrl, token]
-  );
-
   const adminFetch = useCallback(
     async (url: string, options: { method?: string; body?: unknown } = {}) => {
       if (!token) {
@@ -508,14 +460,6 @@ export default function EditorPage() {
     if (typeof window === 'undefined') return;
     localStorage.setItem(PREVIEW_PORT_STORAGE_KEY, previewPort);
   }, [previewPort]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    localStorage.setItem(
-      ASSISTANT_PANEL_OPEN_STORAGE_KEY,
-      assistantPanelOpen ? '1' : '0'
-    );
-  }, [assistantPanelOpen]);
 
   useEffect(() => {
     leftPanelWidthRef.current = leftPanelWidth;
@@ -3432,13 +3376,6 @@ export default function EditorPage() {
     setEditorView('preview');
   }, [isSharedMode, previewTarget, sharedProject, uiData]);
 
-  const refreshWorkspace = useCallback(() => {
-    reloadTree();
-    loadHistory();
-  }, [loadHistory, reloadTree]);
-
-  
-
   return (
     <>
       <Script src="/babel/bable.js" strategy="afterInteractive" />
@@ -3468,10 +3405,6 @@ export default function EditorPage() {
                 setLeftPanelOpen(true);
               }
             }}
-            assistantOpen={assistantPanelOpen}
-            onToggleAssistant={() =>
-              setAssistantPanelOpen((prev) => !prev)
-            }
             sidebarLabel={sidebarLabel}
             sidebarLabelTone={sidebarLabelTone}
             exitHref={exitHref}
@@ -3626,24 +3559,6 @@ export default function EditorPage() {
               editorAreaRef={editorAreaRef}
             />
           </main>
-
-          {assistantPanelOpen && (
-            <aside
-              className="relative flex h-full min-w-0 flex-col overflow-hidden border-l border-[#2a2d2e] bg-[#252526] text-gray-100"
-              style={{ width: DEFAULT_ASSISTANT_PANEL_WIDTH }}
-            >
-              <EditorAiPanel
-                apiFetch={apiFetch}
-                apiStreamFetch={apiStreamFetch}
-                tenantHost={tenantHost}
-                activeFile={activeFile}
-                fileContents={fileContents}
-                savedContents={savedContents}
-                aclConfig={aclConfig}
-                onWorkspaceRefresh={refreshWorkspace}
-              />
-            </aside>
-          )}
         </div>
 
         <EditorBottomBar

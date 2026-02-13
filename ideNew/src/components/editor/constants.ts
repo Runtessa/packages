@@ -106,8 +106,6 @@ export const LEFT_PANEL_STORAGE_KEY = 'editor-left-panel-width';
 export const MIN_LEFT_PANEL_WIDTH = 150;
 export const MAX_LEFT_PANEL_WIDTH = 520;
 export const DEFAULT_LEFT_PANEL_WIDTH = 320;
-export const ASSISTANT_PANEL_OPEN_STORAGE_KEY = 'editor-assistant-panel-open';
-export const DEFAULT_ASSISTANT_PANEL_WIDTH = 420;
 
 export const SPLIT_RATIO_STORAGE_KEY = 'editor-split-ratio';
 export const DEFAULT_SPLIT_RATIO = 0.5;
