@@ -372,7 +372,7 @@ const mapRunSteps = (events: AssistantRunEvent[] | undefined) =>
 
 const extractRunRequestMessages = (run: ArchivedRunPayload): RunRequestMessage[] => {
   const artifacts = Array.isArray(run.artifacts) ? run.artifacts : [];
-  const requestArtifact = artifacts.find(
+  const requestArtifact = [...artifacts].reverse().find(
     (item) => item && item.kind === "request_messages",
   );
   const payload = requestArtifact?.payload;

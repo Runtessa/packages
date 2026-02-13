@@ -63,6 +63,97 @@ const idempotencyKey = (tenantId: string, key: string) =>
 
 const RUN_RETENTION_SECONDS = 60 * 60 * 24 * 7;
 const IDEMPOTENCY_RETENTION_SECONDS = 60 * 10;
+const MAX_RUN_EVENTS = 4000;
+const MAX_RUN_CHANGES = 2000;
+const MAX_RUN_CONFLICTS = 1000;
+const MAX_TURN_HISTORY = 500;
+const TURN_HISTORY_ARTIFACT_KIND = 'turn_history';
+
+const getChangeKey = (change: AssistantChange) => {
+  if (change.kind === 'module') {
+    const target = change.after ?? change.before;
+    return `module:${change.action}:${target?.id || `${target?.method || ''}:${target?.routePath || ''}`}`;
+  }
+  if (change.kind === 'model') {
+    const target = change.after ?? change.before;
+    return `model:${change.action}:${target?.id || target?.path || 'unknown'}`;
+  }
+  if (change.kind === 'ui') {
+    const target = change.after ?? change.before;
+    return `ui:${change.action}:${target?.id || `${target?.name || ''}@${target?.version || ''}`}`;
+  }
+  if (change.kind === 'acl') {
+    return `acl:${change.file}`;
+  }
+  if (change.kind === 'shared-project') {
+    const target = change.after ?? change.before;
+    return `shared-project:${change.action}:${target?.id || `${target?.name || ''}@${target?.version || ''}`}`;
+  }
+  const target = change.after ?? change.before;
+  return `shared-file:${change.action}:${change.projectId}:${target?.id || target?.path || 'unknown'}`;
+};
+
+const mergeRunChanges = (existing: AssistantChange[], incoming: AssistantChange[]) => {
+  const merged = [...existing];
+  for (const change of incoming) {
+    const key = getChangeKey(change);
+    const index = merged.findIndex((item) => getChangeKey(item) === key);
+    if (index === -1) {
+      merged.push(change);
+      continue;
+    }
+    merged[index] = change;
+  }
+  if (merged.length <= MAX_RUN_CHANGES) return merged;
+  return merged.slice(merged.length - MAX_RUN_CHANGES);
+};
+
+const mergeRunEvents = (existing: AssistantRunEvent[], incoming: AssistantRunEvent[]) => {
+  const merged = [...existing, ...incoming];
+  if (merged.length <= MAX_RUN_EVENTS) return merged;
+  return merged.slice(merged.length - MAX_RUN_EVENTS);
+};
+
+const mergeRunConflicts = (existing: AssistantRunConflict[], incoming: AssistantRunConflict[]) => {
+  const merged = [...existing, ...incoming];
+  if (merged.length <= MAX_RUN_CONFLICTS) return merged;
+  return merged.slice(merged.length - MAX_RUN_CONFLICTS);
+};
+
+const readTurnHistory = (artifacts: PersistedArtifact[]) => {
+  const historyArtifact = artifacts.find((item) => item.kind === TURN_HISTORY_ARTIFACT_KIND);
+  if (!historyArtifact || !Array.isArray(historyArtifact.payload)) return [];
+  return historyArtifact.payload as Array<Record<string, unknown>>;
+};
+
+const buildMergedArtifacts = (
+  previous: PersistedArtifact[],
+  next: PersistedArtifact[],
+  turn: {
+    at: string;
+    status: string;
+    finishReason?: string;
+    message: string;
+    changes: AssistantChange[];
+    events: AssistantRunEvent[];
+  }
+) => {
+  const previousHistory = readTurnHistory(previous);
+  const mergedHistory = [...previousHistory, turn];
+  const trimmedHistory =
+    mergedHistory.length <= MAX_TURN_HISTORY
+      ? mergedHistory
+      : mergedHistory.slice(mergedHistory.length - MAX_TURN_HISTORY);
+  const nextWithoutHistory = next.filter((item) => item.kind !== TURN_HISTORY_ARTIFACT_KIND);
+  return [
+    ...nextWithoutHistory,
+    {
+      id: `${Date.now()}-${TURN_HISTORY_ARTIFACT_KIND}`,
+      kind: TURN_HISTORY_ARTIFACT_KIND,
+      payload: trimmedHistory,
+    },
+  ];
+};
 
 export const buildAssistantIdempotencyKey = (messages: unknown, contextText: string) =>
   createHash('sha256')
@@ -100,20 +191,28 @@ export const startAssistantRun = async (
   options?: { idempotency?: string; runName?: string }
 ) => {
   const now = new Date().toISOString();
+  const key = runHashKey(tenantId, runId);
+  const existing = await redis.hgetall(key);
+  const createdAt = String(existing?.createdAt || now);
+  const runName = String(existing?.runName || options?.runName || '');
+  const existingEventsCount = Number(existing?.eventsCount || 0);
+  const existingChangesCount = Number(existing?.changesCount || 0);
+  const existingConflictsCount = Number(existing?.conflictsCount || 0);
+  const idempotency = String(options?.idempotency || existing?.idempotencyKey || '');
   await redis.hset(runHashKey(tenantId, runId), {
     runId,
     tenantId,
-    runName: options?.runName ?? '',
+    runName,
     status: 'running',
-    createdAt: now,
+    createdAt,
     updatedAt: now,
-    idempotencyKey: options?.idempotency ?? '',
-    eventsCount: '0',
-    changesCount: '0',
-    conflictsCount: '0',
+    idempotencyKey: idempotency,
+    eventsCount: String(existingEventsCount),
+    changesCount: String(existingChangesCount),
+    conflictsCount: String(existingConflictsCount),
     finishReason: '',
   });
-  await redis.expire(runHashKey(tenantId, runId), RUN_RETENTION_SECONDS);
+  await redis.expire(key, RUN_RETENTION_SECONDS);
   await redis.zadd(runsIndexKey(tenantId), Date.now(), runId);
   await redis.expire(runsIndexKey(tenantId), RUN_RETENTION_SECONDS);
 };
@@ -142,17 +241,41 @@ export const appendAssistantEvent = async (
 export const completeAssistantRun = async (
   payload: PersistedRunPayload
 ) => {
+  const previous = await getAssistantRun(payload.tenantId, payload.runId);
+  const merged: PersistedRunPayload = previous
+    ? {
+        ...payload,
+        runName: previous.runName || payload.runName,
+        createdAt: previous.createdAt || payload.createdAt,
+        events: mergeRunEvents(previous.events ?? [], payload.events ?? []),
+        changes: mergeRunChanges(previous.changes ?? [], payload.changes ?? []),
+        conflicts: mergeRunConflicts(previous.conflicts ?? [], payload.conflicts ?? []),
+        artifacts: buildMergedArtifacts(previous.artifacts ?? [], payload.artifacts ?? [], {
+          at: payload.updatedAt,
+          status: payload.status,
+          finishReason: payload.finishReason,
+          message: payload.message,
+          changes: payload.changes ?? [],
+          events: payload.events ?? [],
+        }),
+      }
+    : payload;
   const key = runHashKey(payload.tenantId, payload.runId);
-  await redis.set(runPayloadKey(payload.tenantId, payload.runId), JSON.stringify(payload), 'EX', RUN_RETENTION_SECONDS);
+  await redis.set(
+    runPayloadKey(payload.tenantId, payload.runId),
+    JSON.stringify(merged),
+    'EX',
+    RUN_RETENTION_SECONDS
+  );
   await redis.hset(key, {
-    runName: payload.runName ?? '',
-    status: payload.status,
-    updatedAt: payload.updatedAt,
-    eventsCount: String(payload.events.length),
-    changesCount: String(payload.changes?.length ?? 0),
-    conflictsCount: String(payload.conflicts.length),
-    finishReason: payload.finishReason ?? '',
-    idempotencyKey: payload.idempotencyKey ?? '',
+    runName: merged.runName ?? '',
+    status: merged.status,
+    updatedAt: merged.updatedAt,
+    eventsCount: String(merged.events.length),
+    changesCount: String(merged.changes?.length ?? 0),
+    conflictsCount: String(merged.conflicts.length),
+    finishReason: merged.finishReason ?? '',
+    idempotencyKey: merged.idempotencyKey ?? '',
   });
   await redis.expire(key, RUN_RETENTION_SECONDS);
   await redis.zadd(runsIndexKey(payload.tenantId), Date.now(), payload.runId);

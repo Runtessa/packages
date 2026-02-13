@@ -1982,7 +1982,12 @@ const normalizeSystemPrompt = (raw: unknown, fallback: string) => {
   return truncate(trimmed, MAX_SYSTEM_PROMPT_CHARS);
 };
 
-const createRunId = () => {
+const createRunId = (chatId?: string) => {
+  const normalizedChatId = String(chatId || '').trim();
+  if (normalizedChatId) {
+    const compact = normalizedChatId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 96);
+    return `chat-${compact || 'default'}`;
+  }
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
@@ -1990,10 +1995,10 @@ const createRunId = () => {
 };
 
 const buildRunName = (messages: Array<{ role: string; content: string }>) => {
-  const latestUser = [...messages]
-    .reverse()
-    .find((message) => message.role === 'user' && message.content.trim());
-  const raw = latestUser?.content?.trim() || '';
+  const firstUser = messages.find(
+    (message) => message.role === 'user' && message.content.trim()
+  );
+  const raw = firstUser?.content?.trim() || '';
   if (!raw) return 'Untitled run';
   const singleLine = raw.replace(/\s+/g, ' ').trim();
   if (singleLine.length <= 80) return singleLine;
@@ -2836,9 +2841,10 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     }
   );
 
-  const runName = buildRunName(normalizedMessages);
   const idempotency = buildAssistantIdempotencyKey(normalizedMessages, contextText);
-  const runId = createRunId();
+  const runId = createRunId(chatId);
+  const existingRunSummary = await getAssistantRunSummary(tenant.id, runId);
+  const runName = existingRunSummary?.runName || buildRunName(normalizedMessages);
   const reservation = await reserveAssistantRun(tenant.id, runId, idempotency);
   if (reservation.reusedRunId) {
     const cached = await getAssistantRun(tenant.id, reservation.reusedRunId);
