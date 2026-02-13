@@ -11,6 +11,7 @@ import {
   FiPackage,
   FiAlertCircle,
   FiActivity,
+  FiServer,
 } from "react-icons/fi";
 import { Button } from "@/components/ui/Button";
 import { useSessionToken } from "@/lib/client/session";
@@ -74,6 +75,13 @@ const navItems: NavItem[] = [
     href: "/admin/monitoring",
     icon: FiActivity,
     match: "/admin/monitoring",
+    roles: ["admin"],
+  },
+  {
+    label: "Containers",
+    href: "/admin/containers",
+    icon: FiServer,
+    match: "/admin/containers",
     roles: ["admin"],
   },
   {
