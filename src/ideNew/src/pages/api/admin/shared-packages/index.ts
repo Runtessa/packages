@@ -6,7 +6,7 @@ import { GlobalUIPackage } from '@idp/shared';
 import { GlobalUIPackageFile } from '@idp/shared';
 import { Like, Not } from 'typeorm';
 import { generateVersion } from '@/lib/version';
-import { hasIdePermission, normalizeIdeRole } from '@/lib/rbac';
+import { type IdePermission } from '@/lib/rbac';
 import {
   applySharedProjectTeamAccess,
   canEditSharedProject,
@@ -135,6 +135,10 @@ const parsePagination = (rawPage: unknown, rawLimit: unknown) => {
   return { page, limit, skip: (page - 1) * limit };
 };
 
+const hasPermission = (user: Awaited<ReturnType<typeof requireAdmin>>, permission: IdePermission) =>
+  user.isAdmin ||
+  (Array.isArray(user.permissions) && user.permissions.includes(permission));
+
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method === 'GET') {
     const user = await requireAdmin(req);
@@ -148,8 +152,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       skip,
       take: limit,
     });
-    const canCreate =
-      user.isAdmin || hasIdePermission(user.normalizedRole, 'ide.shared_ui.write');
+    const canCreate = hasPermission(user, 'ide.shared_ui.write');
     res.status(200).json({
       packages: packages.map((pkg) => serialize(pkg, user)),
       page,
@@ -224,8 +227,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       (err as any).statusCode = 400;
       throw err;
     }
-    const role = normalizeIdeRole(user.normalizedRole || user.role);
-    const allowEditorAssignments = user.isAdmin || role === 'tenant_admin';
+    const allowEditorAssignments = hasPermission(user, 'ide.tenants.manage');
     applySharedProjectTeamAccess(
       pkg,
       ownerTeamId,

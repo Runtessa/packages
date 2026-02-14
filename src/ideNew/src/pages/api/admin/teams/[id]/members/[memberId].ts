@@ -3,9 +3,10 @@ import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { AppDataSource, ensureSchema } from '@/lib/db';
 import { TeamMember } from '@idp/shared';
-import { TEAM_MEMBER_ROLES } from '@/lib/team-roles';
-
-const TEAM_ROLES = TEAM_MEMBER_ROLES;
+import {
+  assertTeamRoleSequence,
+  pickPrimaryTeamMemberRole,
+} from '@/lib/team-roles';
 
 const parseId = (raw: unknown, label: string) => {
   const value = Array.isArray(raw) ? raw[0] : raw;
@@ -18,25 +19,21 @@ const parseId = (raw: unknown, label: string) => {
   return id;
 };
 
-const normalizeRole = (raw: unknown) => {
-  if (typeof raw !== 'string' || !raw.trim()) {
-    const err = new Error('role is required');
+const normalizeRoles = (rolesInput: unknown, fallbackRole: unknown) => {
+  const normalized = assertTeamRoleSequence(rolesInput ?? fallbackRole);
+  if (!normalized.length) {
+    const err = new Error('roles are required');
     (err as any).statusCode = 400;
     throw err;
   }
-  const role = raw.trim().toLowerCase();
-  if (!TEAM_ROLES.includes(role as (typeof TEAM_ROLES)[number])) {
-    const err = new Error(`role must be one of: ${TEAM_ROLES.join(', ')}`);
-    (err as any).statusCode = 400;
-    throw err;
-  }
-  return role;
+  return normalized;
 };
 
 const serializeMember = (member: TeamMember) => ({
   id: member.id,
   teamId: member.teamId,
   userId: member.userId,
+  teamRoles: Array.isArray(member.roles) ? member.roles : [member.role || 'observer'],
   teamRole: member.role,
   userEmail: member.user?.email || null,
   userRole: member.user?.role || null,
@@ -52,7 +49,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     await requireAdmin(req);
     await ensureSchema();
 
-    const role = normalizeRole(req.body?.role);
+    const roles = normalizeRoles(req.body?.roles, req.body?.role);
+    const role = pickPrimaryTeamMemberRole(roles);
     const repo = AppDataSource.getRepository(TeamMember);
     const member = await repo.findOne({ where: { id: memberId, teamId }, relations: { user: true } });
     if (!member) {
@@ -61,6 +59,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     }
 
     member.role = role;
+    member.roles = roles;
     await repo.save(member);
 
     res.status(200).json({ member: serializeMember(member) });

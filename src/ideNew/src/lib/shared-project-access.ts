@@ -1,5 +1,5 @@
 import { GlobalModulePackage, GlobalUIPackage } from '@idp/shared';
-import { normalizeIdeRole } from './rbac';
+import { type IdePermission } from './rbac';
 
 type SharedProject = Pick<GlobalUIPackage, 'ownerTeamId' | 'editorTeamIds'> &
   Pick<GlobalModulePackage, 'ownerTeamId' | 'editorTeamIds'>;
@@ -9,6 +9,7 @@ type SharedAccessUser = {
   role?: string;
   normalizedRole?: string;
   activeTeamId?: number | null;
+  permissions?: IdePermission[];
 };
 
 const forbidden = (message: string) => {
@@ -107,8 +108,8 @@ const resolveAccessAdminRights = (user: SharedAccessUser, project: SharedProject
   if (user?.isAdmin) {
     return { allowed: true, shouldClaimOwner: false, activeTeamId: null };
   }
-  const role = normalizeIdeRole(user?.normalizedRole || user?.role || 'user');
-  if (role !== 'tenant_admin') {
+  const canManage = Array.isArray(user?.permissions) && user.permissions.includes('ide.tenants.manage');
+  if (!canManage) {
     return { allowed: false, shouldClaimOwner: false, activeTeamId: null };
   }
   const activeTeamId = getActiveTeamId(user);

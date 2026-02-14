@@ -85,6 +85,7 @@ const serializeMember = (member: TeamMember) => ({
   id: member.id,
   teamId: member.teamId,
   userId: member.userId,
+  teamRoles: Array.isArray(member.roles) ? member.roles : [member.role || 'observer'],
   teamRole: member.role,
   userEmail: member.user?.email || null,
   userRole: member.user?.role || null,

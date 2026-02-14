@@ -1,12 +1,13 @@
 import { TeamTenant } from '@idp/shared';
 import { AppDataSource, ensureSchema } from './db';
-import { normalizeIdeRole } from './rbac';
+import { type IdePermission } from './rbac';
 
 type ScopedUser = {
   isAdmin?: boolean;
   role?: string;
   normalizedRole?: string;
   activeTeamId?: number | null;
+  permissions?: IdePermission[];
 };
 
 const forbidden = (message: string) => {
@@ -32,10 +33,13 @@ export const getTenantScopeForUser = async (user: ScopedUser): Promise<string[] 
   return getTenantIdsForTeam(teamId);
 };
 
-export const canWriteTenantForUser = (user: ScopedUser) => {
+const hasPermission = (user: ScopedUser, permission: IdePermission) => {
   if (user?.isAdmin) return true;
-  const role = normalizeIdeRole(user?.normalizedRole || user?.role || 'user');
-  return role === 'tenant_admin';
+  return Array.isArray(user?.permissions) && user.permissions.includes(permission);
+};
+
+export const canWriteTenantForUser = (user: ScopedUser) => {
+  return hasPermission(user, 'ide.tenants.manage');
 };
 
 export const assertTenantReadableForUser = async (user: ScopedUser, tenantId: string) => {

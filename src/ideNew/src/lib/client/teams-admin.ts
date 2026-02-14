@@ -24,6 +24,7 @@ export type TeamMemberRow = {
   teamId: number;
   userId: number;
   teamRole: TeamRole | string;
+  teamRoles: Array<TeamRole | string>;
   userEmail: string | null;
   userRole: string | null;
   createdAt: string;
@@ -100,7 +101,7 @@ export const deleteTeam = async (token: string, teamId: number) =>
 export const addTeamMember = async (
   token: string,
   teamId: number,
-  body: { userId: number; role: TeamRole | string }
+  body: { userId: number; roles: Array<TeamRole | string> }
 ) =>
   (await fetchJson(`/api/admin/teams/${encodeURIComponent(String(teamId))}/members`, {
     method: 'POST',
@@ -112,7 +113,7 @@ export const updateTeamMemberRole = async (
   token: string,
   teamId: number,
   memberId: number,
-  body: { role: TeamRole | string }
+  body: { roles: Array<TeamRole | string> }
 ) =>
   (await fetchJson(
     `/api/admin/teams/${encodeURIComponent(String(teamId))}/members/${encodeURIComponent(String(memberId))}`,

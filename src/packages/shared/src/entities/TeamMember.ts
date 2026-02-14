@@ -26,6 +26,9 @@ export class TeamMember {
   @Column({ type: "varchar", default: "observer" })
   role!: string;
 
+  @Column({ type: "jsonb", default: () => "'[\"observer\"]'" })
+  roles!: string[];
+
   @ManyToOne(() => Team, { onDelete: "CASCADE" })
   @JoinColumn({ name: "team_id" })
   team!: Team;

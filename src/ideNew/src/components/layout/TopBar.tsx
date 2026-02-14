@@ -16,11 +16,13 @@ type MeUser = {
   activeTeamId: number | null;
   activeTeamName: string | null;
   activeTeamKey: string | null;
+  teamRoles: string[];
   teams: Array<{
     teamId: number;
     teamName: string;
     teamKey: string;
     role: string;
+    roles: string[];
   }>;
 };
 
@@ -146,6 +148,11 @@ export const TopBar = ({ onMenuToggle }: TopBarProps) => {
                         <p className="text-xs text-textMuted">
                           {user?.activeTeamName || "No active team"}
                         </p>
+                        {Array.isArray(user?.teamRoles) && user.teamRoles.length ? (
+                          <p className="text-[11px] text-textMuted">
+                            {user.teamRoles.join(', ')}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                     <div className="border-t border-borderSubtle px-3 py-3">
@@ -161,7 +168,7 @@ export const TopBar = ({ onMenuToggle }: TopBarProps) => {
                         >
                           {user.teams.map((team) => (
                             <option key={team.teamId} value={team.teamId}>
-                              {team.teamName} ({team.role})
+                              {team.teamName} ({(team.roles || [team.role]).join(', ')})
                             </option>
                           ))}
                         </select>

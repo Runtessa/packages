@@ -5,7 +5,11 @@ import { AppDataSource, ensureSchema } from '@/lib/db';
 import { Team } from '@idp/shared';
 import { TeamMember } from '@idp/shared';
 import { User } from '@idp/shared';
-import { TEAM_MEMBER_ROLES } from '@/lib/team-roles';
+import {
+  assertTeamRoleSequence,
+  pickPrimaryTeamMemberRole,
+  TEAM_MEMBER_ROLES,
+} from '@/lib/team-roles';
 
 const TEAM_ROLES = TEAM_MEMBER_ROLES;
 
@@ -20,25 +24,21 @@ const parseId = (raw: unknown, label: string) => {
   return id;
 };
 
-const normalizeRole = (raw: unknown) => {
-  if (typeof raw !== 'string' || !raw.trim()) {
-    const err = new Error('role is required');
+const normalizeRoles = (rolesInput: unknown, fallbackRole: unknown) => {
+  const normalized = assertTeamRoleSequence(rolesInput ?? fallbackRole ?? 'observer');
+  if (!normalized.length) {
+    const err = new Error('roles are required');
     (err as any).statusCode = 400;
     throw err;
   }
-  const role = raw.trim().toLowerCase();
-  if (!TEAM_ROLES.includes(role as (typeof TEAM_ROLES)[number])) {
-    const err = new Error(`role must be one of: ${TEAM_ROLES.join(', ')}`);
-    (err as any).statusCode = 400;
-    throw err;
-  }
-  return role;
+  return normalized;
 };
 
 const serializeMember = (member: TeamMember) => ({
   id: member.id,
   teamId: member.teamId,
   userId: member.userId,
+  teamRoles: Array.isArray(member.roles) ? member.roles : [member.role || 'observer'],
   teamRole: member.role,
   userEmail: member.user?.email || null,
   userRole: member.user?.role || null,
@@ -79,7 +79,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     await ensureSchema();
 
     const userId = parseId(req.body?.userId, 'user id');
-    const role = normalizeRole(req.body?.role || 'observer');
+    const roles = normalizeRoles(req.body?.roles, req.body?.role || 'observer');
+    const role = pickPrimaryTeamMemberRole(roles);
 
     const teamRepo = AppDataSource.getRepository(Team);
     const userRepo = AppDataSource.getRepository(User);
@@ -108,6 +109,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       teamId,
       userId,
       role,
+      roles,
     });
     await memberRepo.save(membership);
 

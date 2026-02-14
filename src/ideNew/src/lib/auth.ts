@@ -7,7 +7,11 @@ import { logger } from './logger';
 import { User } from '@idp/shared';
 import { LoginSession } from '@idp/shared';
 import { TeamMember } from '@idp/shared';
-import { type IdePermission, getRolePermissions, hasIdePermission, normalizeIdeRole } from './rbac';
+import { type IdePermission, getRolePermissions, normalizeIdeRole } from './rbac';
+import {
+  normalizeTeamMemberRoles,
+  pickPrimaryTeamMemberRole,
+} from './team-roles';
 
 type AuthHeader = {
   sessionToken?: string;
@@ -19,6 +23,7 @@ type AuthUser = {
   email: string;
   baseRole: string;
   teamRole: string;
+  teamRoles: string[];
   role: string;
   normalizedRole: string;
   permissions: IdePermission[];
@@ -27,6 +32,7 @@ type AuthUser = {
     teamKey: string;
     teamName: string;
     role: string;
+    roles: string[];
   }>;
   activeTeamId: number | null;
   activeTeamKey: string | null;
@@ -40,6 +46,7 @@ type TeamMembershipInfo = {
   teamKey: string;
   teamName: string;
   role: string;
+  roles: string[];
 };
 
 const SESSION_USER_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -119,6 +126,15 @@ const parsePreferredTeamId = (req: NextApiRequest) => {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
+const buildPermissionsForRoles = (rolesInput: unknown): IdePermission[] => {
+  const roles = normalizeTeamMemberRoles(rolesInput);
+  const permissions = new Set<IdePermission>();
+  roles.forEach((role) => {
+    getRolePermissions(role).forEach((permission) => permissions.add(permission));
+  });
+  return Array.from(permissions);
+};
+
 const mapMemberships = async (userId: number): Promise<TeamMembershipInfo[]> => {
   await ensureSchema();
   const memberRepo = AppDataSource.getRepository(TeamMember);
@@ -131,10 +147,11 @@ const mapMemberships = async (userId: number): Promise<TeamMembershipInfo[]> => 
     .getMany();
 
   return rows.map((row) => ({
+    roles: normalizeTeamMemberRoles(row.roles ?? row.role ?? 'observer'),
+    role: pickPrimaryTeamMemberRole(row.roles ?? row.role ?? 'observer'),
     teamId: row.teamId,
     teamKey: row.team?.key || '',
     teamName: row.team?.name || `Team ${row.teamId}`,
-    role: String(row.role || 'observer'),
   }));
 };
 
@@ -160,26 +177,30 @@ const toAuthUser = (
 ): AuthUser => {
   const teams = options?.teams ?? [];
   const activeMembership = pickActiveMembership(teams, options?.preferredTeamId);
+  const activeTeamRoles = activeMembership?.roles || [];
   const effectiveRole = isTeamlessPrivilegedRole(user.role)
     ? String(user.role || 'platform_admin')
     : String(activeMembership?.role || user.role || 'user');
   const normalizedRole = normalizeIdeRole(effectiveRole);
-  const permissions = getRolePermissions(normalizedRole);
+  const permissions = isTeamlessPrivilegedRole(user.role)
+    ? getRolePermissions(normalizedRole)
+    : buildPermissionsForRoles(activeTeamRoles);
   return {
-  id: user.id,
-  email: user.email,
-  baseRole: String(user.role || 'user'),
-  teamRole: String(activeMembership?.role || 'observer'),
-  role: normalizedRole,
-  normalizedRole,
-  permissions,
-  teams,
-  activeTeamId: activeMembership?.teamId ?? null,
-  activeTeamKey: activeMembership?.teamKey ?? null,
-  activeTeamName: activeMembership?.teamName ?? null,
-  token: token ?? null,
-  isAdmin: normalizedRole === 'admin' || normalizedRole === 'platform_admin',
-};
+    id: user.id,
+    email: user.email,
+    baseRole: String(user.role || 'user'),
+    teamRole: String(activeMembership?.role || 'observer'),
+    teamRoles: activeTeamRoles,
+    role: normalizedRole,
+    normalizedRole,
+    permissions,
+    teams,
+    activeTeamId: activeMembership?.teamId ?? null,
+    activeTeamKey: activeMembership?.teamKey ?? null,
+    activeTeamName: activeMembership?.teamName ?? null,
+    token: token ?? null,
+    isAdmin: normalizedRole === 'admin' || normalizedRole === 'platform_admin',
+  };
 };
 
 export const getSessionTokenFromRequest = (req: NextApiRequest) => {
@@ -306,9 +327,7 @@ export const requireUser = async (req: NextApiRequest): Promise<AuthUser> => {
 export const requireAdmin = async (req: NextApiRequest) => {
   const user = await requireUser(req);
   const requiredPermission = resolveRoutePermission(req);
-  const allowedByPermission = requiredPermission
-    ? hasIdePermission(user.normalizedRole, requiredPermission)
-    : false;
+  const allowedByPermission = requiredPermission ? user.permissions.includes(requiredPermission) : false;
   if (!user.isAdmin && !allowedByPermission) {
     await logger.warn({
       source: 'auth',

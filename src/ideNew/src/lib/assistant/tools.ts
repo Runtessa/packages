@@ -138,6 +138,7 @@ const toSharedAccessUser = (ctx: AssistantToolContext) => ({
   isAdmin: ctx.isAdmin,
   role: ctx.role,
   normalizedRole: ctx.role,
+  permissions: ctx.permissions,
   activeTeamId: ctx.activeTeamId ?? null,
 });
 
@@ -952,7 +953,7 @@ const createSharedProjectInternal = async (
   if (!ownerTeamId && !ctx.isAdmin) {
     throw new Error('ownerTeamId is required when active team is not set');
   }
-  const allowEditorAssignments = ctx.isAdmin || ctx.role === 'tenant_admin';
+  const allowEditorAssignments = hasToolPermission(ctx, 'ide.tenants.manage');
 
   const project = projectRepo.create({
     name,

@@ -11,6 +11,7 @@ import { TextArea } from '@/components/ui/TextArea';
 import { useAdminGuard } from '@/lib/client/use-admin-guard';
 import { AccessTabs } from '@/components/admin/AccessTabs';
 import { IDE_ROLE_LABELS } from '@/lib/rbac';
+import { getMissingRoleDependencies, normalizeTeamMemberRoles } from '@/lib/team-roles';
 import {
   TEAM_ROLE_ORDER,
   TEAM_ROLE_LABELS,
@@ -30,18 +31,31 @@ import {
   type TeamUserOption,
 } from '@/lib/client/teams-admin';
 
-const ROLE_INDEX = TEAM_ROLE_ORDER.reduce((acc, role, index) => {
-  acc[role] = index;
-  return acc;
-}, {} as Record<string, number>);
+const toRoleList = (value: unknown): TeamRole[] => {
+  const normalized = normalizeTeamMemberRoles(value);
+  return TEAM_ROLE_ORDER.filter((role) => normalized.includes(role)) as TeamRole[];
+};
 
-const toRole = (value: string): TeamRole =>
-  (TEAM_ROLE_ORDER.includes(value as TeamRole) ? (value as TeamRole) : 'observer');
+const toggleRole = (rolesInput: TeamRole[], role: TeamRole): TeamRole[] => {
+  const current = toRoleList(rolesInput);
+  let next: TeamRole[];
+  if (role === 'observer') {
+    next = current.includes('observer') ? [] : ['observer'];
+  } else if (current.includes(role)) {
+    next = current.filter((entry) => entry !== role);
+  } else {
+    next = [...current.filter((entry) => entry !== 'observer'), role];
+  }
+  const normalized = toRoleList(next);
+  return normalized.length ? normalized : ['observer'];
+};
 
-const shiftRole = (currentRole: string, direction: -1 | 1): TeamRole => {
-  const currentIndex = ROLE_INDEX[currentRole] ?? ROLE_INDEX.observer;
-  const nextIndex = Math.min(Math.max(currentIndex + direction, 0), TEAM_ROLE_ORDER.length - 1);
-  return TEAM_ROLE_ORDER[nextIndex];
+const getRoleSequenceError = (rolesInput: TeamRole[]) => {
+  const missing = getMissingRoleDependencies(rolesInput) as TeamRole[];
+  if (!missing.length) return '';
+  return `Missing prerequisite role(s): ${missing
+    .map((role) => TEAM_ROLE_LABELS[role] || role)
+    .join(', ')}`;
 };
 
 const parseTeamId = (raw: unknown): number | null => {
@@ -68,7 +82,7 @@ export default function AdminTeamDetailPage() {
   const [users, setUsers] = useState<TeamUserOption[]>([]);
   const [tenants, setTenants] = useState<TeamTenantOption[]>([]);
   const [tenantIdToAssign, setTenantIdToAssign] = useState('');
-  const [memberRoleDraft, setMemberRoleDraft] = useState<Record<number, TeamRole>>({});
+  const [memberRoleDraft, setMemberRoleDraft] = useState<Record<number, TeamRole[]>>({});
   const [detailLoading, setDetailLoading] = useState(false);
   const [busyAction, setBusyAction] = useState('');
   const [error, setError] = useState('');
@@ -82,7 +96,7 @@ export default function AdminTeamDetailPage() {
   });
   const [memberForm, setMemberForm] = useState({
     userId: '',
-    role: 'observer' as TeamRole,
+    roles: ['observer'] as TeamRole[],
   });
 
   const loadUsers = async () => {
@@ -110,9 +124,9 @@ export default function AdminTeamDetailPage() {
         description: detail.team.description || '',
         isActive: Boolean(detail.team.isActive),
       });
-      const drafts: Record<number, TeamRole> = {};
+      const drafts: Record<number, TeamRole[]> = {};
       detail.members.forEach((member) => {
-        drafts[member.id] = toRole(String(member.teamRole || 'observer'));
+        drafts[member.id] = toRoleList(member.teamRoles ?? member.teamRole);
       });
       setMemberRoleDraft(drafts);
     } catch (err: any) {
@@ -164,6 +178,10 @@ export default function AdminTeamDetailPage() {
   const availableTenants = useMemo(
     () => tenants.filter((entry) => !entry.assigned),
     [tenants]
+  );
+  const memberFormRoleError = useMemo(
+    () => getRoleSequenceError(memberForm.roles),
+    [memberForm.roles]
   );
 
   const handleSaveTeam = async (event: FormEvent) => {
@@ -219,6 +237,12 @@ export default function AdminTeamDetailPage() {
       setError('Select a user to add');
       return;
     }
+    const roles = toRoleList(memberForm.roles);
+    const roleError = getRoleSequenceError(roles);
+    if (roleError) {
+      setError(roleError);
+      return;
+    }
 
     setBusyAction('add-member');
     setError('');
@@ -226,10 +250,10 @@ export default function AdminTeamDetailPage() {
     try {
       await addTeamMember(token, teamId, {
         userId,
-        role: memberForm.role,
+        roles,
       });
       setSuccess('Member added to team');
-      setMemberForm({ userId: '', role: 'observer' });
+      setMemberForm({ userId: '', roles: ['observer'] });
       await loadTeamDetail({ silent: true });
     } catch (err: any) {
       setError(err.message || 'Failed to add member');
@@ -238,27 +262,43 @@ export default function AdminTeamDetailPage() {
     }
   };
 
-  const handleSetMemberRole = async (memberId: number, role: TeamRole) => {
+  const handleSetMemberRole = async (memberId: number, rolesInput: TeamRole[]) => {
     if (!token || !teamId) return;
+    const roles = toRoleList(rolesInput);
+    const roleError = getRoleSequenceError(roles);
+    if (roleError) {
+      setError(roleError);
+      return;
+    }
     setBusyAction(`member-role:${memberId}`);
     setError('');
     setSuccess('');
     try {
-      await updateTeamMemberRole(token, teamId, memberId, { role });
-      setSuccess('Team role updated');
+      await updateTeamMemberRole(token, teamId, memberId, { roles });
+      setSuccess('Team roles updated');
       await loadTeamDetail({ silent: true });
     } catch (err: any) {
-      setError(err.message || 'Failed to update team role');
+      setError(err.message || 'Failed to update team roles');
     } finally {
       setBusyAction('');
     }
   };
 
-  const handlePromoteDemoteMember = async (memberId: number, currentRole: string, direction: -1 | 1) => {
-    const nextRole = shiftRole(currentRole, direction);
-    if (nextRole === currentRole) return;
-    setMemberRoleDraft((prev) => ({ ...prev, [memberId]: nextRole }));
-    await handleSetMemberRole(memberId, nextRole);
+  const handleToggleMemberRoleDraft = (memberId: number, role: TeamRole) => {
+    setMemberRoleDraft((prev) => {
+      const current = toRoleList(prev[memberId] || ['observer']);
+      return {
+        ...prev,
+        [memberId]: toggleRole(current, role),
+      };
+    });
+  };
+
+  const handleToggleAddMemberRole = (role: TeamRole) => {
+    setMemberForm((prev) => ({
+      ...prev,
+      roles: toggleRole(toRoleList(prev.roles), role),
+    }));
   };
 
   const handleRemoveMember = async (memberId: number, email?: string | null) => {
@@ -407,7 +447,7 @@ export default function AdminTeamDetailPage() {
             </FormLayout>
           </DataCard>
 
-          <DataCard title="Team Members" subtitle="Add users, promote/demote team roles, and remove memberships.">
+          <DataCard title="Team Members" subtitle="Add users, assign multiple roles, and manage strict role sequence.">
             <div className="space-y-4">
               <form className="grid gap-3 md:grid-cols-3" onSubmit={handleAddMember}>
                 <Select
@@ -424,32 +464,42 @@ export default function AdminTeamDetailPage() {
                     </option>
                   ))}
                 </Select>
-                <Select
-                  label="Team Role"
-                  value={memberForm.role}
-                  onChange={(event) =>
-                    setMemberForm((prev) => ({ ...prev, role: toRole(String(event.target.value)) }))
-                  }
-                  options={TEAM_ROLE_ORDER.map((role) => ({
-                    label: TEAM_ROLE_LABELS[role] || role,
-                    value: role,
-                  }))}
-                />
-                <div className="flex items-end">
-                  <Button type="submit" variant="primary" disabled={Boolean(busyAction)} className="w-full">
+                <div className="rounded-lg border border-borderSubtle bg-bgApp px-3 py-2 md:col-span-2">
+                  <p className="mb-2 text-xs uppercase tracking-[0.08em] text-textMuted">Team Roles</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {TEAM_ROLE_ORDER.map((role) => (
+                      <label key={role} className="inline-flex items-center gap-2 text-sm text-textPrimary">
+                        <input
+                          type="checkbox"
+                          checked={memberForm.roles.includes(role)}
+                          onChange={() => handleToggleAddMemberRole(role)}
+                        />
+                        <span>{TEAM_ROLE_LABELS[role] || role}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {memberFormRoleError ? (
+                    <p className="mt-2 text-xs text-danger">{memberFormRoleError}</p>
+                  ) : null}
+                </div>
+                <div className="flex items-end md:col-span-3">
+                  <Button type="submit" variant="primary" disabled={Boolean(busyAction) || Boolean(memberFormRoleError)} className="w-full">
                     {busyAction === 'add-member' ? 'Adding...' : 'Add Member'}
                   </Button>
                 </div>
               </form>
 
               <DataTable
-                headers={['User', 'Global Role', 'Team Role', 'Joined', 'Actions']}
+                headers={['User', 'Global Role', 'Team Roles', 'Joined', 'Actions']}
                 loading={detailLoading}
                 emptyMessage="No members in this team yet."
                 size="sm"
               >
                 {teamDetail.members.map((member) => {
-                  const currentRole = memberRoleDraft[member.id] || toRole(String(member.teamRole));
+                  const currentRoles = toRoleList(
+                    memberRoleDraft[member.id] ?? member.teamRoles ?? member.teamRole
+                  );
+                  const roleError = getRoleSequenceError(currentRoles);
                   return (
                     <tr key={member.id} className="hover:bg-bgApp transition">
                       <td className="px-3 py-2">
@@ -462,46 +512,37 @@ export default function AdminTeamDetailPage() {
                           : '-'}
                       </td>
                       <td className="px-3 py-2">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <select
-                            value={currentRole}
-                            onChange={(event) =>
-                              setMemberRoleDraft((prev) => ({
-                                ...prev,
-                                [member.id]: toRole(String(event.target.value)),
-                              }))
-                            }
-                            className="rounded-md border border-borderSubtle bg-bgSurface px-2 py-1 text-xs text-textPrimary"
-                          >
-                            {TEAM_ROLE_ORDER.map((role) => (
-                              <option key={role} value={role}>
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap gap-1">
+                            {currentRoles.map((role) => (
+                              <span
+                                key={`${member.id}:${role}`}
+                                className="rounded-full border border-borderSubtle bg-bgSurface px-2 py-0.5 text-[11px] text-textPrimary"
+                              >
                                 {TEAM_ROLE_LABELS[role] || role}
-                              </option>
+                              </span>
                             ))}
-                          </select>
+                          </div>
+                          <div className="grid gap-1 sm:grid-cols-2">
+                            {TEAM_ROLE_ORDER.map((role) => (
+                              <label key={role} className="inline-flex items-center gap-2 text-xs text-textPrimary">
+                                <input
+                                  type="checkbox"
+                                  checked={currentRoles.includes(role)}
+                                  onChange={() => handleToggleMemberRoleDraft(member.id, role)}
+                                />
+                                <span>{TEAM_ROLE_LABELS[role] || role}</span>
+                              </label>
+                            ))}
+                          </div>
+                          {roleError ? <p className="text-xs text-danger">{roleError}</p> : null}
                           <Button
                             variant="secondary"
                             size="xs"
-                            disabled={Boolean(busyAction) || currentRole === TEAM_ROLE_ORDER[0]}
-                            onClick={() => void handlePromoteDemoteMember(member.id, currentRole, -1)}
+                            disabled={Boolean(busyAction) || Boolean(roleError)}
+                            onClick={() => void handleSetMemberRole(member.id, currentRoles)}
                           >
-                            Demote
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            size="xs"
-                            disabled={Boolean(busyAction) || currentRole === TEAM_ROLE_ORDER[TEAM_ROLE_ORDER.length - 1]}
-                            onClick={() => void handlePromoteDemoteMember(member.id, currentRole, 1)}
-                          >
-                            Promote
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            size="xs"
-                            disabled={Boolean(busyAction)}
-                            onClick={() => void handleSetMemberRole(member.id, currentRole)}
-                          >
-                            {busyAction === `member-role:${member.id}` ? 'Saving...' : 'Set Role'}
+                            {busyAction === `member-role:${member.id}` ? 'Saving...' : 'Apply Roles'}
                           </Button>
                         </div>
                       </td>
