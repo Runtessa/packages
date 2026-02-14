@@ -10,6 +10,7 @@ import { TextArea } from '@/components/ui/TextArea';
 import { useToast } from '@/components/ui/Toast';
 import { fetchJson } from '@/lib/client/api';
 import { useSessionToken } from '@/lib/client/session';
+import { hasPermissionFromUser } from '@/lib/client/access';
 
 type ProjectFormState = {
   name: string;
@@ -80,8 +81,8 @@ export default function AdminSharedPackageCreatePage() {
         const meData = await meRes.json();
         if (!meRes.ok) throw new Error(meData.error || 'Failed to load user');
         const role = meData?.user?.role;
-        setIsAdmin(role === 'admin');
-        if (role !== 'admin') {
+        setIsAdmin(hasPermissionFromUser(meData.user, 'ide.shared_ui.write'));
+        if (!hasPermissionFromUser(meData.user, 'ide.shared_ui.write')) {
           router.replace('/dashboard');
         }
       } catch (err: any) {

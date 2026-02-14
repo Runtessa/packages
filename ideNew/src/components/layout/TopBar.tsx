@@ -10,11 +10,26 @@ type TopBarProps = {
   onMenuToggle?: () => void;
 };
 
+type MeUser = {
+  email: string;
+  role: string;
+  activeTeamId: number | null;
+  activeTeamName: string | null;
+  activeTeamKey: string | null;
+  teams: Array<{
+    teamId: number;
+    teamName: string;
+    teamKey: string;
+    role: string;
+  }>;
+};
+
 export const TopBar = ({ onMenuToggle }: TopBarProps) => {
   const router = useRouter();
   const { token, clear } = useSessionToken();
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  const [user, setUser] = useState<{ email: string; role: string } | null>(null);
+  const [user, setUser] = useState<MeUser | null>(null);
+  const [switchingTeam, setSwitchingTeam] = useState(false);
 
   const handleLogout = async () => {
     try {
@@ -47,6 +62,25 @@ export const TopBar = ({ onMenuToggle }: TopBarProps) => {
     };
     loadUser();
   }, [token]);
+
+  const handleTeamChange = async (teamIdValue: string) => {
+    if (!token) return;
+    const teamId = Number(teamIdValue);
+    if (!Number.isInteger(teamId) || teamId <= 0) return;
+    setSwitchingTeam(true);
+    try {
+      await fetchJson("/api/me/team", {
+        method: "POST",
+        token,
+        body: { teamId },
+      });
+      router.reload();
+    } catch {
+      // ignore; menu remains open so user can retry
+    } finally {
+      setSwitchingTeam(false);
+    }
+  };
 
   const userInitial = (user?.email || "").trim().charAt(0).toUpperCase();
 
@@ -109,7 +143,33 @@ export const TopBar = ({ onMenuToggle }: TopBarProps) => {
                         <p className="text-xs uppercase text-textMuted">
                           {user?.role || "Unknown role"}
                         </p>
+                        <p className="text-xs text-textMuted">
+                          {user?.activeTeamName || "No active team"}
+                        </p>
                       </div>
+                    </div>
+                    <div className="border-t border-borderSubtle px-3 py-3">
+                      <label className="mb-1 block text-xs uppercase tracking-[0.08em] text-textMuted">
+                        Team Scope
+                      </label>
+                      {Array.isArray(user?.teams) && user.teams.length ? (
+                        <select
+                          className="w-full rounded-md border border-borderSubtle bg-bgApp px-2 py-2 text-sm text-textPrimary focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60"
+                          value={String(user?.activeTeamId || user.teams[0]?.teamId || "")}
+                          onChange={(event) => void handleTeamChange(event.target.value)}
+                          disabled={switchingTeam || user.teams.length <= 1}
+                        >
+                          {user.teams.map((team) => (
+                            <option key={team.teamId} value={team.teamId}>
+                              {team.teamName} ({team.role})
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <p className="rounded-md border border-borderSubtle bg-bgApp px-2 py-2 text-xs text-textMuted">
+                          No active team memberships.
+                        </p>
+                      )}
                     </div>
                     <div className="border-t border-borderSubtle px-2 py-2">
                       <Link

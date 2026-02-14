@@ -4,6 +4,7 @@ import { DataCard } from '@/components/ui/DataCard';
 import { StatCard } from '@/components/ui/StatCard';
 import { Button } from '@/components/ui/Button';
 import { useSessionToken } from '@/lib/client/session';
+import { hasPermissionFromUser } from '@/lib/client/access';
 
 type User = { email: string; role: string };
 
@@ -54,7 +55,12 @@ export default function DashboardPage() {
         description: 'Review available endpoints.',
       },
     ];
-    if (user?.role === 'admin') {
+    if (hasPermissionFromUser(user, 'ide.users.read')) {
+      links.push({
+        label: 'Team management',
+        href: '/admin/teams',
+        description: 'Create teams and manage member roles.',
+      });
       links.push({
         label: 'User management',
         href: '/admin/users',
@@ -92,7 +98,7 @@ export default function DashboardPage() {
         <StatCard
           label="Role"
           value={user?.role ? user.role.toUpperCase() : 'Unknown'}
-          tone={user?.role === 'admin' ? 'positive' : 'default'}
+          tone={hasPermissionFromUser(user, 'ide.settings.manage') ? 'positive' : 'default'}
         />
         <StatCard label="User" value={user?.email || 'Not loaded'} />
       </div>

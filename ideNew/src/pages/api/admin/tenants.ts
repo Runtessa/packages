@@ -4,9 +4,11 @@ import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
 import { Tenant } from '@idp/shared';
 import { Secret } from '@idp/shared';
+import { In } from 'typeorm';
 import { encryptSecret } from '@/lib/crypto';
 import { maskPasswordFields, resolveMaskedPasswords } from '@/lib/adapter-config-passwords';
 import { parseAdapterConfig } from '@/lib/tenant-adapter-config';
+import { canWriteTenantForUser, getTenantScopeForUser } from '@/lib/team-tenant-access';
 
 const DEFAULT_RESOURCE_CONFIG = { memory: 512, timeout: 5000 };
 const DEFAULT_AUTH_DB_CONFIG = { mode: 'shared' as const, secretKey: null as string | null };
@@ -114,7 +116,7 @@ const parseAdapterConfigObject = (raw: unknown): Record<string, unknown> | null 
   return raw as Record<string, unknown>;
 };
 
-const serializeTenant = (tenant: Tenant) => ({
+const serializeTenant = (tenant: Tenant, canWrite: boolean) => ({
   id: tenant.id,
   hostname: tenant.hostname,
   isSuspended: tenant.isSuspended,
@@ -123,6 +125,7 @@ const serializeTenant = (tenant: Tenant) => ({
   adapterAccess: tenant.adapterAccess ?? {},
   adapterConfig: tenant.adapterConfig ?? {},
   authDbConfig: tenant.authDbConfig ?? DEFAULT_AUTH_DB_CONFIG,
+  canWrite,
   createdAt: tenant.createdAt,
   updatedAt: tenant.updatedAt,
 });
@@ -139,28 +142,48 @@ const parsePagination = (rawPage: unknown, rawLimit: unknown) => {
 
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method === 'GET') {
-    await requireAdmin(req);
+    const user = await requireAdmin(req);
     await ensureCoreSchema();
 
     const repo = CoreDataSource.getRepository(Tenant);
     const { page, limit, skip } = parsePagination(req.query.page, req.query.limit);
+    const scopedTenantIds = await getTenantScopeForUser(user);
+    if (Array.isArray(scopedTenantIds) && scopedTenantIds.length === 0) {
+      res.status(200).json({
+        tenants: [],
+        page,
+        limit,
+        total: 0,
+        canCreate: user.isAdmin,
+      });
+      return;
+    }
+    const where = Array.isArray(scopedTenantIds) ? { id: In(scopedTenantIds) } : {};
     const [tenants, total] = await repo.findAndCount({
+      where,
       order: { hostname: 'ASC' },
       skip,
       take: limit,
     });
+    const canWrite = canWriteTenantForUser(user);
 
     res.status(200).json({
-      tenants: tenants.map(serializeTenant),
+      tenants: tenants.map((tenant) => serializeTenant(tenant, canWrite)),
       page,
       limit,
       total,
+      canCreate: user.isAdmin,
     });
     return;
   }
 
   if (req.method === 'POST') {
-    await requireAdmin(req);
+    const user = await requireAdmin(req);
+    if (!user.isAdmin) {
+      const err = new Error('Forbidden: tenant creation is restricted to platform admins');
+      (err as any).statusCode = 403;
+      throw err;
+    }
     await ensureCoreSchema();
 
     const hostname = normalizeHostname(req.body?.hostname);
@@ -207,7 +230,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       }
     }
 
-    res.status(201).json({ tenant: serializeTenant(tenant) });
+    res.status(201).json({ tenant: serializeTenant(tenant, true) });
     return;
   }
 

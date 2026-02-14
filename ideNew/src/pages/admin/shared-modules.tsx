@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { fetchJson } from '@/lib/client/api';
 import { useSessionToken } from '@/lib/client/session';
+import { hasPermissionFromUser } from '@/lib/client/access';
 
 type SharedModuleProject = {
   id: string;
@@ -76,8 +77,8 @@ export default function AdminSharedModulesPage() {
         const meData = await meRes.json();
         if (!meRes.ok) throw new Error(meData.error || 'Failed to load user');
         const role = meData?.user?.role;
-        setIsAdmin(role === 'admin');
-        if (role !== 'admin') {
+        setIsAdmin(hasPermissionFromUser(meData.user, 'ide.shared_modules.write'));
+        if (!hasPermissionFromUser(meData.user, 'ide.shared_modules.write')) {
           router.replace('/dashboard');
           return;
         }

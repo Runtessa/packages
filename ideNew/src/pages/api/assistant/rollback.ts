@@ -24,10 +24,11 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   const result = await rollbackChanges(changes as AssistantChange[], {
     tenant,
     userId: user.id,
+    role: user.normalizedRole,
+    permissions: user.permissions,
     isAdmin: user.isAdmin,
     changes: [],
   });
 
   res.status(200).json(result);
 });
-

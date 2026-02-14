@@ -729,6 +729,85 @@ const parseExtraServices = () => {
   }
 };
 
+const parseQueryBool = (value, fallback) => {
+  if (Array.isArray(value)) {
+    return parseQueryBool(value[0], fallback);
+  }
+  if (typeof value !== 'string') return fallback;
+  return asBool(value, fallback);
+};
+
+const resolveAllowUnmanagedActions = () =>
+  asBool(
+    pickEnv(
+      'CONTAINER_MANAGER_ALLOW_UNMANAGED_ACTIONS',
+      'CONTAINER_AGENT_ALLOW_UNMANAGED_ACTIONS'
+    ),
+    true
+  );
+
+const formatContainerSummary = (row) => ({
+  id: row.Id,
+  names: row.Names,
+  image: row.Image,
+  imageId: row.ImageID,
+  command: row.Command,
+  created: row.Created,
+  state: row.State,
+  status: row.Status,
+  labels: row.Labels,
+  ports: row.Ports,
+});
+
+const readDockerLogBuffer = async (value) => {
+  if (!value) return Buffer.alloc(0);
+  if (Buffer.isBuffer(value)) return value;
+  if (typeof value === 'string') return Buffer.from(value);
+  if (typeof value.on === 'function') {
+    const chunks = [];
+    await new Promise((resolve, reject) => {
+      value.on('data', (chunk) => {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+      });
+      value.on('end', resolve);
+      value.on('error', reject);
+    });
+    return Buffer.concat(chunks);
+  }
+  return Buffer.alloc(0);
+};
+
+const demuxDockerLogs = (buffer) => {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) return '';
+  let offset = 0;
+  const lines = [];
+  while (offset + 8 <= buffer.length) {
+    const streamType = buffer[offset];
+    const chunkLength = buffer.readUInt32BE(offset + 4);
+    const start = offset + 8;
+    const end = start + chunkLength;
+    if (end > buffer.length) {
+      break;
+    }
+    const payload = buffer.slice(start, end).toString('utf8');
+    if (payload) {
+      const prefix = streamType === 2 ? '[stderr] ' : streamType === 1 ? '[stdout] ' : '';
+      lines.push(
+        payload
+          .split('\n')
+          .filter((line) => line.length > 0)
+          .map((line) => `${prefix}${line}`)
+          .join('\n')
+      );
+    }
+    offset = end;
+  }
+  if (offset === 0) {
+    return buffer.toString('utf8');
+  }
+  return lines.filter(Boolean).join('\n');
+};
+
 const resolveManagedServiceDefinition = async (serviceKey, userKey, userName, preferredPort) => {
   if (serviceKey === 'codex-gateway') {
     const config = await ensureCodexConfig(userKey || 'anonymous', userName || '', preferredPort);
@@ -961,25 +1040,241 @@ app.post('/v1/services/:service/action', async (req, res, next) => {
   }
 });
 
-app.get('/v1/containers/list', async (_req, res, next) => {
+app.get('/v1/containers/list', async (req, res, next) => {
   try {
-    const list = await docker.listContainers({
+    const managedOnly = parseQueryBool(req.query.managedOnly, true);
+    const query = {
       all: true,
-      filters: {
-        label: MANAGED_LABEL_VALUES.map((value) => `idp.managed.by=${value}`),
-      },
+      ...(managedOnly
+        ? {
+            filters: {
+              label: MANAGED_LABEL_VALUES.map((value) => `idp.managed.by=${value}`),
+            },
+          }
+        : {}),
+    };
+    const list = await docker.listContainers(query);
+    const serviceFilter = String(req.query.service || '').trim();
+    const search = String(req.query.search || '').trim().toLowerCase();
+    const filtered = list.filter((row) => {
+      if (serviceFilter) {
+        const service = String(row.Labels?.['idp.service'] || '').trim();
+        if (service !== serviceFilter) return false;
+      }
+      if (!search) return true;
+      const haystack = [
+        row.Id,
+        ...(Array.isArray(row.Names) ? row.Names : []),
+        row.Image,
+        row.Command,
+        row.Status,
+        row.Labels?.['idp.service'] || '',
+      ]
+        .map((entry) => String(entry || '').toLowerCase())
+        .join(' ');
+      return haystack.includes(search);
     });
+
     res.status(200).json({
       ok: true,
-      containers: list.map((row) => ({
-        id: row.Id,
-        names: row.Names,
-        image: row.Image,
-        state: row.State,
-        status: row.Status,
-        labels: row.Labels,
-        ports: row.Ports,
-      })),
+      managedOnly,
+      total: filtered.length,
+      containers: filtered.map(formatContainerSummary),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/v1/containers/:containerName/inspect', async (req, res, next) => {
+  try {
+    const containerName = sanitizeSegment(req.params.containerName || '', 128);
+    if (!containerName) {
+      res.status(400).json({ error: 'containerName is required' });
+      return;
+    }
+    const inspect = await inspectContainer(containerName);
+    if (!inspect) {
+      res.status(404).json({ error: `Container ${containerName} not found` });
+      return;
+    }
+    const state = {
+      id: inspect.Id,
+      name: String(inspect.Name || '').replace(/^\/+/, ''),
+      image: inspect.Config?.Image || '',
+      created: inspect.Created,
+      platform: inspect.Platform || '',
+      state: inspect.State || {},
+      config: {
+        env: inspect.Config?.Env || [],
+        cmd: inspect.Config?.Cmd || [],
+        entrypoint: inspect.Config?.Entrypoint || [],
+        workingDir: inspect.Config?.WorkingDir || '',
+        labels: inspect.Config?.Labels || {},
+      },
+      hostConfig: {
+        restartPolicy: inspect.HostConfig?.RestartPolicy || {},
+        networkMode: inspect.HostConfig?.NetworkMode || '',
+        binds: inspect.HostConfig?.Binds || [],
+        portBindings: inspect.HostConfig?.PortBindings || {},
+      },
+      mounts: inspect.Mounts || [],
+      networkSettings: inspect.NetworkSettings || {},
+      isManaged: isManagedContainer(inspect),
+    };
+    res.status(200).json({
+      ok: true,
+      containerName,
+      inspect: state,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/v1/containers/:containerName/logs', async (req, res, next) => {
+  try {
+    const containerName = sanitizeSegment(req.params.containerName || '', 128);
+    if (!containerName) {
+      res.status(400).json({ error: 'containerName is required' });
+      return;
+    }
+    const inspect = await inspectContainer(containerName);
+    if (!inspect) {
+      res.status(404).json({ error: `Container ${containerName} not found` });
+      return;
+    }
+    const tail = parseIntBounded(req.query.tail, 200, 1, 5000);
+    const since = parseIntBounded(req.query.since, 0, 0, 4_000_000_000);
+    const rawLogs = await containerFromName(containerName).logs({
+      stdout: true,
+      stderr: true,
+      timestamps: true,
+      tail,
+      ...(since > 0 ? { since } : {}),
+    });
+    const logBuffer = await readDockerLogBuffer(rawLogs);
+    const logs = demuxDockerLogs(logBuffer);
+    res.status(200).json({
+      ok: true,
+      containerName,
+      tail,
+      logs,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/containers/create', async (req, res, next) => {
+  try {
+    const image = String(req.body?.image || '').trim();
+    if (!image) {
+      res.status(400).json({ error: 'image is required' });
+      return;
+    }
+
+    const requestedName = sanitizeSegment(req.body?.name || '', 128);
+    const containerName =
+      requestedName || `idp-${sanitizeSegment(image.replace(/[:/@]+/g, '-'), 40) || 'container'}-${Date.now()}`;
+    const existing = await inspectContainer(containerName);
+    if (existing) {
+      res.status(409).json({ error: `Container ${containerName} already exists` });
+      return;
+    }
+
+    const envList = parseEnvList(req.body?.env);
+    const envMap = parseEnvMap(req.body?.envMap);
+    const env = [
+      ...envList,
+      ...Object.entries(envMap).map(([key, value]) => `${key}=${value}`),
+    ];
+    const binds = parseEnvList(req.body?.binds);
+    const labels = parseEnvMap(req.body?.labels);
+    const managed = Boolean(req.body?.managed);
+    if (managed) {
+      labels['idp.managed.by'] = MANAGER_LABEL;
+    }
+
+    const rawPorts = Array.isArray(req.body?.ports) ? req.body.ports : [];
+    const ExposedPorts = {};
+    const PortBindings = {};
+    rawPorts.forEach((entry) => {
+      if (!entry || typeof entry !== 'object') return;
+      const containerPort = parseIntBounded(entry.containerPort, 0, 1, 65535);
+      if (!containerPort) return;
+      const hostPort = parseIntBounded(entry.hostPort, 0, 0, 65535);
+      const protocol =
+        String(entry.protocol || 'tcp').trim().toLowerCase() === 'udp' ? 'udp' : 'tcp';
+      const portKey = `${containerPort}/${protocol}`;
+      ExposedPorts[portKey] = {};
+      PortBindings[portKey] = hostPort > 0 ? [{ HostPort: String(hostPort) }] : [{}];
+    });
+
+    const restartPolicyName = String(req.body?.restartPolicy || 'unless-stopped')
+      .trim()
+      .toLowerCase();
+    const allowedRestartPolicies = new Set([
+      'no',
+      'always',
+      'unless-stopped',
+      'on-failure',
+    ]);
+    const restartPolicy = allowedRestartPolicies.has(restartPolicyName)
+      ? restartPolicyName
+      : 'unless-stopped';
+
+    const cmd =
+      Array.isArray(req.body?.cmd) && req.body.cmd.length
+        ? req.body.cmd.map((item) => String(item))
+        : typeof req.body?.cmd === 'string' && req.body.cmd.trim()
+        ? req.body.cmd
+            .trim()
+            .split(' ')
+            .map((item) => item.trim())
+            .filter(Boolean)
+        : undefined;
+    const entrypoint =
+      Array.isArray(req.body?.entrypoint) && req.body.entrypoint.length
+        ? req.body.entrypoint.map((item) => String(item))
+        : typeof req.body?.entrypoint === 'string' && req.body.entrypoint.trim()
+        ? req.body.entrypoint
+            .trim()
+            .split(' ')
+            .map((item) => item.trim())
+            .filter(Boolean)
+        : undefined;
+
+    await ensureImage(image);
+    const securityOpts = resolveManagedSecurityOpts();
+    const container = await docker.createContainer({
+      name: containerName,
+      Image: image,
+      ...(env.length ? { Env: env } : {}),
+      ...(Object.keys(labels).length ? { Labels: labels } : {}),
+      ...(cmd && cmd.length ? { Cmd: cmd } : {}),
+      ...(entrypoint && entrypoint.length ? { Entrypoint: entrypoint } : {}),
+      ...(Object.keys(ExposedPorts).length ? { ExposedPorts } : {}),
+      HostConfig: {
+        RestartPolicy: { Name: restartPolicy },
+        ...(Object.keys(PortBindings).length ? { PortBindings } : {}),
+        ...(binds.length ? { Binds: binds } : {}),
+        ...(securityOpts.length > 0 ? { SecurityOpt: securityOpts } : {}),
+      },
+    });
+
+    const autoStart =
+      req.body?.autoStart === undefined ? true : Boolean(req.body?.autoStart);
+    if (autoStart) {
+      await container.start();
+    }
+
+    const created = await inspectContainer(containerName);
+    res.status(201).json({
+      ok: true,
+      containerName,
+      created: true,
+      running: Boolean(created?.State?.Running),
     });
   } catch (error) {
     next(error);
@@ -1008,13 +1303,7 @@ app.post('/v1/containers/action', async (req, res, next) => {
       return;
     }
 
-    const allowUnmanaged = asBool(
-      pickEnv(
-        'CONTAINER_MANAGER_ALLOW_UNMANAGED_ACTIONS',
-        'CONTAINER_AGENT_ALLOW_UNMANAGED_ACTIONS'
-      ),
-      false
-    );
+    const allowUnmanaged = resolveAllowUnmanagedActions();
     if (!allowUnmanaged && !isManagedContainer(inspect)) {
       res.status(403).json({
         error:

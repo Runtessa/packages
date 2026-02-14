@@ -117,6 +117,7 @@ const buildCodexPrompt = (
 - No mock/fake/sample/dummy data is allowed anywhere.
 - Backend ORM usage rule: only await adapters.orm('<database>:<key>') (bare keys like "pga1" are invalid).
 - UI data-access rule: use @app/datacontext (never fetch/axios/XMLHttpRequest).
+- Respect actor_access permissions from context. Never emit operations that the actor role cannot execute.
 - Return ONLY a single valid JSON object (no markdown, no code fences).
 
 JSON SCHEMA:
@@ -2146,7 +2147,8 @@ const toSharedVirtualPath = (
 const buildContextText = (
   workspace: WorkspaceContext,
   acl: { permissions: unknown; roles: unknown; endpoints: unknown },
-  preview?: { enabled: boolean; exceptions: PreviewExceptionEntry[] }
+  preview?: { enabled: boolean; exceptions: PreviewExceptionEntry[] },
+  actor?: { role: string; permissions: string[] }
 ) => {
   const lines: string[] = [];
   const sharedUiFiles = workspace.sharedUiFiles ?? [];
@@ -2216,6 +2218,21 @@ const buildContextText = (
   lines.push(truncate(JSON.stringify(workspaceToolView, null, 2)));
   lines.push('get_acl_config =>');
   lines.push(truncate(JSON.stringify(aclToolView, null, 2)));
+  if (actor) {
+    lines.push('actor_access =>');
+    lines.push(
+      truncate(
+        JSON.stringify(
+          {
+            role: actor.role,
+            permissions: actor.permissions,
+          },
+          null,
+          2
+        )
+      )
+    );
+  }
   lines.push('');
   lines.push('CANONICAL VIRTUAL PATHS FOR MUTATIONS (use these exact roots):');
   lines.push('- modules/... (backend modules)');
@@ -2249,6 +2266,15 @@ const buildContextText = (
   });
   lines.push('');
   lines.push('Workspace snapshot (FULL PROJECT CONTEXT):');
+  if (actor) {
+    lines.push(`Actor role: ${actor.role}`);
+    lines.push(
+      `Actor permissions (${Array.isArray(actor.permissions) ? actor.permissions.length : 0}):`
+    );
+    (actor.permissions || []).forEach((permission) => {
+      lines.push(`- ${permission}`);
+    });
+  }
   if (workspace.tenant) {
     lines.push(`Tenant: ${workspace.tenant.hostname} (id:${workspace.tenant.id})`);
     lines.push('Tenant adapterAccess JSON:');
@@ -2791,6 +2817,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   const tools = buildAssistantTools({
     tenant,
     userId: user.id,
+    role: user.normalizedRole,
+    permissions: user.permissions,
     isAdmin: user.isAdmin,
     changes,
   });
@@ -2838,6 +2866,10 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     {
       enabled: watchPreviewExceptions,
       exceptions: previewExceptions,
+    },
+    {
+      role: user.normalizedRole,
+      permissions: user.permissions || [],
     }
   );
 

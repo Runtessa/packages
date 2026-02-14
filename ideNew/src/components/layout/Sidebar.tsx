@@ -15,6 +15,8 @@ import {
 } from "react-icons/fi";
 import { Button } from "@/components/ui/Button";
 import { useSessionToken } from "@/lib/client/session";
+import { hasPermissionFromUser, toPermissionArray } from "@/lib/client/access";
+import type { IdePermission } from "@/lib/rbac";
 import Image from "next/image";
 import branding from "@/branding.json";
 
@@ -28,7 +30,7 @@ type NavItem = {
   href: string;
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   match?: string;
-  roles?: string[];
+  permission?: IdePermission;
 };
 
 const navItems: NavItem[] = [
@@ -40,63 +42,73 @@ const navItems: NavItem[] = [
     href: "/admin/tenants",
     icon: FiLayers,
     match: "/admin/tenants",
-    roles: ["admin"],
+    permission: "ide.tenants.read",
   },
   {
     label: "Shared Projects",
     href: "/admin/shared-packages",
     icon: FiPackage,
     match: "/admin/shared-packages",
-    roles: ["admin"],
+    permission: "ide.shared_ui.read",
   },
   {
     label: "Shared Backend Modules",
     href: "/admin/shared-modules",
     icon: FiPackage,
     match: "/admin/shared-modules",
-    roles: ["admin"],
+    permission: "ide.shared_modules.read",
+  },
+  {
+    label: "Teams",
+    href: "/admin/teams",
+    icon: FiUsers,
+    match: "/admin/teams",
+    permission: "ide.users.read",
   },
   {
     label: "Users",
     href: "/admin/users",
     icon: FiUsers,
     match: "/admin/users",
-    roles: ["admin"],
+    permission: "ide.users.read",
   },
   {
     label: "Logs",
     href: "/admin/logs",
     icon: FiAlertCircle,
     match: "/admin/logs",
-    roles: ["admin"],
+    permission: "ide.logs.read",
   },
   {
     label: "Monitoring",
     href: "/admin/monitoring",
     icon: FiActivity,
     match: "/admin/monitoring",
-    roles: ["admin"],
+    permission: "ide.monitoring.read",
   },
   {
     label: "Containers",
     href: "/admin/containers",
     icon: FiServer,
     match: "/admin/containers",
-    roles: ["admin"],
+    permission: "ide.containers.read",
   },
   {
     label: "System Settings",
     href: "/admin/settings",
     icon: FiSettings,
     match: "/admin/settings",
-    roles: ["admin"],
+    permission: "ide.settings.manage",
   },
 ];
 
 export const Sidebar = ({ open, onClose }: SidebarProps) => {
   const router = useRouter();
   const { token, ready } = useSessionToken();
-  const [role, setRole] = useState<string>("user");
+  const [userAccess, setUserAccess] = useState<{
+    role: string;
+    permissions: IdePermission[];
+  }>({ role: "user", permissions: [] });
 
   useEffect(() => {
     const load = async () => {
@@ -106,8 +118,11 @@ export const Sidebar = ({ open, onClose }: SidebarProps) => {
           headers: { Authorization: `Session ${token}` },
         });
         const data = await res.json();
-        if (res.ok && data?.user?.role) {
-          setRole(data.user.role);
+        if (res.ok && data?.user) {
+          setUserAccess({
+            role: String(data.user.role || "user"),
+            permissions: toPermissionArray(data.user.permissions),
+          });
         }
       } catch (e) {
         // ignore role load errors; default user
@@ -117,8 +132,16 @@ export const Sidebar = ({ open, onClose }: SidebarProps) => {
   }, [token, ready]);
 
   const visibleNavItems = useMemo(
-    () => navItems.filter((item) => !item.roles || item.roles.includes(role)),
-    [role]
+    () =>
+      navItems.filter(
+        (item) =>
+          !item.permission ||
+          hasPermissionFromUser(
+            { role: userAccess.role, permissions: userAccess.permissions },
+            item.permission
+          )
+      ),
+    [userAccess.permissions, userAccess.role]
   );
 
   return (

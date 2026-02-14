@@ -17,7 +17,7 @@ const config = {
         // Brand
         primary: "#262525ff", // Green-500 (Minty)
         primaryDark: "#191919ff", // Green-700
-        accent: "#242424ff", // Green-400
+        accent: "#4ADE80", // Green-400
 
         // Base Backgrounds (Neutral/Gray)
         bgApp: "#121212", // Pure Dark

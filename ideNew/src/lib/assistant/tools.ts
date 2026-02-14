@@ -38,6 +38,7 @@ import {
 } from '@/lib/shared-tailwind';
 import { buildSharedBundle, compileUiSource } from './compiler';
 import { compileOrmSource } from '@/lib/orm-compiler';
+import { hasIdePermission, type IdePermission } from '@/lib/rbac';
 import type {
   AssistantChange,
   ModuleSnapshot,
@@ -50,8 +51,21 @@ import type {
 type AssistantToolContext = {
   tenant: Tenant;
   userId: number;
+  role: string;
+  permissions: IdePermission[];
   isAdmin: boolean;
   changes: AssistantChange[];
+};
+
+const hasToolPermission = (ctx: AssistantToolContext, permission: IdePermission) => {
+  if (ctx.isAdmin) return true;
+  if (Array.isArray(ctx.permissions) && ctx.permissions.includes(permission)) return true;
+  return hasIdePermission(ctx.role, permission);
+};
+
+const assertToolPermission = (ctx: AssistantToolContext, permission: IdePermission) => {
+  if (hasToolPermission(ctx, permission)) return;
+  throw new Error(`Forbidden: missing permission ${permission}`);
 };
 
 const normalizeMethod = (raw: unknown): HttpMethod => {
@@ -595,7 +609,10 @@ const createUiRevision = async (
   return revision;
 };
 
-const listWorkspace = async (tenant: Tenant, isAdmin: boolean) => {
+const listWorkspace = async (
+  tenant: Tenant,
+  visibility: { includeSharedUi: boolean; includeSharedModules: boolean }
+) => {
   const moduleRepo = CoreDataSource.getRepository(ModuleEntity);
   const uiRepo = CoreDataSource.getRepository(UIPackage);
   const modelRepo = CoreDataSource.getRepository(OrmModel);
@@ -613,19 +630,19 @@ const listWorkspace = async (tenant: Tenant, isAdmin: boolean) => {
     where: { tenant: { id: tenant.id } },
     order: { path: 'ASC' },
   });
-  const sharedUi = isAdmin
+  const sharedUi = visibility.includeSharedUi
     ? await CoreDataSource.getRepository(GlobalUIPackage).find({ order: { name: 'ASC' } })
     : [];
-  const sharedModules = isAdmin
+  const sharedModules = visibility.includeSharedModules
     ? await CoreDataSource.getRepository(GlobalModulePackage).find({ order: { name: 'ASC' } })
     : [];
-  const sharedUiFiles = isAdmin
+  const sharedUiFiles = visibility.includeSharedUi
     ? await sharedUiFileRepo.find({
         relations: { project: true },
         order: { path: 'ASC' },
       })
     : [];
-  const sharedModuleFiles = isAdmin
+  const sharedModuleFiles = visibility.includeSharedModules
     ? await sharedModuleFileRepo.find({
         relations: { project: true },
         order: { path: 'ASC' },
@@ -955,7 +972,10 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       'List backend modules, ORM models, UI packages, and shared project files available to the current tenant.',
     execute: async () => {
       await ensureCoreSchema();
-      return await listWorkspace(ctx.tenant, ctx.isAdmin);
+      return await listWorkspace(ctx.tenant, {
+        includeSharedUi: hasToolPermission(ctx, 'ide.shared_ui.read'),
+        includeSharedModules: hasToolPermission(ctx, 'ide.shared_modules.read'),
+      });
     },
   });
 
@@ -968,6 +988,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       method: z.string().optional(),
     }),
     execute: async (input) => {
+      assertToolPermission(ctx, 'ide.modules.read');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(ModuleEntity);
       let mod: ModuleEntity | null = null;
@@ -1013,6 +1034,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       fileExtension: z.string().optional(),
     }),
     execute: async (input) => {
+      assertToolPermission(ctx, 'ide.modules.write');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(ModuleEntity);
       const routePath = normalizeRoute(input.routePath);
@@ -1050,6 +1072,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       fileExtension: z.string().optional(),
     }),
     execute: async (input) => {
+      assertToolPermission(ctx, 'ide.modules.write');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(ModuleEntity);
       const where = input.id
@@ -1105,6 +1128,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       method: z.string().optional(),
     }),
     execute: async (input) => {
+      assertToolPermission(ctx, 'ide.modules.write');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(ModuleEntity);
       const where = input.id
@@ -1128,6 +1152,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
     id: 'list_models',
     description: 'List ORM models for the current tenant.',
     execute: async () => {
+      assertToolPermission(ctx, 'ide.models.read');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(OrmModel);
       const models = await repo.find({
@@ -1146,6 +1171,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       path: z.string().optional(),
     }),
     execute: async (input) => {
+      assertToolPermission(ctx, 'ide.models.read');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(OrmModel);
       const where = input.id
@@ -1166,6 +1192,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       fileExtension: z.string().optional(),
     }),
     execute: async (input) => {
+      assertToolPermission(ctx, 'ide.models.write');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(OrmModel);
       const path = normalizeModelPath(input.path);
@@ -1202,6 +1229,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       newPath: z.string().optional(),
     }),
     execute: async (input) => {
+      assertToolPermission(ctx, 'ide.models.write');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(OrmModel);
       const where = input.id
@@ -1250,6 +1278,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       path: z.string().optional(),
     }),
     execute: async (input) => {
+      assertToolPermission(ctx, 'ide.models.write');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(OrmModel);
       const where = input.id
@@ -1268,6 +1297,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
     id: 'list_ui_packages',
     description: 'List UI packages for the current tenant.',
     execute: async () => {
+      assertToolPermission(ctx, 'ide.ui.read');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(UIPackage);
       const packages = await repo.find({
@@ -1287,6 +1317,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       version: z.string().optional(),
     }),
     execute: async (input) => {
+      assertToolPermission(ctx, 'ide.ui.read');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(UIPackage);
       let pkg: UIPackage | null = null;
@@ -1330,6 +1361,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       dependencies: z.array(z.string()).optional(),
     }),
     execute: async (input) => {
+      assertToolPermission(ctx, 'ide.ui.write');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(UIPackage);
       const name = normalizeUiName(input.name);
@@ -1388,6 +1420,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       dependencies: z.array(z.string()).optional(),
     }),
     execute: async (input) => {
+      assertToolPermission(ctx, 'ide.ui.write');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(UIPackage);
       const where = input.id
@@ -1430,6 +1463,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       version: z.string().optional(),
     }),
     execute: async (input) => {
+      assertToolPermission(ctx, 'ide.ui.write');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(UIPackage);
       const where = input.id
@@ -1463,6 +1497,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
     id: 'get_acl_config',
     description: 'Fetch ACL permissions, roles, and endpoints for the tenant.',
     execute: async () => {
+      assertToolPermission(ctx, 'ide.acl.read');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(Tenant);
       const tenant = await repo.findOne({ where: { id: ctx.tenant.id } });
@@ -1483,6 +1518,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       content: z.any(),
     }),
     execute: async (input) => {
+      assertToolPermission(ctx, 'ide.acl.write');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(Tenant);
       const tenant = await repo.findOne({ where: { id: ctx.tenant.id } });
@@ -1516,7 +1552,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
     id: 'list_shared_ui_projects',
     description: 'List shared UI projects (admin only).',
     execute: async () => {
-      if (!ctx.isAdmin) throw new Error('Admin privileges required');
+      assertToolPermission(ctx, 'ide.shared_ui.read');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(GlobalUIPackage);
       const projects = await repo.find({ order: { name: 'ASC', version: 'DESC' } });
@@ -1528,7 +1564,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
     id: 'list_shared_module_projects',
     description: 'List shared backend projects (admin only).',
     execute: async () => {
-      if (!ctx.isAdmin) throw new Error('Admin privileges required');
+      assertToolPermission(ctx, 'ide.shared_modules.read');
       await ensureCoreSchema();
       const repo = CoreDataSource.getRepository(GlobalModulePackage);
       const projects = await repo.find({ order: { name: 'ASC', version: 'DESC' } });
@@ -1546,7 +1582,10 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       projectKind: z.enum(['ui', 'module']),
     }),
     execute: async (input) => {
-      if (!ctx.isAdmin) throw new Error('Admin privileges required');
+      assertToolPermission(
+        ctx,
+        input.projectKind === 'ui' ? 'ide.shared_ui.read' : 'ide.shared_modules.read'
+      );
       await ensureCoreSchema();
       const repo =
         input.projectKind === 'ui'
@@ -1580,7 +1619,10 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
         path: ['projectId'],
       }),
     execute: async (input) => {
-      if (!ctx.isAdmin) throw new Error('Admin privileges required');
+      assertToolPermission(
+        ctx,
+        input.projectKind === 'ui' ? 'ide.shared_ui.write' : 'ide.shared_modules.write'
+      );
       await ensureCoreSchema();
       const projectRepo =
         input.projectKind === 'ui'
@@ -1710,7 +1752,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       dependencies: z.array(z.string()).optional(),
     }),
     execute: async (input) => {
-      if (!ctx.isAdmin) throw new Error('Admin privileges required');
+      assertToolPermission(ctx, 'ide.shared_ui.write');
       await ensureCoreSchema();
       const created = await createSharedProjectInternal(ctx, {
         kind: 'ui',
@@ -1737,7 +1779,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       dependencies: z.array(z.string()).optional(),
     }),
     execute: async (input) => {
-      if (!ctx.isAdmin) throw new Error('Admin privileges required');
+      assertToolPermission(ctx, 'ide.shared_modules.write');
       await ensureCoreSchema();
       const created = await createSharedProjectInternal(ctx, {
         kind: 'module',
@@ -1762,7 +1804,10 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       path: z.string().optional(),
     }),
     execute: async (input) => {
-      if (!ctx.isAdmin) throw new Error('Admin privileges required');
+      assertToolPermission(
+        ctx,
+        input.projectKind === 'ui' ? 'ide.shared_ui.write' : 'ide.shared_modules.write'
+      );
       await ensureCoreSchema();
       const projectRepo =
         input.projectKind === 'ui'

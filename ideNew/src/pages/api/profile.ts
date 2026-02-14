@@ -4,6 +4,21 @@ import { requireUser } from '@/lib/auth';
 import { AppDataSource, ensureSchema } from '@/lib/db';
 import { hashPassword } from '@/lib/password';
 import { User } from '@idp/shared';
+import { getRolePermissions, normalizeIdeRole } from '@/lib/rbac';
+
+const serializeUser = (user: User) => {
+  const normalizedRole = normalizeIdeRole(user.role);
+  return {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    token: user.token,
+    createdAt: user.createdAt,
+    normalizedRole,
+    permissions: getRolePermissions(user.role),
+    isAdmin: normalizedRole === 'admin' || normalizedRole === 'platform_admin',
+  };
+};
 
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method === 'GET') {
@@ -44,7 +59,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     }
 
     const saved = await repo.save(current);
-    res.status(200).json({ user: { ...saved, isAdmin: saved.role === 'admin' } });
+    res.status(200).json({ user: serializeUser(saved) });
     return;
   }
 

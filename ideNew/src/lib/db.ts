@@ -3,6 +3,9 @@ import { DataSource, DataSourceOptions } from "typeorm";
 import { User } from '@idp/shared';
 import { LoginSession } from '@idp/shared';
 import { SystemLog } from '@idp/shared';
+import { Team } from '@idp/shared';
+import { TeamMember } from '@idp/shared';
+import { TeamTenant } from '@idp/shared';
 import { hashPassword } from "./password";
 
 const dbType = (process.env.DB_TYPE || "postgres") as DataSourceOptions["type"];
@@ -28,7 +31,7 @@ const baseOptions = {
   database: dbName,
   synchronize: true,
   logging: false,
-  entities: [User, LoginSession, SystemLog],
+  entities: [User, LoginSession, SystemLog, Team, TeamMember, TeamTenant],
 } as DataSourceOptions;
 
 export const AppDataSource = new DataSource(baseOptions);

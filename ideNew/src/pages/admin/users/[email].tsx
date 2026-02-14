@@ -9,13 +9,11 @@ import { Select } from '@/components/ui/Select';
 import { useToast } from '@/components/ui/Toast';
 import { fetchJson } from '@/lib/client/api';
 import { useSessionToken } from '@/lib/client/session';
+import { hasPermissionFromUser } from '@/lib/client/access';
+import { IDE_ROLE_DESCRIPTIONS, IDE_ROLE_LABELS, type IdeRole } from '@/lib/rbac';
+import { AccessTabs } from '@/components/admin/AccessTabs';
 
 type UserListItem = { email: string; role: string; token: string; createdAt?: string };
-
-const roleOptions = [
-  { label: 'User', value: 'user' },
-  { label: 'Admin', value: 'admin' },
-];
 
 export default function AdminUserEditPage() {
   const router = useRouter();
@@ -24,6 +22,7 @@ export default function AdminUserEditPage() {
   const [error, setError] = useState('');
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
+  const [roleOptions, setRoleOptions] = useState<Array<{ label: string; value: string }>>([]);
   const [form, setForm] = useState({ email: '', password: '', token: '', role: 'user' });
   const [validationErrors, setValidationErrors] = useState({ email: '' });
 
@@ -40,18 +39,32 @@ export default function AdminUserEditPage() {
         });
         const meData = await meRes.json();
         if (!meRes.ok) throw new Error(meData.error || 'Failed to load user');
-        setIsAdmin(meData.user.role === 'admin');
-        if (meData.user.role !== 'admin') {
+        setIsAdmin(hasPermissionFromUser(meData.user, 'ide.users.manage'));
+        if (!hasPermissionFromUser(meData.user, 'ide.users.manage')) {
           router.replace('/dashboard');
           return;
         }
         const qs = new URLSearchParams({ page: '1', limit: '200' });
         const list = await fetchJson(`/api/users?${qs.toString()}`, { token });
+        const assignable: string[] = Array.isArray(list?.assignableRoles)
+          ? list.assignableRoles
+          : ['user'];
+        const nextRoleOptions = assignable.map((role) => ({
+          value: role,
+          label: IDE_ROLE_LABELS[role as IdeRole] || role,
+        }));
         const match = (list.users as UserListItem[]).find((u) => u.email === decodedEmail);
         if (!match) {
           setError('User not found');
           return;
         }
+        if (!nextRoleOptions.some((entry) => entry.value === match.role)) {
+          nextRoleOptions.push({
+            value: match.role,
+            label: IDE_ROLE_LABELS[match.role as IdeRole] || match.role,
+          });
+        }
+        setRoleOptions(nextRoleOptions);
         setForm({ email: match.email, password: '', token: match.token, role: match.role });
       } catch (err: any) {
         setError(err.message);
@@ -117,6 +130,7 @@ export default function AdminUserEditPage() {
 
   return (
     <div className="space-y-6">
+      <AccessTabs />
       <PageHeader
         title="Edit user"
         subtitle={decodedEmail ? `Update ${decodedEmail}` : 'Update user details.'}
@@ -165,6 +179,9 @@ export default function AdminUserEditPage() {
               options={roleOptions}
               onChange={(e) => setForm({ ...form, role: e.target.value })}
             />
+            <div className="md:col-span-2 rounded-lg border border-borderSubtle bg-bgApp px-3 py-2 text-xs text-textMuted">
+              {IDE_ROLE_DESCRIPTIONS[form.role as IdeRole] || 'Select a role to view scope details.'}
+            </div>
             <div className="md:col-span-2 flex items-end gap-2">
               <div className="flex-1">
                 <Input

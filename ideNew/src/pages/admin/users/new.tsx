@@ -9,11 +9,9 @@ import { Select } from '@/components/ui/Select';
 import { useToast } from '@/components/ui/Toast';
 import { fetchJson } from '@/lib/client/api';
 import { useSessionToken } from '@/lib/client/session';
-
-const roleOptions = [
-  { label: 'User', value: 'user' },
-  { label: 'Admin', value: 'admin' },
-];
+import { hasPermissionFromUser } from '@/lib/client/access';
+import { IDE_ROLE_DESCRIPTIONS, IDE_ROLE_LABELS, type IdeRole } from '@/lib/rbac';
+import { AccessTabs } from '@/components/admin/AccessTabs';
 
 export default function AdminUserCreatePage() {
   const router = useRouter();
@@ -21,6 +19,7 @@ export default function AdminUserCreatePage() {
   const { success } = useToast();
   const [error, setError] = useState('');
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const [roleOptions, setRoleOptions] = useState<Array<{ label: string; value: string }>>([]);
   const [form, setForm] = useState({ email: '', password: '', token: '', role: 'user' });
   const [validationErrors, setValidationErrors] = useState({ email: '', password: '' });
 
@@ -33,9 +32,22 @@ export default function AdminUserCreatePage() {
         });
         const meData = await meRes.json();
         if (!meRes.ok) throw new Error(meData.error || 'Failed to load user');
-        setIsAdmin(meData.user.role === 'admin');
-        if (meData.user.role !== 'admin') {
+        setIsAdmin(hasPermissionFromUser(meData.user, 'ide.users.manage'));
+        if (!hasPermissionFromUser(meData.user, 'ide.users.manage')) {
           router.replace('/dashboard');
+          return;
+        }
+        const roleResp = await fetchJson('/api/users?page=1&limit=1', { token });
+        const assignable: string[] = Array.isArray(roleResp?.assignableRoles)
+          ? roleResp.assignableRoles
+          : ['user'];
+        const nextOptions = assignable.map((role) => ({
+          value: role,
+          label: IDE_ROLE_LABELS[role as IdeRole] || role,
+        }));
+        setRoleOptions(nextOptions);
+        if (nextOptions.length && !nextOptions.some((entry) => entry.value === form.role)) {
+          setForm((prev) => ({ ...prev, role: nextOptions[0]!.value }));
         }
       } catch (err: any) {
         setError(err.message);
@@ -104,6 +116,7 @@ export default function AdminUserCreatePage() {
 
   return (
     <div className="space-y-6">
+      <AccessTabs />
       <PageHeader
         title="Create user"
         subtitle="Add a new user for the admin panel."
@@ -154,6 +167,9 @@ export default function AdminUserCreatePage() {
             options={roleOptions}
             onChange={(e) => setForm({ ...form, role: e.target.value })}
           />
+          <div className="md:col-span-2 rounded-lg border border-borderSubtle bg-bgApp px-3 py-2 text-xs text-textMuted">
+            {IDE_ROLE_DESCRIPTIONS[form.role as IdeRole] || 'Select a role to view scope details.'}
+          </div>
           <div className="md:col-span-2 flex items-end gap-2">
             <div className="flex-1">
               <Input

@@ -5,10 +5,37 @@ import { requireAdmin } from '@/lib/auth';
 import { AppDataSource, ensureSchema } from '@/lib/db';
 import { hashPassword } from '@/lib/password';
 import { User } from '@idp/shared';
+import { canAssignRole, listAssignableRoles, normalizeIdeRole } from '@/lib/rbac';
+
+const RESERVED_ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || 'admin@example.com').trim().toLowerCase();
+
+const serializeUser = (user: User) => ({
+  id: user.id,
+  email: user.email,
+  role: user.role,
+  token: user.token,
+  createdAt: user.createdAt,
+});
+
+const ensureRoleAssignable = (actorRole: string, targetEmail: string, requestedRole: unknown) => {
+  const role = normalizeIdeRole(requestedRole);
+  const email = String(targetEmail || '').trim().toLowerCase();
+  if (role === 'admin' && email !== RESERVED_ADMIN_EMAIL) {
+    const err = new Error(`role "admin" is reserved for ${RESERVED_ADMIN_EMAIL}`);
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  if (!canAssignRole(actorRole, role) && role !== normalizeIdeRole(actorRole)) {
+    const err = new Error(`Role "${actorRole}" cannot assign "${role}"`);
+    (err as any).statusCode = 403;
+    throw err;
+  }
+  return role;
+};
 
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method === 'GET') {
-    await requireAdmin(req);
+    const actor = await requireAdmin(req);
     await ensureSchema();
     const repo = AppDataSource.getRepository(User);
     const page = Number(req.query.page) || 1;
@@ -21,21 +48,22 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       take: limit
     });
 
-    res.status(200).json({ users, total });
+    res.status(200).json({
+      users: users.map(serializeUser),
+      total,
+      assignableRoles: listAssignableRoles(actor.normalizedRole),
+    });
     return;
   }
 
   if (req.method === 'POST') {
-    await requireAdmin(req);
+    const actor = await requireAdmin(req);
     const { email, token, role = 'user', password } = req.body || {};
     if (!email || !password) {
       res.status(400).json({ error: 'email and password are required' });
       return;
     }
-    if (!['admin', 'user'].includes(role)) {
-      res.status(400).json({ error: 'role must be admin or user' });
-      return;
-    }
+    const resolvedRole = ensureRoleAssignable(actor.role, email, role);
 
     await ensureSchema();
     const repo = AppDataSource.getRepository(User);
@@ -44,21 +72,21 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
 
     let user = await repo.findOne({ where: { email } });
     if (!user) {
-      user = repo.create({ email, token: apiToken, passwordHash, role });
+      user = repo.create({ email, token: apiToken, passwordHash, role: resolvedRole });
     } else {
       user.token = apiToken;
       user.passwordHash = passwordHash;
-      user.role = role;
+      user.role = resolvedRole;
     }
 
     await repo.save(user);
 
-    res.status(201).json({ user: { email: user.email, role: user.role, token: user.token } });
+    res.status(201).json({ user: serializeUser(user) });
     return;
   }
 
   if (req.method === 'PUT') {
-    await requireAdmin(req);
+    const actor = await requireAdmin(req);
     const { email, token, role, password } = req.body || {};
     if (!email) {
       res.status(400).json({ error: 'email is required' });
@@ -68,12 +96,9 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const values: any[] = [];
 
     if (role) {
-      if (!['admin', 'user'].includes(role)) {
-        res.status(400).json({ error: 'role must be admin or user' });
-        return;
-      }
+      const resolvedRole = ensureRoleAssignable(actor.role, email, role);
       updates.push(`role = $${values.length + 1}`);
-      values.push(role);
+      values.push(resolvedRole);
     }
 
     if (token) {
@@ -101,7 +126,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     }
 
     if (role) {
-      existing.role = role;
+      existing.role = ensureRoleAssignable(actor.role, email, role);
     }
     if (token) {
       existing.token = token;
@@ -112,9 +137,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     }
 
     const saved = await repo.save(existing);
-    res.status(200).json({
-      user: { email: saved.email, role: saved.role, token: saved.token, createdAt: saved.createdAt }
-    });
+    res.status(200).json({ user: serializeUser(saved) });
     return;
   }
 

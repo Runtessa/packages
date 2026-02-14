@@ -3,6 +3,7 @@ import { useRouter } from 'next/router';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { DataCard } from '@/components/ui/DataCard';
 import { useSessionToken } from '@/lib/client/session';
+import { hasPermissionFromUser } from '@/lib/client/access';
 
 export default function AdminSettingsPage() {
   const router = useRouter();
@@ -17,9 +18,8 @@ export default function AdminSettingsPage() {
         const res = await fetch('/api/me', { headers: { Authorization: `Session ${token}` } });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to load user');
-        const role = data?.user?.role;
-        setIsAdmin(role === 'admin');
-        if (role !== 'admin') {
+        setIsAdmin(hasPermissionFromUser(data.user, 'ide.settings.manage'));
+        if (!hasPermissionFromUser(data.user, 'ide.settings.manage')) {
           router.replace('/dashboard');
         }
       } catch (err: any) {

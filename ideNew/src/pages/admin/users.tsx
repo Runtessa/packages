@@ -6,6 +6,9 @@ import { DataTable } from '@/components/ui/DataTable';
 import { Button } from '@/components/ui/Button';
 import { fetchJson } from '@/lib/client/api';
 import { useSessionToken } from '@/lib/client/session';
+import { hasPermissionFromUser } from '@/lib/client/access';
+import { IDE_ROLE_BLUEPRINT, IDE_ROLE_DESCRIPTIONS, IDE_ROLE_LABELS } from '@/lib/rbac';
+import { AccessTabs } from '@/components/admin/AccessTabs';
 
 type User = { email: string; role: string };
 type UserListItem = { email: string; role: string; token: string; createdAt?: string };
@@ -32,7 +35,7 @@ export default function AdminUsersPage() {
         const meData = await meRes.json();
         if (!meRes.ok) throw new Error(meData.error || 'Failed to load user');
         setUser(meData.user);
-        if (meData.user.role !== 'admin') {
+        if (!hasPermissionFromUser(meData.user, 'ide.users.manage')) {
           router.replace('/dashboard');
           return;
         }
@@ -66,6 +69,7 @@ export default function AdminUsersPage() {
 
   return (
     <div className="space-y-6">
+      <AccessTabs />
       <PageHeader
         title="Admin: Users"
         subtitle="Create users and API tokens."
@@ -88,7 +92,9 @@ export default function AdminUsersPage() {
             {users.map((u) => (
               <tr key={u.email} className="text-sm hover:bg-bgApp transition">
                 <td className="px-4 py-3 text-textPrimary">{u.email}</td>
-                <td className="px-4 py-3 text-textMuted">{u.role}</td>
+                <td className="px-4 py-3 text-textMuted">
+                  {IDE_ROLE_LABELS[u.role as keyof typeof IDE_ROLE_LABELS] || u.role}
+                </td>
                 <td className="px-4 py-3 font-mono break-words text-textPrimary">{u.token}</td>
                 <td className="px-4 py-3 text-textMuted">
                   {u.createdAt ? new Date(u.createdAt).toLocaleString() : 'N/A'}
@@ -128,6 +134,21 @@ export default function AdminUsersPage() {
               </Button>
             </div>
           </div>
+        </div>
+      </DataCard>
+
+      <DataCard title="Role Blueprint" subtitle="Global IDE roles applied to users and team memberships.">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {IDE_ROLE_BLUEPRINT.filter((role) => role !== 'admin').map((role) => (
+            <div key={role} className="rounded-lg border border-borderSubtle bg-bgSurface p-3">
+              <div className="text-sm font-semibold text-textPrimary">
+                {IDE_ROLE_LABELS[role] || role}
+              </div>
+              <div className="mt-1 text-xs text-textMuted">
+                {IDE_ROLE_DESCRIPTIONS[role] || 'No description'}
+              </div>
+            </div>
+          ))}
         </div>
       </DataCard>
     </div>

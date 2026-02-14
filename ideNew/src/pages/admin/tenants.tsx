@@ -8,11 +8,13 @@ import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { fetchJson } from '@/lib/client/api';
 import { useSessionToken } from '@/lib/client/session';
+import { hasPermissionFromUser } from '@/lib/client/access';
 import { getSelectedTenantHost, setSelectedTenantHost } from '@/lib/client/tenant';
 
 type TenantSummary = {
   id: string;
   hostname: string;
+  canWrite?: boolean;
   isSuspended: boolean;
   allowRegistration?: boolean;
   resourceConfig?: { memory: number; timeout: number };
@@ -26,7 +28,8 @@ export default function AdminTenantsPage() {
   const router = useRouter();
   const { token, setToken, ready } = useSessionToken();
   const { success } = useToast();
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const [canReadTenants, setCanReadTenants] = useState<boolean | null>(null);
+  const [canCreateTenants, setCanCreateTenants] = useState(false);
   const [error, setError] = useState('');
   const [tenants, setTenants] = useState<TenantSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -59,6 +62,7 @@ export default function AdminTenantsPage() {
       setTenants((prev) => (append ? [...prev, ...nextTenants] : nextTenants));
       setPage(data.page ?? targetPage);
       setTotal(typeof data.total === 'number' ? data.total : nextTenants.length);
+      setCanCreateTenants(Boolean(data.canCreate));
     } catch (err: any) {
       setError(err.message);
       if (err.message?.toLowerCase().includes('unauthorized')) {
@@ -82,9 +86,9 @@ export default function AdminTenantsPage() {
         });
         const meData = await meRes.json();
         if (!meRes.ok) throw new Error(meData.error || 'Failed to load user');
-        const role = meData?.user?.role;
-        setIsAdmin(role === 'admin');
-        if (role !== 'admin') {
+        const canRead = hasPermissionFromUser(meData.user, 'ide.tenants.read');
+        setCanReadTenants(canRead);
+        if (!canRead) {
           router.replace('/dashboard');
           return;
         }
@@ -148,11 +152,11 @@ export default function AdminTenantsPage() {
     );
   }
 
-  if (isAdmin === false) {
+  if (canReadTenants === false) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Tenants" subtitle="Create and manage tenants for the editor." />
-        <DataCard title="Permission Denied" subtitle="You do not have access to tenant management.">
+        <PageHeader title="Tenants" subtitle="View tenant assignments for your active team." />
+        <DataCard title="Permission Denied" subtitle="You do not have access to tenant views.">
           <p className="text-sm text-textMuted">Please contact an administrator if you believe this is an error.</p>
         </DataCard>
       </div>
@@ -163,12 +167,12 @@ export default function AdminTenantsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Tenants"
-        subtitle="Create, edit, and open tenants in the editor."
-        actions={
+        subtitle="View and manage tenants assigned to your active team."
+        actions={canCreateTenants ? (
           <Button href="/admin/tenants/new" variant="primary" size="md">
             New tenant
           </Button>
-        }
+        ) : undefined}
       />
 
       {error && (
@@ -214,12 +218,16 @@ export default function AdminTenantsPage() {
                   <Button variant="secondary" size="sm" onClick={() => handleOpenEditor(tenant)}>
                     Open editor
                   </Button>
-                  <Button variant="secondary" size="sm" href={`/admin/tenants/${tenant.id}`}>
-                    Edit
-                  </Button>
-                  <Button variant="danger" size="sm" onClick={() => openDeleteModal(tenant)}>
-                    Delete
-                  </Button>
+                  {tenant.canWrite ? (
+                    <Button variant="secondary" size="sm" href={`/admin/tenants/${tenant.id}`}>
+                      Edit
+                    </Button>
+                  ) : null}
+                  {canCreateTenants ? (
+                    <Button variant="danger" size="sm" onClick={() => openDeleteModal(tenant)}>
+                      Delete
+                    </Button>
+                  ) : null}
                 </div>
               </td>
             </tr>
