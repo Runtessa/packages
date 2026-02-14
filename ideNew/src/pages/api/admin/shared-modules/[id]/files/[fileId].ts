@@ -2,7 +2,12 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
+import { GlobalModulePackage } from '@idp/shared';
 import { GlobalModulePackageFile } from '@idp/shared';
+import {
+  claimSharedProjectOwnershipIfNeeded,
+  ensureSharedProjectEditable,
+} from '@/lib/shared-project-access';
 
 const normalizePath = (raw: unknown) => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -47,12 +52,20 @@ const serialize = (file: GlobalModulePackageFile) => ({
 });
 
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
-  await requireAdmin(req);
+  const user = await requireAdmin(req);
   await ensureCoreSchema();
 
+  const projectRepo = CoreDataSource.getRepository(GlobalModulePackage);
   const repo = CoreDataSource.getRepository(GlobalModulePackageFile);
-  const file = await repo.findOne({ where: { id: req.query.fileId as string } });
+  const file = await repo.findOne({
+    where: { id: req.query.fileId as string },
+    relations: ['project'],
+  });
   if (!file) {
+    res.status(404).json({ error: 'Shared backend file not found' });
+    return;
+  }
+  if (file.project?.id !== (req.query.id as string)) {
     res.status(404).json({ error: 'Shared backend file not found' });
     return;
   }
@@ -63,6 +76,13 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   }
 
   if (req.method === 'PUT') {
+    if (file.project) {
+      const access = ensureSharedProjectEditable(user, file.project);
+      const claimed = claimSharedProjectOwnershipIfNeeded(file.project, access);
+      if (claimed) {
+        await projectRepo.save(file.project);
+      }
+    }
     const nextPath =
       req.body?.path !== undefined ? normalizePath(req.body.path) : file.path;
     const nextContent =
@@ -82,6 +102,9 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   }
 
   if (req.method === 'DELETE') {
+    if (file.project) {
+      ensureSharedProjectEditable(user, file.project);
+    }
     await repo.remove(file);
     res.status(204).end();
     return;

@@ -3,6 +3,11 @@ import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
 import { GlobalModuleEndpoint, GlobalModulePackage, HttpMethod } from '@idp/shared';
+import {
+  canEditSharedProject,
+  claimSharedProjectOwnershipIfNeeded,
+  ensureSharedProjectEditable,
+} from '@/lib/shared-project-access';
 
 const normalizeRoutePath = (raw: unknown) => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -24,19 +29,23 @@ const normalizeMethod = (raw: unknown) => {
   return value as HttpMethod;
 };
 
-const serialize = (endpoint: GlobalModuleEndpoint) => ({
+const serialize = (
+  endpoint: GlobalModuleEndpoint,
+  user: Awaited<ReturnType<typeof requireAdmin>>
+) => ({
   id: endpoint.id,
   routePath: endpoint.routePath,
   method: endpoint.method,
   packageId: endpoint.package?.id,
   packageName: endpoint.package?.name,
   packageVersion: endpoint.package?.version,
+  canEdit: endpoint.package ? canEditSharedProject(user, endpoint.package) : false,
   createdAt: endpoint.createdAt,
   updatedAt: endpoint.updatedAt,
 });
 
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
-  await requireAdmin(req);
+  const user = await requireAdmin(req);
   await ensureCoreSchema();
 
   const repo = CoreDataSource.getRepository(GlobalModuleEndpoint);
@@ -47,7 +56,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       relations: ['package'],
       order: { routePath: 'ASC' },
     });
-    res.status(200).json({ endpoints: endpoints.map(serialize) });
+    res.status(200).json({ endpoints: endpoints.map((endpoint) => serialize(endpoint, user)) });
     return;
   }
 
@@ -65,6 +74,11 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       res.status(404).json({ error: 'Shared backend project not found' });
       return;
     }
+    const access = ensureSharedProjectEditable(user, pkg);
+    const claimed = claimSharedProjectOwnershipIfNeeded(pkg, access);
+    if (claimed) {
+      await pkgRepo.save(pkg);
+    }
     const existing = await repo.findOne({ where: { routePath, method } });
     if (existing) {
       res.status(409).json({ error: 'Route already mapped' });
@@ -73,7 +87,9 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const endpoint = repo.create({ routePath, method, package: pkg });
     await repo.save(endpoint);
     const saved = await repo.findOne({ where: { id: endpoint.id }, relations: ['package'] });
-    res.status(201).json({ endpoint: saved ? serialize(saved) : serialize(endpoint) });
+    res.status(201).json({
+      endpoint: saved ? serialize(saved, user) : serialize(endpoint, user),
+    });
     return;
   }
 

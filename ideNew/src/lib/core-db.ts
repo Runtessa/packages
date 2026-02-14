@@ -81,12 +81,23 @@ export const ensureCoreSchema = async () => {
         const hasFileTable = await queryRunner.hasTable('global_ui_package_files');
         const hasDraftVersion =
           hasGlobalTable && (await queryRunner.hasColumn('global_ui_packages', 'draft_version'));
+        const hasGlobalOwnerTeamId =
+          hasGlobalTable && (await queryRunner.hasColumn('global_ui_packages', 'owner_team_id'));
+        const hasGlobalEditorTeamIds =
+          hasGlobalTable &&
+          (await queryRunner.hasColumn('global_ui_packages', 'editor_team_ids'));
         const hasModuleTable = await queryRunner.hasTable('global_module_packages');
         const hasModuleFileTable = await queryRunner.hasTable('global_module_package_files');
         const hasModuleEndpointTable = await queryRunner.hasTable('global_module_endpoints');
         const hasModuleDraft =
           hasModuleTable &&
           (await queryRunner.hasColumn('global_module_packages', 'draft_version'));
+        const hasModuleOwnerTeamId =
+          hasModuleTable &&
+          (await queryRunner.hasColumn('global_module_packages', 'owner_team_id'));
+        const hasModuleEditorTeamIds =
+          hasModuleTable &&
+          (await queryRunner.hasColumn('global_module_packages', 'editor_team_ids'));
         const hasTenantTable = await queryRunner.hasTable('tenants');
         const hasAdapterAccess =
           hasTenantTable && (await queryRunner.hasColumn('tenants', 'adapterAccess'));
@@ -107,10 +118,14 @@ export const ensureCoreSchema = async () => {
           !hasGlobalTable ||
           !hasFileTable ||
           !hasDraftVersion ||
+          !hasGlobalOwnerTeamId ||
+          !hasGlobalEditorTeamIds ||
           !hasModuleTable ||
           !hasModuleFileTable ||
           !hasModuleEndpointTable ||
           !hasModuleDraft ||
+          !hasModuleOwnerTeamId ||
+          !hasModuleEditorTeamIds ||
           !hasAdapterAccess ||
           !hasAdapterConfig ||
           !hasAuthDbConfig ||

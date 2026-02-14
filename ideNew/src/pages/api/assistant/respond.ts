@@ -2820,6 +2820,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     role: user.normalizedRole,
     permissions: user.permissions,
     isAdmin: user.isAdmin,
+    activeTeamId: user.activeTeamId,
     changes,
   });
 

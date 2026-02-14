@@ -55,6 +55,12 @@ export class GlobalModulePackage {
   @Column({ name: 'published_at', type: 'timestamptz', nullable: true })
   publishedAt?: Date | null;
 
+  @Column({ name: 'owner_team_id', type: 'int', nullable: true })
+  ownerTeamId?: number | null;
+
+  @Column({ name: 'editor_team_ids', type: 'jsonb', default: () => "'[]'" })
+  editorTeamIds!: number[];
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 

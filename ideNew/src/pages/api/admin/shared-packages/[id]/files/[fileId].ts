@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { withApiHandler } from '@/lib/api-helpers';
 import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
+import { GlobalUIPackage } from '@idp/shared';
 import { GlobalUIPackageFile } from '@idp/shared';
 import {
   getTailwindPackageName,
@@ -9,6 +10,10 @@ import {
   shouldBuildTailwind,
 } from '@/lib/tailwindBuilder';
 import { buildTailwindCssFromFiles, upsertGlobalTailwindPackage } from '@/lib/shared-tailwind';
+import {
+  claimSharedProjectOwnershipIfNeeded,
+  ensureSharedProjectEditable,
+} from '@/lib/shared-project-access';
 
 const normalizePath = (raw: unknown) => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -52,9 +57,10 @@ const serialize = (file: GlobalUIPackageFile) => ({
 });
 
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
-  await requireAdmin(req);
+  const user = await requireAdmin(req);
   await ensureCoreSchema();
 
+  const projectRepo = CoreDataSource.getRepository(GlobalUIPackage);
   const fileRepo = CoreDataSource.getRepository(GlobalUIPackageFile);
   const fileId = req.query.fileId as string;
   const file = await fileRepo.findOne({
@@ -65,6 +71,10 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     res.status(404).json({ error: 'Shared project file not found' });
     return;
   }
+  if (file.project?.id !== (req.query.id as string)) {
+    res.status(404).json({ error: 'Shared project file not found' });
+    return;
+  }
 
   if (req.method === 'GET') {
     res.status(200).json({ file: serialize(file) });
@@ -72,6 +82,13 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   }
 
   if (req.method === 'PUT') {
+    if (file.project) {
+      const access = ensureSharedProjectEditable(user, file.project);
+      const claimed = claimSharedProjectOwnershipIfNeeded(file.project, access);
+      if (claimed) {
+        await projectRepo.save(file.project);
+      }
+    }
     const nextPath =
       req.body?.path !== undefined ? normalizePath(req.body.path) : file.path;
     const nextContent =
@@ -115,6 +132,9 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   }
 
   if (req.method === 'DELETE') {
+    if (file.project) {
+      ensureSharedProjectEditable(user, file.project);
+    }
     await fileRepo.remove(file);
     if (
       file.project &&

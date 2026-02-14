@@ -17,6 +17,11 @@ type SharedProject = {
   entryPath: string;
   dependencies: string[];
   fileExtension: string;
+  ownerTeamId?: number;
+  editorTeamIds?: number[];
+  canEdit?: boolean;
+  canPublish?: boolean;
+  canManageAccess?: boolean;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -31,6 +36,7 @@ export default function AdminSharedPackagesPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [canCreate, setCanCreate] = useState(false);
   const pageSize = 20;
   const [projects, setProjects] = useState<SharedProject[]>([]);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -53,6 +59,7 @@ export default function AdminSharedPackagesPage() {
       setProjects((prev) => (append ? [...prev, ...nextProjects] : nextProjects));
       setPage(data.page ?? targetPage);
       setTotal(typeof data.total === 'number' ? data.total : nextProjects.length);
+      setCanCreate(Boolean(data.canCreate));
     } catch (err: any) {
       setError(err.message);
       if (err.message?.toLowerCase().includes('unauthorized')) {
@@ -76,9 +83,8 @@ export default function AdminSharedPackagesPage() {
         });
         const meData = await meRes.json();
         if (!meRes.ok) throw new Error(meData.error || 'Failed to load user');
-        const role = meData?.user?.role;
-        setIsAdmin(hasPermissionFromUser(meData.user, 'ide.shared_ui.write'));
-        if (!hasPermissionFromUser(meData.user, 'ide.shared_ui.write')) {
+        setIsAdmin(hasPermissionFromUser(meData.user, 'ide.shared_ui.read'));
+        if (!hasPermissionFromUser(meData.user, 'ide.shared_ui.read')) {
           router.replace('/dashboard');
           return;
         }
@@ -148,11 +154,11 @@ export default function AdminSharedPackagesPage() {
       <PageHeader
         title="Admin: Shared Projects"
         subtitle="Create shared UI projects usable by any tenant."
-        actions={
+        actions={canCreate ? (
           <Button href="/admin/shared-packages/new" variant="primary" size="md">
             New shared project
           </Button>
-        }
+        ) : undefined}
       />
 
       {error && (
@@ -192,16 +198,19 @@ export default function AdminSharedPackagesPage() {
                       variant="secondary"
                       size="sm"
                       href={`/admin/shared-packages/${project.id}`}
+                      disabled={!project.canEdit}
                     >
                       Edit
                     </Button>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => confirmDelete(project)}
-                    >
-                      Delete
-                    </Button>
+                    {project.canEdit ? (
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => confirmDelete(project)}
+                      >
+                        Delete
+                      </Button>
+                    ) : null}
                   </div>
                 </td>
               </tr>

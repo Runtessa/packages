@@ -19,8 +19,19 @@ type SharedProject = {
   entryPath: string;
   dependencies: string[];
   fileExtension: string;
+  ownerTeamId?: number;
+  editorTeamIds?: number[];
+  canEdit?: boolean;
+  canManageAccess?: boolean;
   createdAt?: string;
   updatedAt?: string;
+};
+
+type TeamOption = {
+  id: number;
+  key: string;
+  name: string;
+  isActive?: boolean;
 };
 
 type ProjectFormState = {
@@ -84,9 +95,32 @@ export default function AdminSharedPackageEditPage() {
     version: '',
     entryPath: '',
   });
+  const [canEditProject, setCanEditProject] = useState(true);
+  const [teamOptions, setTeamOptions] = useState<TeamOption[]>([]);
+  const [ownerTeamId, setOwnerTeamId] = useState<number | ''>('');
+  const [editorTeamIds, setEditorTeamIds] = useState<number[]>([]);
+  const [canManageAccess, setCanManageAccess] = useState(false);
+  const [canChangeOwner, setCanChangeOwner] = useState(false);
+  const [savingAccess, setSavingAccess] = useState(false);
 
   const idRaw = router.query.id;
   const projectId = Array.isArray(idRaw) ? idRaw[0] : idRaw;
+
+  const loadAccess = async () => {
+    if (!token || !projectId) return;
+    const payload = await fetchJson(`/api/admin/shared-packages/${projectId}/access`, { token });
+    const access = payload?.access ?? {};
+    const teams = Array.isArray(payload?.teams) ? payload.teams : [];
+    setTeamOptions(teams);
+    setOwnerTeamId(Number.isInteger(access.ownerTeamId) ? access.ownerTeamId : '');
+    setEditorTeamIds(
+      Array.isArray(access.editorTeamIds)
+        ? access.editorTeamIds.filter((entry: unknown) => Number.isInteger(Number(entry))).map(Number)
+        : []
+    );
+    setCanManageAccess(Boolean(access.canManage));
+    setCanChangeOwner(Boolean(access.canChangeOwner));
+  };
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -116,6 +150,8 @@ export default function AdminSharedPackageEditPage() {
           fileExtension: project.fileExtension || 'jsx',
           dependencies: formatDeps(project.dependencies),
         });
+        setCanEditProject(project.canEdit !== false);
+        await loadAccess();
       } catch (err: any) {
         setError(err.message);
         if (err.message?.toLowerCase().includes('unauthorized')) {
@@ -133,7 +169,7 @@ export default function AdminSharedPackageEditPage() {
     setError('');
     const errors = validateForm(form);
     setValidationErrors(errors);
-    if (hasErrors(errors) || !projectId) return;
+    if (hasErrors(errors) || !projectId || !canEditProject) return;
 
     try {
       const deps = parseDeps(form.dependencies);
@@ -152,6 +188,39 @@ export default function AdminSharedPackageEditPage() {
       router.push('/admin/shared-packages');
     } catch (err: any) {
       showError(err.message || 'Failed to update shared project');
+    }
+  };
+
+  const toggleEditorTeam = (teamId: number, checked: boolean) => {
+    setEditorTeamIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(teamId);
+      } else {
+        next.delete(teamId);
+      }
+      return Array.from(next).sort((a, b) => a - b);
+    });
+  };
+
+  const handleSaveAccess = async () => {
+    if (!token || !projectId || !canManageAccess) return;
+    setSavingAccess(true);
+    try {
+      await fetchJson(`/api/admin/shared-packages/${projectId}/access`, {
+        method: 'PUT',
+        token,
+        body: {
+          ownerTeamId: ownerTeamId === '' ? null : ownerTeamId,
+          editorTeamIds,
+        },
+      });
+      success('Shared package access updated');
+      await loadAccess();
+    } catch (err: any) {
+      showError(err.message || 'Failed to update access');
+    } finally {
+      setSavingAccess(false);
     }
   };
 
@@ -207,7 +276,7 @@ export default function AdminSharedPackageEditPage() {
                 <Button variant="secondary" href="/admin/shared-packages">
                   Cancel
                 </Button>
-                <Button type="submit" variant="primary">
+                <Button type="submit" variant="primary" disabled={!canEditProject}>
                   Save changes
                 </Button>
               </>
@@ -249,6 +318,78 @@ export default function AdminSharedPackageEditPage() {
             </div>
           </FormLayout>
         )}
+        {!canEditProject ? (
+          <p className="mt-3 text-xs text-textMuted">
+            Read-only view: this shared package is outside your owner/granted team scope.
+          </p>
+        ) : null}
+      </DataCard>
+
+      <DataCard
+        title="Team access"
+        subtitle="Owner team can publish. Owner tenant admins can grant edit access to other teams."
+      >
+        <div className="space-y-4">
+          <Select
+            label="Owner team"
+            value={ownerTeamId === '' ? '' : String(ownerTeamId)}
+            options={[
+              { label: 'Unassigned', value: '' },
+              ...teamOptions.map((team) => ({
+                label: `${team.name} (${team.key})`,
+                value: String(team.id),
+              })),
+            ]}
+            disabled={!canManageAccess || !canChangeOwner}
+            onChange={(event) => {
+              const value = event.target.value;
+              const parsed = Number(value);
+              setOwnerTeamId(Number.isInteger(parsed) && parsed > 0 ? parsed : '');
+            }}
+          />
+          <div className="rounded-lg border border-borderSubtle bg-bgSurface p-3">
+            <div className="mb-2 text-xs uppercase tracking-wide text-textMuted">Editor teams</div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {teamOptions.length === 0 ? (
+                <div className="text-sm text-textMuted">No active teams available.</div>
+              ) : (
+                teamOptions.map((team) => {
+                  const isOwner = ownerTeamId !== '' && Number(ownerTeamId) === team.id;
+                  const checked = isOwner || editorTeamIds.includes(team.id);
+                  return (
+                    <label
+                      key={team.id}
+                      className="flex items-center gap-2 rounded border border-borderSubtle px-2 py-1.5 text-sm text-textPrimary"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!canManageAccess || isOwner}
+                        onChange={(event) => toggleEditorTeam(team.id, event.target.checked)}
+                      />
+                      <span>{team.name}</span>
+                      <span className="text-xs text-textMuted">({team.key})</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button
+              variant="primary"
+              onClick={handleSaveAccess}
+              disabled={!canManageAccess || savingAccess}
+            >
+              {savingAccess ? 'Saving…' : 'Save access'}
+            </Button>
+          </div>
+          {!canManageAccess ? (
+            <p className="text-xs text-textMuted">
+              Access management is restricted to owner team tenant admins or platform admins.
+            </p>
+          ) : null}
+        </div>
       </DataCard>
     </div>
   );

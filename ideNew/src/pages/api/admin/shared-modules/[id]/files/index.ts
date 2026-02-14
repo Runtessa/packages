@@ -4,6 +4,10 @@ import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
 import { GlobalModulePackage } from '@idp/shared';
 import { GlobalModulePackageFile } from '@idp/shared';
+import {
+  claimSharedProjectOwnershipIfNeeded,
+  ensureSharedProjectEditable,
+} from '@/lib/shared-project-access';
 
 const normalizePath = (raw: unknown) => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -47,7 +51,7 @@ const serialize = (file: GlobalModulePackageFile) => ({
 });
 
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
-  await requireAdmin(req);
+  const user = await requireAdmin(req);
   await ensureCoreSchema();
 
   const projectId = req.query.id as string;
@@ -69,6 +73,11 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   }
 
   if (req.method === 'POST') {
+    const access = ensureSharedProjectEditable(user, project);
+    const claimed = claimSharedProjectOwnershipIfNeeded(project, access);
+    if (claimed) {
+      await projectRepo.save(project);
+    }
     const path = normalizePath(req.body?.path);
     const content = normalizeContent(req.body?.content ?? '');
     const fileExtension = normalizeFileExtension(path, req.body?.fileExtension);

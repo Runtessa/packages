@@ -36,6 +36,12 @@ import {
   buildTailwindCssFromFiles,
   upsertGlobalTailwindPackage,
 } from '@/lib/shared-tailwind';
+import {
+  applySharedProjectTeamAccess,
+  claimSharedProjectOwnershipIfNeeded,
+  ensureSharedProjectEditable,
+  getSharedProjectTeamAccess,
+} from '@/lib/shared-project-access';
 import { buildSharedBundle, compileUiSource } from './compiler';
 import { compileOrmSource } from '@/lib/orm-compiler';
 import { hasIdePermission, type IdePermission } from '@/lib/rbac';
@@ -54,6 +60,7 @@ type AssistantToolContext = {
   role: string;
   permissions: IdePermission[];
   isAdmin: boolean;
+  activeTeamId?: number | null;
   changes: AssistantChange[];
 };
 
@@ -106,6 +113,33 @@ const normalizeDependencies = (raw: unknown): string[] => {
   if (!Array.isArray(raw)) throw new Error('dependencies must be an array');
   return raw.map((item) => String(item));
 };
+
+const normalizeOwnerTeamId = (raw: unknown): number | null => {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error('ownerTeamId must be a positive integer');
+  }
+  return value;
+};
+
+const normalizeTeamIdList = (raw: unknown): number[] => {
+  if (!Array.isArray(raw)) return [];
+  return Array.from(
+    new Set(
+      raw
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    )
+  );
+};
+
+const toSharedAccessUser = (ctx: AssistantToolContext) => ({
+  isAdmin: ctx.isAdmin,
+  role: ctx.role,
+  normalizedRole: ctx.role,
+  activeTeamId: ctx.activeTeamId ?? null,
+});
 
 const DASHBOARD_UI_NAME = '@app/dashboard';
 const DASHBOARD_DEFAULT_VERSION = '1.0.0';
@@ -536,7 +570,9 @@ const snapshotModel = (model: OrmModel): OrmModelSnapshot => ({
 const snapshotSharedProject = (
   pkg: GlobalUIPackage | GlobalModulePackage,
   kind: 'ui' | 'module'
-): SharedProjectSnapshot => ({
+): SharedProjectSnapshot => {
+  const access = getSharedProjectTeamAccess(pkg);
+  return {
   id: pkg.id,
   name: pkg.name,
   version: pkg.version,
@@ -545,8 +581,11 @@ const snapshotSharedProject = (
   codeBlob: pkg.codeBlob ?? '',
   dependencies: pkg.dependencies ?? [],
   fileExtension: pkg.fileExtension ?? undefined,
+  ownerTeamId: access.ownerTeamId ?? undefined,
+  editorTeamIds: access.editorTeamIds,
   kind,
-});
+};
+};
 
 const snapshotSharedFile = (file: GlobalUIPackageFile | GlobalModulePackageFile): SharedFileSnapshot => ({
   id: file.id,
@@ -554,6 +593,18 @@ const snapshotSharedFile = (file: GlobalUIPackageFile | GlobalModulePackageFile)
   content: file.content ?? '',
   fileExtension: file.fileExtension ?? undefined,
 });
+
+const ensureSharedProjectWriteAccess = async (
+  ctx: AssistantToolContext,
+  projectRepo: any,
+  project: GlobalUIPackage | GlobalModulePackage
+) => {
+  const access = ensureSharedProjectEditable(toSharedAccessUser(ctx), project);
+  const claimed = claimSharedProjectOwnershipIfNeeded(project, access);
+  if (claimed) {
+    await (projectRepo as any).save(project as any);
+  }
+};
 
 const createModuleRevision = async (
   mod: ModuleEntity,
@@ -844,6 +895,8 @@ const createSharedProjectInternal = async (
     code?: string;
     fileExtension?: string;
     dependencies?: string[];
+    ownerTeamId?: number | null;
+    editorTeamIds?: number[];
   },
   options?: { skipChangeTrack?: boolean }
 ) => {
@@ -882,6 +935,24 @@ const createSharedProjectInternal = async (
     assertNoMockData(code, 'Shared backend code');
   }
   const dependencies = normalizeDependencies(input.dependencies);
+  const requestedOwnerTeamId = normalizeOwnerTeamId(input.ownerTeamId);
+  const requestedEditorTeamIds = normalizeTeamIdList(input.editorTeamIds);
+  const fallbackOwnerTeamId =
+    Number.isInteger(Number(ctx.activeTeamId)) && Number(ctx.activeTeamId) > 0
+      ? Number(ctx.activeTeamId)
+      : null;
+  if (
+    !ctx.isAdmin &&
+    requestedOwnerTeamId &&
+    requestedOwnerTeamId !== fallbackOwnerTeamId
+  ) {
+    throw new Error('Forbidden: non-admin users can only set ownerTeamId to active team');
+  }
+  const ownerTeamId = requestedOwnerTeamId ?? fallbackOwnerTeamId;
+  if (!ownerTeamId && !ctx.isAdmin) {
+    throw new Error('ownerTeamId is required when active team is not set');
+  }
+  const allowEditorAssignments = ctx.isAdmin || ctx.role === 'tenant_admin';
 
   const project = projectRepo.create({
     name,
@@ -892,7 +963,14 @@ const createSharedProjectInternal = async (
     dependencies,
     fileExtension,
     draftVersion: generateVersion(),
+    ownerTeamId: null,
+    editorTeamIds: [],
   } as any);
+  applySharedProjectTeamAccess(
+    project as any,
+    ownerTeamId,
+    allowEditorAssignments ? requestedEditorTeamIds : []
+  );
   await projectRepo.save(project as any);
 
   const entryFile = fileRepo.create({
@@ -1613,6 +1691,8 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       content: z.string(),
       fileExtension: z.string().optional(),
       dependencies: z.array(z.string()).optional(),
+      ownerTeamId: z.number().int().positive().optional(),
+      editorTeamIds: z.array(z.number().int().positive()).optional(),
       })
       .refine((value) => Boolean(value.projectId || value.projectName), {
         message: 'projectId or projectName is required',
@@ -1673,6 +1753,8 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
             code: input.content,
             fileExtension: input.fileExtension,
             dependencies: input.dependencies,
+            ownerTeamId: normalizeOwnerTeamId(input.ownerTeamId),
+            editorTeamIds: normalizeTeamIdList(input.editorTeamIds),
           },
           { skipChangeTrack: true }
         );
@@ -1688,6 +1770,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
         throw new Error('Shared project resolution failed');
       }
       const ensuredProject = project;
+      await ensureSharedProjectWriteAccess(ctx, projectRepo as any, ensuredProject as any);
       const projectId = (ensuredProject as any).id as string;
       let file = await fileRepo.findOne({
         where: { project: { id: projectId }, path: normalizedPath },
@@ -1750,6 +1833,8 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       code: z.string().optional(),
       fileExtension: z.string().optional(),
       dependencies: z.array(z.string()).optional(),
+      ownerTeamId: z.number().int().positive().optional(),
+      editorTeamIds: z.array(z.number().int().positive()).optional(),
     }),
     execute: async (input) => {
       assertToolPermission(ctx, 'ide.shared_ui.write');
@@ -1762,6 +1847,8 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
         code: input.code,
         fileExtension: input.fileExtension,
         dependencies: input.dependencies,
+        ownerTeamId: input.ownerTeamId,
+        editorTeamIds: input.editorTeamIds,
       });
       return snapshotSharedProject(created.project as any, 'ui');
     },
@@ -1777,6 +1864,8 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
       code: z.string().optional(),
       fileExtension: z.string().optional(),
       dependencies: z.array(z.string()).optional(),
+      ownerTeamId: z.number().int().positive().optional(),
+      editorTeamIds: z.array(z.number().int().positive()).optional(),
     }),
     execute: async (input) => {
       assertToolPermission(ctx, 'ide.shared_modules.write');
@@ -1789,6 +1878,8 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
         code: input.code,
         fileExtension: input.fileExtension,
         dependencies: input.dependencies,
+        ownerTeamId: input.ownerTeamId,
+        editorTeamIds: input.editorTeamIds,
       });
       return snapshotSharedProject(created.project as any, 'module');
     },
@@ -1819,6 +1910,7 @@ export const buildAssistantTools = (ctx: AssistantToolContext) => {
           : CoreDataSource.getRepository(GlobalModulePackageFile);
       const project = await projectRepo.findOne({ where: { id: input.projectId } });
       if (!project) throw new Error('Shared project not found');
+      await ensureSharedProjectWriteAccess(ctx, projectRepo as any, project as any);
       const where = input.fileId
         ? { id: input.fileId }
         : { project: { id: input.projectId }, path: normalizeSharedPath(input.path) };

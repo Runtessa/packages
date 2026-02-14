@@ -19,8 +19,19 @@ type SharedModuleProject = {
   entryPath: string;
   dependencies: string[];
   fileExtension: string;
+  ownerTeamId?: number;
+  editorTeamIds?: number[];
+  canEdit?: boolean;
+  canManageAccess?: boolean;
   createdAt?: string;
   updatedAt?: string;
+};
+
+type TeamOption = {
+  id: number;
+  key: string;
+  name: string;
+  isActive?: boolean;
 };
 
 type SharedEndpoint = {
@@ -132,6 +143,13 @@ export default function AdminSharedModuleEditPage() {
   const [endpointEditErrors, setEndpointEditErrors] = useState<EndpointFormErrors>({
     routePath: '',
   });
+  const [canEditProject, setCanEditProject] = useState(true);
+  const [teamOptions, setTeamOptions] = useState<TeamOption[]>([]);
+  const [ownerTeamId, setOwnerTeamId] = useState<number | ''>('');
+  const [editorTeamIds, setEditorTeamIds] = useState<number[]>([]);
+  const [canManageAccess, setCanManageAccess] = useState(false);
+  const [canChangeOwner, setCanChangeOwner] = useState(false);
+  const [savingAccess, setSavingAccess] = useState(false);
 
   const idRaw = router.query.id;
   const projectId = Array.isArray(idRaw) ? idRaw[0] : idRaw;
@@ -140,6 +158,22 @@ export default function AdminSharedModuleEditPage() {
     () => endpoints.filter((endpoint) => endpoint.packageId === projectId),
     [endpoints, projectId]
   );
+
+  const loadAccess = async () => {
+    if (!token || !projectId) return;
+    const payload = await fetchJson(`/api/admin/shared-modules/${projectId}/access`, { token });
+    const access = payload?.access ?? {};
+    const teams = Array.isArray(payload?.teams) ? payload.teams : [];
+    setTeamOptions(teams);
+    setOwnerTeamId(Number.isInteger(access.ownerTeamId) ? access.ownerTeamId : '');
+    setEditorTeamIds(
+      Array.isArray(access.editorTeamIds)
+        ? access.editorTeamIds.filter((entry: unknown) => Number.isInteger(Number(entry))).map(Number)
+        : []
+    );
+    setCanManageAccess(Boolean(access.canManage));
+    setCanChangeOwner(Boolean(access.canChangeOwner));
+  };
 
   const loadEndpoints = async () => {
     if (!token) return;
@@ -185,6 +219,8 @@ export default function AdminSharedModuleEditPage() {
           fileExtension: project.fileExtension || 'js',
           dependencies: formatDeps(project.dependencies),
         });
+        setCanEditProject(project.canEdit !== false);
+        await loadAccess();
         await loadEndpoints();
       } catch (err: any) {
         setError(err.message);
@@ -203,7 +239,7 @@ export default function AdminSharedModuleEditPage() {
     setError('');
     const errors = validateForm(form);
     setValidationErrors(errors);
-    if (hasErrors(errors) || !projectId) return;
+    if (hasErrors(errors) || !projectId || !canEditProject) return;
 
     try {
       const deps = parseDeps(form.dependencies);
@@ -227,7 +263,7 @@ export default function AdminSharedModuleEditPage() {
 
   const handleEndpointCreate = async (event: FormEvent) => {
     event.preventDefault();
-    if (!token || !projectId) return;
+    if (!token || !projectId || !canEditProject) return;
     setEndpointErrors({ routePath: '' });
     const errors = validateEndpoint(endpointForm);
     setEndpointErrors(errors);
@@ -265,7 +301,7 @@ export default function AdminSharedModuleEditPage() {
 
   const handleEndpointEdit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!token || !editingEndpointId) return;
+    if (!token || !editingEndpointId || !canEditProject) return;
     const errors = validateEndpoint(endpointEditForm);
     setEndpointEditErrors(errors);
     if (errors.routePath) return;
@@ -288,7 +324,7 @@ export default function AdminSharedModuleEditPage() {
   };
 
   const handleEndpointDelete = async (endpointId: string) => {
-    if (!token) return;
+    if (!token || !canEditProject) return;
     try {
       await fetchJson(`/api/admin/shared-modules/endpoints/${endpointId}`, {
         method: 'DELETE',
@@ -298,6 +334,39 @@ export default function AdminSharedModuleEditPage() {
       await loadEndpoints();
     } catch (err: any) {
       showError(err.message || 'Failed to delete route');
+    }
+  };
+
+  const toggleEditorTeam = (teamId: number, checked: boolean) => {
+    setEditorTeamIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(teamId);
+      } else {
+        next.delete(teamId);
+      }
+      return Array.from(next).sort((a, b) => a - b);
+    });
+  };
+
+  const handleSaveAccess = async () => {
+    if (!token || !projectId || !canManageAccess) return;
+    setSavingAccess(true);
+    try {
+      await fetchJson(`/api/admin/shared-modules/${projectId}/access`, {
+        method: 'PUT',
+        token,
+        body: {
+          ownerTeamId: ownerTeamId === '' ? null : ownerTeamId,
+          editorTeamIds,
+        },
+      });
+      success('Shared backend access updated');
+      await loadAccess();
+    } catch (err: any) {
+      showError(err.message || 'Failed to update access');
+    } finally {
+      setSavingAccess(false);
     }
   };
 
@@ -355,7 +424,7 @@ export default function AdminSharedModuleEditPage() {
                 <Button variant="secondary" href="/admin/shared-modules">
                   Cancel
                 </Button>
-                <Button type="submit" variant="primary">
+                <Button type="submit" variant="primary" disabled={!canEditProject}>
                   Save changes
                 </Button>
               </>
@@ -397,6 +466,78 @@ export default function AdminSharedModuleEditPage() {
             </div>
           </FormLayout>
         )}
+        {!canEditProject ? (
+          <p className="mt-3 text-xs text-textMuted">
+            Read-only view: this shared backend is outside your owner/granted team scope.
+          </p>
+        ) : null}
+      </DataCard>
+
+      <DataCard
+        title="Team access"
+        subtitle="Owner team can publish. Owner tenant admins can grant edit access to other teams."
+      >
+        <div className="space-y-4">
+          <Select
+            label="Owner team"
+            value={ownerTeamId === '' ? '' : String(ownerTeamId)}
+            options={[
+              { label: 'Unassigned', value: '' },
+              ...teamOptions.map((team) => ({
+                label: `${team.name} (${team.key})`,
+                value: String(team.id),
+              })),
+            ]}
+            disabled={!canManageAccess || !canChangeOwner}
+            onChange={(event) => {
+              const value = event.target.value;
+              const parsed = Number(value);
+              setOwnerTeamId(Number.isInteger(parsed) && parsed > 0 ? parsed : '');
+            }}
+          />
+          <div className="rounded-lg border border-borderSubtle bg-bgSurface p-3">
+            <div className="mb-2 text-xs uppercase tracking-wide text-textMuted">Editor teams</div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {teamOptions.length === 0 ? (
+                <div className="text-sm text-textMuted">No active teams available.</div>
+              ) : (
+                teamOptions.map((team) => {
+                  const isOwner = ownerTeamId !== '' && Number(ownerTeamId) === team.id;
+                  const checked = isOwner || editorTeamIds.includes(team.id);
+                  return (
+                    <label
+                      key={team.id}
+                      className="flex items-center gap-2 rounded border border-borderSubtle px-2 py-1.5 text-sm text-textPrimary"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!canManageAccess || isOwner}
+                        onChange={(event) => toggleEditorTeam(team.id, event.target.checked)}
+                      />
+                      <span>{team.name}</span>
+                      <span className="text-xs text-textMuted">({team.key})</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button
+              variant="primary"
+              onClick={handleSaveAccess}
+              disabled={!canManageAccess || savingAccess}
+            >
+              {savingAccess ? 'Saving…' : 'Save access'}
+            </Button>
+          </div>
+          {!canManageAccess ? (
+            <p className="text-xs text-textMuted">
+              Access management is restricted to owner team tenant admins or platform admins.
+            </p>
+          ) : null}
+        </div>
       </DataCard>
 
       <DataCard
@@ -407,7 +548,7 @@ export default function AdminSharedModuleEditPage() {
           <FormLayout
             onSubmit={handleEndpointCreate}
             actions={
-              <Button type="submit" variant="primary" disabled={!projectId}>
+              <Button type="submit" variant="primary" disabled={!projectId || !canEditProject}>
                 Add route
               </Button>
             }
@@ -419,12 +560,14 @@ export default function AdminSharedModuleEditPage() {
               onChange={(event) => setEndpointForm({ ...endpointForm, routePath: event.target.value })}
               error={endpointErrors.routePath}
               placeholder="/api/auth"
+              disabled={!canEditProject}
             />
             <Select
               label="Method"
               value={endpointForm.method}
               options={METHOD_OPTIONS}
               onChange={(event) => setEndpointForm({ ...endpointForm, method: event.target.value })}
+              disabled={!canEditProject}
             />
             <Input label="Project" value={form.name || '—'} disabled />
           </FormLayout>
@@ -486,6 +629,7 @@ export default function AdminSharedModuleEditPage() {
                             variant="secondary"
                             size="xs"
                             onClick={() => startEditEndpoint(endpoint)}
+                            disabled={!canEditProject}
                           >
                             Edit
                           </Button>
@@ -493,6 +637,7 @@ export default function AdminSharedModuleEditPage() {
                             variant="danger"
                             size="xs"
                             onClick={() => handleEndpointDelete(endpoint.id)}
+                            disabled={!canEditProject}
                           >
                             Delete
                           </Button>

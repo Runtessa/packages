@@ -66,6 +66,10 @@ const ROLE_PERMISSIONS: Record<IdeRole, Array<IdePermission | '*'>> = {
   tenant_admin: [
     'ide.tenants.read',
     'ide.tenants.manage',
+    'ide.shared_ui.read',
+    'ide.shared_ui.write',
+    'ide.shared_modules.read',
+    'ide.shared_modules.write',
     'ide.ui.read',
     'ide.ui.write',
     'ide.ui.publish',
@@ -79,6 +83,8 @@ const ROLE_PERMISSIONS: Record<IdeRole, Array<IdePermission | '*'>> = {
   ],
   backend_developer: [
     'ide.tenants.read',
+    'ide.shared_ui.read',
+    'ide.shared_modules.read',
     'ide.ui.read',
     'ide.modules.read',
     'ide.modules.write',
@@ -95,11 +101,14 @@ const ROLE_PERMISSIONS: Record<IdeRole, Array<IdePermission | '*'>> = {
     'ide.ui.publish',
     'ide.shared_ui.read',
     'ide.shared_ui.write',
+    'ide.shared_modules.read',
     'ide.modules.read',
     'ide.models.read',
   ],
   model_developer: [
     'ide.tenants.read',
+    'ide.shared_ui.read',
+    'ide.shared_modules.read',
     'ide.ui.read',
     'ide.modules.read',
     'ide.models.read',
@@ -108,6 +117,8 @@ const ROLE_PERMISSIONS: Record<IdeRole, Array<IdePermission | '*'>> = {
   ],
   integration_developer: [
     'ide.tenants.read',
+    'ide.shared_ui.read',
+    'ide.shared_modules.read',
     'ide.ui.read',
     'ide.modules.read',
     'ide.modules.write',
@@ -131,6 +142,8 @@ const ROLE_PERMISSIONS: Record<IdeRole, Array<IdePermission | '*'>> = {
   observer: [...READ_PERMISSIONS],
   user: [
     'ide.tenants.read',
+    'ide.shared_ui.read',
+    'ide.shared_modules.read',
     'ide.ui.read',
     'ide.modules.read',
     'ide.models.read',

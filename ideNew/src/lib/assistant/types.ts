@@ -33,6 +33,8 @@ export type SharedProjectSnapshot = {
   codeBlob: string;
   dependencies: string[];
   fileExtension?: string | null;
+  ownerTeamId?: number;
+  editorTeamIds?: number[];
   kind: 'ui' | 'module';
 };
 

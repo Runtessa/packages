@@ -18,6 +18,14 @@ import {
   removeGlobalTailwindPackage,
   upsertGlobalTailwindPackage,
 } from '@/lib/shared-tailwind';
+import {
+  canEditSharedProject,
+  canManageSharedProjectAccess,
+  canPublishSharedProject,
+  claimSharedProjectOwnershipIfNeeded,
+  ensureSharedProjectEditable,
+  getSharedProjectTeamAccess,
+} from '@/lib/shared-project-access';
 
 const normalizeName = (raw: unknown): string => {
   if (typeof raw !== 'string' || !raw.trim()) {
@@ -84,25 +92,47 @@ const normalizeFileExtension = (raw: unknown): string => {
   return allowed.has(normalized) ? normalized : 'jsx';
 };
 
-const serialize = (pkg: GlobalUIPackage) => ({
-  id: pkg.id,
-  name: pkg.name,
-  version: pkg.version,
-  entryPath: pkg.entryPath,
-  code: pkg.code,
-  codeBlob: pkg.codeBlob,
-  dependencies: stripTailwindDependency(pkg.dependencies ?? [], getTailwindPackageName(pkg.name)),
-  fileExtension: pkg.fileExtension,
-  draftVersion: pkg.draftVersion,
-  publishedVersion: pkg.publishedVersion ?? undefined,
-  publishedAt: pkg.publishedAt ?? undefined,
-  createdAt: pkg.createdAt,
-  updatedAt: pkg.updatedAt,
-});
+const serialize = (pkg: GlobalUIPackage, user: Awaited<ReturnType<typeof requireAdmin>>) => {
+  const teamAccess = getSharedProjectTeamAccess(pkg);
+  return {
+    id: pkg.id,
+    name: pkg.name,
+    version: pkg.version,
+    entryPath: pkg.entryPath,
+    code: pkg.code,
+    codeBlob: pkg.codeBlob,
+    dependencies: stripTailwindDependency(pkg.dependencies ?? [], getTailwindPackageName(pkg.name)),
+    fileExtension: pkg.fileExtension,
+    draftVersion: pkg.draftVersion,
+    publishedVersion: pkg.publishedVersion ?? undefined,
+    publishedAt: pkg.publishedAt ?? undefined,
+    ownerTeamId: teamAccess.ownerTeamId ?? undefined,
+    editorTeamIds: teamAccess.editorTeamIds,
+    canEdit: canEditSharedProject(user, pkg),
+    canPublish: canPublishSharedProject(user, pkg),
+    canManageAccess: canManageSharedProjectAccess(user, pkg),
+    createdAt: pkg.createdAt,
+    updatedAt: pkg.updatedAt,
+  };
+};
 
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method === 'GET') {
-    await requireAdmin(req);
+    const user = await requireAdmin(req);
+    await ensureCoreSchema();
+
+    const repo = CoreDataSource.getRepository(GlobalUIPackage);
+    const pkg = await repo.findOne({ where: { id: req.query.id as string } });
+    if (!pkg) {
+      res.status(404).json({ error: 'Shared package not found' });
+      return;
+    }
+    res.status(200).json({ package: serialize(pkg, user) });
+    return;
+  }
+
+  if (req.method === 'PUT') {
+    const user = await requireAdmin(req);
     await ensureCoreSchema();
 
     const repo = CoreDataSource.getRepository(GlobalUIPackage);
@@ -112,23 +142,10 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       res.status(404).json({ error: 'Shared package not found' });
       return;
     }
-    const previousName = pkg.name;
-    const previousVersion = pkg.version;
-
-    res.status(200).json({ package: serialize(pkg) });
-    return;
-  }
-
-  if (req.method === 'PUT') {
-    await requireAdmin(req);
-    await ensureCoreSchema();
-
-    const repo = CoreDataSource.getRepository(GlobalUIPackage);
-    const fileRepo = CoreDataSource.getRepository(GlobalUIPackageFile);
-    const pkg = await repo.findOne({ where: { id: req.query.id as string } });
-    if (!pkg) {
-      res.status(404).json({ error: 'Shared package not found' });
-      return;
+    const access = ensureSharedProjectEditable(user, pkg);
+    const claimed = claimSharedProjectOwnershipIfNeeded(pkg, access);
+    if (claimed) {
+      await repo.save(pkg);
     }
     const previousName = pkg.name;
     const previousVersion = pkg.version;
@@ -200,12 +217,12 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       await upsertGlobalTailwindPackage(nextTailwindName, nextVersion, css);
     }
 
-    res.status(200).json({ package: serialize(pkg) });
+    res.status(200).json({ package: serialize(pkg, user) });
     return;
   }
 
   if (req.method === 'DELETE') {
-    await requireAdmin(req);
+    const user = await requireAdmin(req);
     await ensureCoreSchema();
 
     const repo = CoreDataSource.getRepository(GlobalUIPackage);
@@ -214,6 +231,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       res.status(404).json({ error: 'Shared package not found' });
       return;
     }
+    ensureSharedProjectEditable(user, pkg);
     const encoded = encodeURIComponent(pkg.name);
     await redis.del(`registry:global:${encoded}:latest`, `registry:global:${encoded}:${pkg.version}`);
     await removeGlobalTailwindPackage(getTailwindPackageName(pkg.name), pkg.version);

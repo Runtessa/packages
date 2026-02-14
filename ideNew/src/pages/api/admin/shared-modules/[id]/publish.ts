@@ -4,22 +4,38 @@ import { requireAdmin } from '@/lib/auth';
 import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
 import { GlobalModulePackage } from '@idp/shared';
 import { generateVersion } from '@/lib/version';
+import {
+  canEditSharedProject,
+  canManageSharedProjectAccess,
+  canPublishSharedProject,
+  claimSharedProjectOwnershipIfNeeded,
+  ensureSharedProjectPublishable,
+  getSharedProjectTeamAccess,
+} from '@/lib/shared-project-access';
 
-const serialize = (pkg: GlobalModulePackage) => ({
-  id: pkg.id,
-  name: pkg.name,
-  version: pkg.version,
-  entryPath: pkg.entryPath,
-  code: pkg.code,
-  codeBlob: pkg.codeBlob,
-  dependencies: pkg.dependencies ?? [],
-  fileExtension: pkg.fileExtension,
-  draftVersion: pkg.draftVersion,
-  publishedVersion: pkg.publishedVersion ?? undefined,
-  publishedAt: pkg.publishedAt ?? undefined,
-  createdAt: pkg.createdAt,
-  updatedAt: pkg.updatedAt,
-});
+const serialize = (pkg: GlobalModulePackage, user: Awaited<ReturnType<typeof requireAdmin>>) => {
+  const teamAccess = getSharedProjectTeamAccess(pkg);
+  return {
+    id: pkg.id,
+    name: pkg.name,
+    version: pkg.version,
+    entryPath: pkg.entryPath,
+    code: pkg.code,
+    codeBlob: pkg.codeBlob,
+    dependencies: pkg.dependencies ?? [],
+    fileExtension: pkg.fileExtension,
+    draftVersion: pkg.draftVersion,
+    publishedVersion: pkg.publishedVersion ?? undefined,
+    publishedAt: pkg.publishedAt ?? undefined,
+    ownerTeamId: teamAccess.ownerTeamId ?? undefined,
+    editorTeamIds: teamAccess.editorTeamIds,
+    canEdit: canEditSharedProject(user, pkg),
+    canPublish: canPublishSharedProject(user, pkg),
+    canManageAccess: canManageSharedProjectAccess(user, pkg),
+    createdAt: pkg.createdAt,
+    updatedAt: pkg.updatedAt,
+  };
+};
 
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method !== 'POST') {
@@ -28,7 +44,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     return;
   }
 
-  await requireAdmin(req);
+  const user = await requireAdmin(req);
   await ensureCoreSchema();
 
   const repo = CoreDataSource.getRepository(GlobalModulePackage);
@@ -36,6 +52,11 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   if (!pkg) {
     res.status(404).json({ error: 'Shared backend project not found' });
     return;
+  }
+  const access = ensureSharedProjectPublishable(user, pkg);
+  const claimed = claimSharedProjectOwnershipIfNeeded(pkg, access);
+  if (claimed) {
+    await repo.save(pkg);
   }
 
   pkg.publishedVersion = generateVersion();
@@ -46,5 +67,5 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
   pkg.publishedAt = new Date();
   await repo.save(pkg);
 
-  res.status(200).json({ package: serialize(pkg) });
+  res.status(200).json({ package: serialize(pkg, user) });
 });

@@ -6,6 +6,16 @@ import { GlobalUIPackage } from '@idp/shared';
 import { GlobalUIPackageFile } from '@idp/shared';
 import { Like, Not } from 'typeorm';
 import { generateVersion } from '@/lib/version';
+import { hasIdePermission, normalizeIdeRole } from '@/lib/rbac';
+import {
+  applySharedProjectTeamAccess,
+  canEditSharedProject,
+  canManageSharedProjectAccess,
+  canPublishSharedProject,
+  getActiveTeamId,
+  getSharedProjectTeamAccess,
+  normalizeTeamIdList,
+} from '@/lib/shared-project-access';
 import {
   ensureTailwindDependency,
   getTailwindPackageName,
@@ -80,7 +90,20 @@ const normalizeFileExtension = (raw: unknown): string => {
   return allowed.has(normalized) ? normalized : 'jsx';
 };
 
-const serialize = (pkg: GlobalUIPackage) => ({
+const normalizeOwnerTeamId = (raw: unknown): number | null => {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    const err = new Error('ownerTeamId must be a positive integer');
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  return value;
+};
+
+const serialize = (pkg: GlobalUIPackage, user: Awaited<ReturnType<typeof requireAdmin>>) => {
+  const teamAccess = getSharedProjectTeamAccess(pkg);
+  return {
   id: pkg.id,
   name: pkg.name,
   version: pkg.version,
@@ -92,9 +115,15 @@ const serialize = (pkg: GlobalUIPackage) => ({
   draftVersion: pkg.draftVersion,
   publishedVersion: pkg.publishedVersion ?? undefined,
   publishedAt: pkg.publishedAt ?? undefined,
+  ownerTeamId: teamAccess.ownerTeamId ?? undefined,
+  editorTeamIds: teamAccess.editorTeamIds,
+  canEdit: canEditSharedProject(user, pkg),
+  canPublish: canPublishSharedProject(user, pkg),
+  canManageAccess: canManageSharedProjectAccess(user, pkg),
   createdAt: pkg.createdAt,
   updatedAt: pkg.updatedAt,
-});
+};
+};
 
 const parsePagination = (rawPage: unknown, rawLimit: unknown) => {
   const pageValue = Array.isArray(rawPage) ? rawPage[0] : rawPage;
@@ -108,7 +137,7 @@ const parsePagination = (rawPage: unknown, rawLimit: unknown) => {
 
 export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method === 'GET') {
-    await requireAdmin(req);
+    const user = await requireAdmin(req);
     await ensureCoreSchema();
 
     const repo = CoreDataSource.getRepository(GlobalUIPackage);
@@ -119,17 +148,20 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       skip,
       take: limit,
     });
+    const canCreate =
+      user.isAdmin || hasIdePermission(user.normalizedRole, 'ide.shared_ui.write');
     res.status(200).json({
-      packages: packages.map(serialize),
+      packages: packages.map((pkg) => serialize(pkg, user)),
       page,
       limit,
       total,
+      canCreate,
     });
     return;
   }
 
   if (req.method === 'POST') {
-    await requireAdmin(req);
+    const user = await requireAdmin(req);
     await ensureCoreSchema();
 
     const { name, version, codeBlob, dependencies, entryPath } = req.body ?? {};
@@ -141,6 +173,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     );
     const normalizedDeps = normalizeDependencies(dependencies);
     const fileExtension = normalizeFileExtension(req.body?.fileExtension);
+    const requestedOwnerTeamId = normalizeOwnerTeamId(req.body?.ownerTeamId);
+    const requestedEditorTeamIds = normalizeTeamIdList(req.body?.editorTeamIds);
     const normalizedEntry =
       typeof entryPath === 'string' && entryPath.trim()
         ? normalizeEntryPath(entryPath)
@@ -171,7 +205,32 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       dependencies: depsWithTailwind,
       fileExtension,
       draftVersion: generateVersion(),
+      ownerTeamId: null,
+      editorTeamIds: [],
     });
+    const activeTeamId = getActiveTeamId(user);
+    const ownerTeamId = requestedOwnerTeamId ?? activeTeamId;
+    if (
+      !user.isAdmin &&
+      requestedOwnerTeamId &&
+      requestedOwnerTeamId !== activeTeamId
+    ) {
+      const err = new Error('Forbidden: non-admin users can only set ownerTeamId to active team');
+      (err as any).statusCode = 403;
+      throw err;
+    }
+    if (!ownerTeamId && !user.isAdmin) {
+      const err = new Error('ownerTeamId is required when active team is not set');
+      (err as any).statusCode = 400;
+      throw err;
+    }
+    const role = normalizeIdeRole(user.normalizedRole || user.role);
+    const allowEditorAssignments = user.isAdmin || role === 'tenant_admin';
+    applySharedProjectTeamAccess(
+      pkg,
+      ownerTeamId,
+      allowEditorAssignments ? requestedEditorTeamIds : []
+    );
     await repo.save(pkg);
 
     const entryFile = fileRepo.create({
@@ -189,7 +248,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       const css = await buildTailwindCssFromFiles(files);
       await upsertGlobalTailwindPackage(tailwindName, normalizedVersion, css);
     }
-    res.status(201).json({ package: serialize(pkg) });
+    res.status(201).json({ package: serialize(pkg, user) });
     return;
   }
 
