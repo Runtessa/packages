@@ -23,4 +23,4 @@ Thumbs.db
 .vscode/
 
 # Local codex gateway runtime data
-ideNew/.codex-gateway/
+src/ideNew/.codex-gateway/

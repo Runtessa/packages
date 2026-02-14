@@ -79,7 +79,7 @@ const appendFileSection = async (filePath) => {
 
 const run = async () => {
   await writeHeader();
-  const files = await collectFiles(path.join(ROOT, "ideNew"));
+  const files = await collectFiles(path.join(ROOT, "src", "ideNew"));
   const sorted = files.sort();
   for (const file of sorted) {
     await appendFileSection(file);

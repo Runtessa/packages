@@ -305,7 +305,7 @@ const codexGatewayIndexPath = () =>
     pickEnv(
       'CONTAINER_MANAGER_CODEX_GATEWAY_INDEX_PATH',
       'CONTAINER_AGENT_CODEX_GATEWAY_INDEX_PATH'
-    ) || `${codexWorkspaceRoot().replace(/[\\]+/g, '/')}/codex-gateway/index.js`
+    ) || `${codexWorkspaceRoot().replace(/[\\]+/g, '/')}/src/codex-gateway/index.js`
   ).trim();
 
 const codexGatewayIndexHostPath = () =>

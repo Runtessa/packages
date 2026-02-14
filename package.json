@@ -3,23 +3,23 @@
   "version": "0.1.0",
   "main": "dist/server.js",
   "workspaces": [
-    "src",
-    "ideNew",
-    "packages/*"
+    "src/core",
+    "src/ideNew",
+    "src/packages/*"
   ],
   "scripts": {
-    "build:shared": "tsc -p packages/shared/tsconfig.json",
+    "build:shared": "tsc -p src/packages/shared/tsconfig.json",
     "build": "npm run build:shared && tsc",
-    "build:front": "cd kernel && npm run build && cd ..",
+    "build:front": "cd src/kernel && npm run build && cd ../..",
     "start": "npm run build && npm run build:front && node dist/server.js",
-    "monitoring:start": "npm --prefix monitoring run start",
-    "monitoring:dev": "npm --prefix monitoring run dev",
-    "container-agent:start": "npm --prefix container-agent run start",
-    "container-agent:dev": "npm --prefix container-agent run dev",
-    "container-manager:start": "npm --prefix container-agent run start",
-    "container-manager:dev": "npm --prefix container-agent run dev",
-    "seed": "ts-node src/seed.ts",
-    "seed-packages": "ts-node src/seed-packages.ts",
+    "monitoring:start": "npm --prefix src/monitoring run start",
+    "monitoring:dev": "npm --prefix src/monitoring run dev",
+    "container-agent:start": "npm --prefix src/container-agent run start",
+    "container-agent:dev": "npm --prefix src/container-agent run dev",
+    "container-manager:start": "npm --prefix src/container-agent run start",
+    "container-manager:dev": "npm --prefix src/container-agent run dev",
+    "seed": "ts-node src/core/seed.ts",
+    "seed-packages": "ts-node src/core/seed-packages.ts",
     "dump": "node dump-project.js"
   },
   "dependencies": {

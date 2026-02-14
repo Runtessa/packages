@@ -69,6 +69,7 @@ const sanitizeUserKey = (value: string | number) =>
 
 const resolveRepoRoot = () => {
   const cwd = process.cwd().replace(/\\/g, '/');
+  if (cwd.endsWith('/src/ideNew')) return cwd.slice(0, -'/src/ideNew'.length);
   if (cwd.endsWith('/ideNew')) return cwd.slice(0, -'/ideNew'.length);
   return cwd;
 };
@@ -161,7 +162,7 @@ const assertRemoteContainerAgentForContainerMode = (mode: string) => {
 };
 
 const resolveProfilesFile = () =>
-  path.join(resolveRepoRoot(), 'ideNew', '.codex-gateway', 'runtime-profiles.json');
+  path.join(resolveRepoRoot(), 'src', 'ideNew', '.codex-gateway', 'runtime-profiles.json');
 
 const resolvePortRange = () => {
   const raw = String(process.env.AGENT_CODEX_GATEWAY_PORT_RANGE || '').trim();
@@ -606,7 +607,7 @@ const ensureContainerRunning = async (
       ? Number(preferredPort)
       : choosePort(userKey);
   const repoRoot = resolveRepoRoot();
-  const dataRoot = path.join(repoRoot, 'ideNew', '.codex-gateway', userKey);
+  const dataRoot = path.join(repoRoot, 'src', 'ideNew', '.codex-gateway', userKey);
   await fs.mkdir(dataRoot, { recursive: true });
   const volumeSuffix = engine === 'podman' ? ':Z' : '';
   const labels = [
@@ -637,7 +638,7 @@ const ensureContainerRunning = async (
     '-v',
     `${dataRoot}:/data${volumeSuffix}`,
     '-v',
-    `${path.join(repoRoot, 'codex-gateway', 'index.js')}:/app/index.js${volumeSuffix}`,
+    `${path.join(repoRoot, 'src', 'codex-gateway', 'index.js')}:/app/index.js${volumeSuffix}`,
     ...labels,
     image,
   ];

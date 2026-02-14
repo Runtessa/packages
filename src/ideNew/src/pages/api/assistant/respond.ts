@@ -67,6 +67,7 @@ const resolveCodexCwd = () => {
   const fromEnv = (process.env.AGENT_CODEX_CWD || '').trim();
   if (fromEnv) return fromEnv;
   const cwd = process.cwd().replace(/\\/g, '/');
+  if (cwd.endsWith('/src/ideNew')) return cwd.slice(0, -'/src/ideNew'.length);
   if (cwd.endsWith('/ideNew')) return cwd.slice(0, -'/ideNew'.length);
   return cwd;
 };

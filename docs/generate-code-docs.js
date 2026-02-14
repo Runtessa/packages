@@ -6,14 +6,14 @@ const DOCS_DIR = path.resolve(__dirname);
 const ROOT = path.resolve(DOCS_DIR, '..');
 
 const SOURCES = [
-  { key: 'core', label: 'Core Runtime', dir: 'src' },
-  { key: 'ide', label: 'IDE', dir: 'ideNew/src' },
-  { key: 'kernel', label: 'Kernel', dir: 'kernel/src' },
-  { key: 'shared', label: 'Shared Package', dir: 'packages/shared/src' },
+  { key: 'core', label: 'Core Runtime', dir: 'src/core' },
+  { key: 'ide', label: 'IDE', dir: 'src/ideNew/src' },
+  { key: 'kernel', label: 'Kernel', dir: 'src/kernel/src' },
+  { key: 'shared', label: 'Shared Package', dir: 'src/packages/shared/src' },
 ];
 
-const ENTITY_DIR = 'packages/shared/src/entities';
-const NEXT_API_ROOT = 'ideNew/src/pages/api';
+const ENTITY_DIR = 'src/packages/shared/src/entities';
+const NEXT_API_ROOT = 'src/ideNew/src/pages/api';
 
 function escapeHtml(value) {
   return String(value)
@@ -120,10 +120,10 @@ function parseFunctions(code) {
 }
 
 function getArea(relPath) {
-  if (relPath.startsWith('src/')) return 'core';
-  if (relPath.startsWith('ideNew/src/')) return 'ide';
-  if (relPath.startsWith('kernel/src/')) return 'kernel';
-  if (relPath.startsWith('packages/shared/src/')) return 'shared';
+  if (relPath.startsWith('src/core/')) return 'core';
+  if (relPath.startsWith('src/ideNew/src/')) return 'ide';
+  if (relPath.startsWith('src/kernel/src/')) return 'kernel';
+  if (relPath.startsWith('src/packages/shared/src/')) return 'shared';
   return 'other';
 }
 
@@ -174,14 +174,14 @@ function inferNextMethods(code) {
 }
 
 function nextRouteFromFile(relPath) {
-  let route = relPath.replace(/^ideNew\/src\/pages\/api/, '/api').replace(/\.(ts|tsx|js|jsx)$/, '');
+  let route = relPath.replace(/^src\/ideNew\/src\/pages\/api/, '/api').replace(/\.(ts|tsx|js|jsx)$/, '');
   route = route.replace(/\/index$/, '');
   return route || '/api';
 }
 
 function collectApiMeta() {
   const express = [];
-  const expressFiles = walk(path.join(ROOT, 'src')).filter((f) => /\.(ts|js)$/.test(f));
+  const expressFiles = walk(path.join(ROOT, 'src/core')).filter((f) => /\.(ts|js)$/.test(f));
   for (const file of expressFiles) {
     const rel = toRel(file);
     const code = fs.readFileSync(file, 'utf8');
