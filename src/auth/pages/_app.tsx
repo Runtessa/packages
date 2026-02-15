@@ -1,10 +1,14 @@
 import type { AppProps } from 'next/app';
 import { useEffect } from 'react';
+import { useRouter } from 'next/router';
 import '../styles/globals.css';
+import { AdminShell } from '../components/layout/AdminShell';
 
 const RENEW_INTERVAL_MS = 5 * 60 * 1000;
 
 export default function App({ Component, pageProps }: AppProps) {
+  const router = useRouter();
+
   useEffect(() => {
     let running = false;
 
@@ -57,6 +61,16 @@ export default function App({ Component, pageProps }: AppProps) {
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
+
+  const isAdminPage = router.pathname === '/admin' || router.pathname.startsWith('/admin/');
+
+  if (isAdminPage) {
+    return (
+      <AdminShell>
+        <Component {...pageProps} />
+      </AdminShell>
+    );
+  }
 
   return <Component {...pageProps} />;
 }

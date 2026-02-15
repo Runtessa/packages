@@ -93,8 +93,8 @@ export default function ProfilePage() {
                   Sign out
                 </button>
                 {session.user.isAuthAdmin ? (
-                  <Link className="btn-primary bg-primaryDark hover:bg-primary" href="/admin/tenants">
-                    Open tenant SSO admin panel
+                  <Link className="btn-primary bg-primaryDark hover:bg-primary" href="/admin">
+                    Open auth admin dashboard
                   </Link>
                 ) : null}
               </div>

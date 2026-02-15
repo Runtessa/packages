@@ -65,6 +65,10 @@ button {
     @apply rounded-xl border border-borderSubtle bg-bgApp shadow-soft;
   }
 
+  .page-header {
+    @apply flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-left;
+  }
+
   .muted {
     @apply text-textMuted;
   }
@@ -91,5 +95,16 @@ button {
 
   .alert-success {
     @apply rounded-xl border border-success/60 bg-success/10 px-3 py-2 text-sm text-success;
+  }
+}
+
+@layer utilities {
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
   }
 }

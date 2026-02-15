@@ -1,6 +1,9 @@
 import Head from 'next/head';
-import Link from 'next/link';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { PageHeader } from '../../components/layout/PageHeader';
+import { DataCard } from '../../components/ui/DataCard';
+import { DataTable } from '../../components/ui/DataTable';
+import { Button } from '../../components/ui/Button';
 
 interface SessionPayload {
   authenticated: boolean;
@@ -10,6 +13,7 @@ interface SessionPayload {
     email: string;
     firstName: string;
     lastName: string;
+    isAuthAdmin?: boolean;
   };
 }
 
@@ -50,6 +54,7 @@ export default function AdminTenantsPage() {
   });
 
   const csrfToken = session?.csrfToken || '';
+  const canManage = Boolean(session?.authenticated && session.user?.isAuthAdmin);
 
   const load = async () => {
     setLoading(true);
@@ -183,56 +188,69 @@ export default function AdminTenantsPage() {
 
   const activeCount = useMemo(() => items.filter((item) => item.isActive).length, [items]);
 
+  if (session?.authenticated && session.user && !session.user.isAuthAdmin) {
+    return (
+      <>
+        <Head>
+          <title>Auth Admin | Tenant SSO Whitelist</title>
+        </Head>
+        <div className="space-y-6">
+          <PageHeader title="Tenants" subtitle="Tenant SSO whitelist management." />
+          <DataCard title="Permission Denied" subtitle="You do not have auth admin access.">
+            <p className="text-sm text-textMuted">Use an auth admin account to access this panel.</p>
+          </DataCard>
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <Head>
         <title>Auth Admin | Tenant SSO Whitelist</title>
       </Head>
 
-      <main className="min-h-screen bg-bgApp px-4 py-10 text-textPrimary">
-        <div className="mx-auto w-full max-w-6xl space-y-5">
-          <div className="card flex flex-col gap-4 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-textMuted">Auth Admin</p>
-              <h1 className="mt-2 text-2xl font-semibold">Tenant SSO Whitelist</h1>
-              <p className="mt-1 text-sm text-textMuted">
-                Standard callback pattern: <code className="text-accent">https://tenant-host/auth</code>
-              </p>
+      <div className="space-y-6">
+        <PageHeader
+          title="Tenants"
+          subtitle="Standard callback pattern: https://tenant-host/auth"
+          actions={
+            <div className="flex gap-2">
+              <Button href="/admin" variant="secondary">
+                Back to dashboard
+              </Button>
             </div>
-            <Link className="btn-primary bg-primaryDark hover:bg-primary" href="/profile">
-              Back to account
-            </Link>
+          }
+        />
+
+        {error ? <div className="rounded-lg border border-danger bg-bgApp px-4 py-3 text-sm text-danger">{error}</div> : null}
+        {success ? <div className="rounded-lg border border-success bg-bgApp px-4 py-3 text-sm text-success">{success}</div> : null}
+        {generatedToken ? (
+          <div className="rounded-lg border border-success bg-bgApp px-4 py-3 text-sm text-success">
+            <p className="font-semibold">Generated tenant SSO token</p>
+            <code className="mt-2 block overflow-x-auto rounded-md bg-bgSurface px-2 py-1 text-xs text-accent">
+              {generatedToken}
+            </code>
           </div>
+        ) : null}
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div className="card px-4 py-3 text-sm">
-              <p className="text-textMuted">Total entries</p>
-              <p className="mt-1 text-lg font-semibold">{items.length}</p>
-            </div>
-            <div className="card px-4 py-3 text-sm">
-              <p className="text-textMuted">Active entries</p>
-              <p className="mt-1 text-lg font-semibold">{activeCount}</p>
-            </div>
-            <div className="card px-4 py-3 text-sm">
-              <p className="text-textMuted">Session user</p>
-              <p className="mt-1 truncate text-lg font-semibold">{session?.user?.email || 'n/a'}</p>
-            </div>
-          </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <DataCard title="Total entries">
+            <p className="text-lg font-semibold">{items.length}</p>
+          </DataCard>
+          <DataCard title="Active entries">
+            <p className="text-lg font-semibold">{activeCount}</p>
+          </DataCard>
+          <DataCard title="Session user">
+            <p className="truncate text-lg font-semibold">{session?.user?.email || 'n/a'}</p>
+          </DataCard>
+        </div>
 
-          {error ? <div className="alert-danger">{error}</div> : null}
-          {success ? <div className="alert-success">{success}</div> : null}
-          {generatedToken ? (
-            <div className="alert-success">
-              <p className="font-semibold">Generated tenant SSO token</p>
-              <code className="mt-2 block overflow-x-auto rounded-md bg-bgApp px-2 py-1 text-xs text-accent">
-                {generatedToken}
-              </code>
-            </div>
-          ) : null}
-
-          <form className="card space-y-4 px-6 py-5" onSubmit={submit}>
-            <h2 className="text-lg font-semibold">Create or update tenant entry</h2>
-
+        <DataCard
+          title="Create or update tenant entry"
+          subtitle="Whitelist controls for tenant host and SSO token validation."
+        >
+          <form className="space-y-4" onSubmit={submit}>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
                 <label className="label" htmlFor="tenant_name">
@@ -310,54 +328,43 @@ export default function AdminTenantsPage() {
               </label>
             </div>
 
-            <button className="btn-primary" type="submit" disabled={loading || !csrfToken}>
+            <Button type="submit" variant="primary" disabled={loading || !csrfToken || !canManage}>
               Save tenant entry
-            </button>
+            </Button>
           </form>
+        </DataCard>
 
-          <div className="card overflow-x-auto px-6 py-5">
-            <h2 className="mb-4 text-lg font-semibold">Current whitelist</h2>
-            {loading ? <p className="text-sm text-textMuted">Loading...</p> : null}
-
-            <table className="min-w-full border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-borderSubtle text-textMuted">
-                  <th className="py-2 pr-3">Tenant</th>
-                  <th className="py-2 pr-3">Tenant ID</th>
-                  <th className="py-2 pr-3">Allow Reg</th>
-                  <th className="py-2 pr-3">Active</th>
-                  <th className="py-2 pr-3">Updated</th>
-                  <th className="py-2 pr-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item) => (
-                  <tr key={item.tenantName} className="border-b border-borderSubtle/60">
-                    <td className="py-3 pr-3">{item.tenantName}</td>
-                    <td className="py-3 pr-3 text-textMuted">{item.tenantRandId || 'n/a'}</td>
-                    <td className="py-3 pr-3">{boolFromMeta(item.meta, 'allowRegistration', false) ? 'yes' : 'no'}</td>
-                    <td className="py-3 pr-3">{item.isActive ? 'yes' : 'no'}</td>
-                    <td className="py-3 pr-3 text-textMuted">{new Date(item.updatedAt).toLocaleString()}</td>
-                    <td className="py-3 pr-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button className="btn-primary px-3 py-2 text-xs" type="button" onClick={() => rotateToken(item.tenantName)}>
-                          Rotate token
-                        </button>
-                        <button className="btn-danger" type="button" onClick={() => removeTenant(item.tenantName)}>
-                          Delete
-                        </button>
-                        {strFromMeta(item.meta, 'tenantDisplayName') ? (
-                          <span className="text-xs text-textMuted">{strFromMeta(item.meta, 'tenantDisplayName')}</span>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </main>
+        <DataCard title="Current whitelist" subtitle={`Showing ${items.length} tenant entries`}>
+          <DataTable
+            headers={['Tenant', 'Tenant ID', 'Allow Reg', 'Active', 'Updated', 'Actions']}
+            loading={loading}
+            emptyMessage="No tenant whitelist entries found."
+          >
+            {items.map((item) => (
+              <tr key={item.tenantName} className="text-sm hover:bg-bgApp transition">
+                <td className="px-4 py-3 text-textPrimary">{item.tenantName}</td>
+                <td className="px-4 py-3 text-textMuted">{item.tenantRandId || 'n/a'}</td>
+                <td className="px-4 py-3 text-textMuted">{boolFromMeta(item.meta, 'allowRegistration', false) ? 'yes' : 'no'}</td>
+                <td className="px-4 py-3 text-textMuted">{item.isActive ? 'yes' : 'no'}</td>
+                <td className="px-4 py-3 text-textMuted">{new Date(item.updatedAt).toLocaleString()}</td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" size="sm" onClick={() => rotateToken(item.tenantName)}>
+                      Rotate token
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => removeTenant(item.tenantName)}>
+                      Delete
+                    </Button>
+                    {strFromMeta(item.meta, 'tenantDisplayName') ? (
+                      <span className="text-xs text-textMuted">{strFromMeta(item.meta, 'tenantDisplayName')}</span>
+                    ) : null}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </DataTable>
+        </DataCard>
+      </div>
     </>
   );
 }

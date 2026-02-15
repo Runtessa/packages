@@ -844,6 +844,24 @@ const boot = async (): Promise<void> => {
     next();
   });
 
+  app.get('/auth/admin', (req, res) => {
+    const query = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+    res.redirect(`/admin${query}`);
+  });
+
+  app.get('/auth/admin/tenants', (req, res) => {
+    const query = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+    res.redirect(`/admin/tenants${query}`);
+  });
+
+  app.get('/admin', (req, res, next) => {
+    if (!req.sessionContext || !isAuthAdmin(req)) {
+      res.redirect('/login?error=' + encodeURIComponent('Auth admin access required'));
+      return;
+    }
+    next();
+  });
+
   app.get('/admin/tenants', (req, res, next) => {
     if (!req.sessionContext || !isAuthAdmin(req)) {
       res.redirect('/login?error=' + encodeURIComponent('Auth admin access required'));

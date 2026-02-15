@@ -15,6 +15,7 @@ Standalone authentication + SSO service built with:
 - Per-tenant SSO token validation on `/oauth/token` (`tenant_name` + `tenant_sso_token`)
 - Tenant sync endpoint with history: `/api/tenant-sync/upsert`
 - Session heartbeat renewal endpoint for tenant/kernel pages: `POST /api/session/renew`
+- Auth admin dashboard: `/admin`
 - Auth admin tenant whitelist panel: `/admin/tenants`
 - Versioned entities:
   - `users`
