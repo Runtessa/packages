@@ -1,9 +1,6 @@
 import Head from 'next/head';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { PageHeader } from '../../components/layout/PageHeader';
-import { DataCard } from '../../components/ui/DataCard';
-import { DataTable } from '../../components/ui/DataTable';
-import { Button } from '../../components/ui/Button';
 
 interface SessionPayload {
   authenticated: boolean;
@@ -35,6 +32,18 @@ const strFromMeta = (meta: Record<string, unknown> | undefined, key: string): st
   const value = meta?.[key];
   return typeof value === 'string' ? value : '';
 };
+
+const labelClass = 'mb-1.5 block text-xs font-semibold uppercase tracking-[0.12em] text-[#5F6368]';
+const inputClass =
+  'w-full rounded-xl border border-[#DADCE0] bg-white px-3 py-2.5 text-sm text-[#202124] outline-none transition focus:border-[#1A73E8] focus:ring-2 focus:ring-[#D2E3FC]';
+const checkboxClass = 'h-4 w-4 rounded border-[#C7C9CC] text-[#1A73E8] focus:ring-[#D2E3FC]';
+const cardClass = 'rounded-[24px] p-6';
+const primaryBtnClass =
+  'inline-flex items-center justify-center gap-2 rounded-full bg-[#1A73E8] px-5 py-2.5 text-sm font-medium text-white transition-all duration-200 hover:bg-[#1765cc] active:brightness-95 disabled:cursor-not-allowed disabled:opacity-60';
+const secondaryBtnClass =
+  'inline-flex items-center justify-center gap-2 rounded-full border border-[#DADCE0] bg-white px-5 py-2.5 text-sm font-medium text-[#1A73E8] transition-all duration-200 hover:bg-[#F6F9FE] active:brightness-95 disabled:cursor-not-allowed disabled:opacity-60';
+const dangerBtnClass =
+  'inline-flex items-center justify-center gap-2 rounded-full border border-[#F28B82] bg-white px-5 py-2.5 text-sm font-medium text-[#B3261E] transition-all duration-200 hover:bg-[#FDECEA] active:brightness-95 disabled:cursor-not-allowed disabled:opacity-60';
 
 export default function AdminTenantsPage() {
   const [session, setSession] = useState<SessionPayload | null>(null);
@@ -196,9 +205,10 @@ export default function AdminTenantsPage() {
         </Head>
         <div className="space-y-6">
           <PageHeader title="Tenants" subtitle="Tenant SSO whitelist management." />
-          <DataCard title="Permission Denied" subtitle="You do not have auth admin access.">
-            <p className="text-sm text-textMuted">Use an auth admin account to access this panel.</p>
-          </DataCard>
+          <article className={cardClass}>
+            <h2 className="text-xl font-normal text-[#202124]">Permission Denied</h2>
+            <p className="mt-2 text-sm text-[#5F6368]">Use an auth admin account to access this panel.</p>
+          </article>
         </div>
       </>
     );
@@ -215,50 +225,52 @@ export default function AdminTenantsPage() {
           title="Tenants"
           subtitle="Standard callback pattern: https://tenant-host/auth"
           actions={
-            <div className="flex gap-2">
-              <Button href="/admin" variant="secondary">
+            <div className="flex flex-wrap gap-2">
+              <a href="/admin" className={secondaryBtnClass}>
                 Back to dashboard
-              </Button>
+              </a>
             </div>
           }
         />
 
-        {error ? <div className="rounded-lg border border-danger bg-bgApp px-4 py-3 text-sm text-danger">{error}</div> : null}
-        {success ? <div className="rounded-lg border border-success bg-bgApp px-4 py-3 text-sm text-success">{success}</div> : null}
+        {error ? <div className="rounded-xl border border-[#F28B82] bg-[#FDECEA] px-4 py-3 text-sm text-[#B3261E]">{error}</div> : null}
+        {success ? <div className="rounded-xl border border-[#81C995] bg-[#E6F4EA] px-4 py-3 text-sm text-[#137333]">{success}</div> : null}
         {generatedToken ? (
-          <div className="rounded-lg border border-success bg-bgApp px-4 py-3 text-sm text-success">
+          <div className="rounded-xl border border-[#81C995] bg-[#E6F4EA] px-4 py-3 text-sm text-[#137333]">
             <p className="font-semibold">Generated tenant SSO token</p>
-            <code className="mt-2 block overflow-x-auto rounded-md bg-bgSurface px-2 py-1 text-xs text-accent">
+            <code className="mt-2 block overflow-x-auto rounded-lg border border-[#DADCE0] bg-white px-2 py-1 text-xs text-[#202124]">
               {generatedToken}
             </code>
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <DataCard title="Total entries">
-            <p className="text-lg font-semibold">{items.length}</p>
-          </DataCard>
-          <DataCard title="Active entries">
-            <p className="text-lg font-semibold">{activeCount}</p>
-          </DataCard>
-          <DataCard title="Session user">
-            <p className="truncate text-lg font-semibold">{session?.user?.email || 'n/a'}</p>
-          </DataCard>
-        </div>
+        <section className="grid w-full grid-cols-1 gap-6 xl:grid-cols-3">
+          <article className={cardClass}>
+            <h2 className="text-xl font-normal text-[#202124]">Total entries</h2>
+            <p className="mt-2 text-sm text-[#5F6368]">{items.length}</p>
+          </article>
+          <article className={cardClass}>
+            <h2 className="text-xl font-normal text-[#202124]">Active entries</h2>
+            <p className="mt-2 text-sm text-[#5F6368]">{activeCount}</p>
+          </article>
+          <article className={cardClass}>
+            <h2 className="text-xl font-normal text-[#202124]">Session user</h2>
+            <p className="mt-2 truncate text-sm text-[#5F6368]">{session?.user?.email || 'n/a'}</p>
+          </article>
+        </section>
 
-        <DataCard
-          title="Create or update tenant entry"
-          subtitle="Whitelist controls for tenant host and SSO token validation."
-        >
-          <form className="space-y-4" onSubmit={submit}>
+        <article className={cardClass}>
+          <h2 className="text-xl font-normal text-[#202124]">Create or update tenant entry</h2>
+          <p className="mt-1 text-sm text-[#5F6368]">Whitelist controls for tenant host and SSO token validation.</p>
+          <form className="mt-4 space-y-4" onSubmit={submit}>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
-                <label className="label" htmlFor="tenant_name">
+                <label className={labelClass} htmlFor="tenant_name">
                   Tenant name (host)
                 </label>
                 <input
                   id="tenant_name"
-                  className="input"
+                  className={inputClass}
                   value={form.tenantName}
                   onChange={(e) => setForm((prev) => ({ ...prev, tenantName: e.target.value }))}
                   placeholder="tenant.example.com"
@@ -266,12 +278,12 @@ export default function AdminTenantsPage() {
                 />
               </div>
               <div>
-                <label className="label" htmlFor="tenant_rand_id">
+                <label className={labelClass} htmlFor="tenant_rand_id">
                   Tenant rand id (optional)
                 </label>
                 <input
                   id="tenant_rand_id"
-                  className="input"
+                  className={inputClass}
                   value={form.tenantRandId}
                   onChange={(e) => setForm((prev) => ({ ...prev, tenantRandId: e.target.value }))}
                   placeholder="tenant-rand-id"
@@ -281,24 +293,24 @@ export default function AdminTenantsPage() {
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
-                <label className="label" htmlFor="tenant_display_name">
+                <label className={labelClass} htmlFor="tenant_display_name">
                   Tenant display name (optional)
                 </label>
                 <input
                   id="tenant_display_name"
-                  className="input"
+                  className={inputClass}
                   value={form.tenantDisplayName}
                   onChange={(e) => setForm((prev) => ({ ...prev, tenantDisplayName: e.target.value }))}
                   placeholder="Tenant Display Name"
                 />
               </div>
               <div>
-                <label className="label" htmlFor="custom_sso_token">
+                <label className={labelClass} htmlFor="custom_sso_token">
                   Custom SSO token (optional)
                 </label>
                 <input
                   id="custom_sso_token"
-                  className="input"
+                  className={inputClass}
                   value={form.customToken}
                   onChange={(e) => setForm((prev) => ({ ...prev, customToken: e.target.value }))}
                   placeholder="empty = auto-generate"
@@ -307,9 +319,9 @@ export default function AdminTenantsPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <label className="inline-flex items-center gap-2 text-sm text-textMuted">
+              <label className="inline-flex items-center gap-2 text-sm text-[#5F6368]">
                 <input
-                  className="h-4 w-4 rounded border-borderSubtle bg-bgApp"
+                  className={checkboxClass}
                   type="checkbox"
                   checked={form.allowRegistration}
                   onChange={(e) => setForm((prev) => ({ ...prev, allowRegistration: e.target.checked }))}
@@ -317,9 +329,9 @@ export default function AdminTenantsPage() {
                 Allow registration for this tenant
               </label>
 
-              <label className="inline-flex items-center gap-2 text-sm text-textMuted">
+              <label className="inline-flex items-center gap-2 text-sm text-[#5F6368]">
                 <input
-                  className="h-4 w-4 rounded border-borderSubtle bg-bgApp"
+                  className={checkboxClass}
                   type="checkbox"
                   checked={form.isActive}
                   onChange={(e) => setForm((prev) => ({ ...prev, isActive: e.target.checked }))}
@@ -328,42 +340,80 @@ export default function AdminTenantsPage() {
               </label>
             </div>
 
-            <Button type="submit" variant="primary" disabled={loading || !csrfToken || !canManage}>
+            <button type="submit" className={primaryBtnClass} disabled={loading || !csrfToken || !canManage}>
               Save tenant entry
-            </Button>
+            </button>
           </form>
-        </DataCard>
+        </article>
 
-        <DataCard title="Current whitelist" subtitle={`Showing ${items.length} tenant entries`}>
-          <DataTable
-            headers={['Tenant', 'Tenant ID', 'Allow Reg', 'Active', 'Updated', 'Actions']}
-            loading={loading}
-            emptyMessage="No tenant whitelist entries found."
-          >
-            {items.map((item) => (
-              <tr key={item.tenantName} className="text-sm hover:bg-bgApp transition">
-                <td className="px-4 py-3 text-textPrimary">{item.tenantName}</td>
-                <td className="px-4 py-3 text-textMuted">{item.tenantRandId || 'n/a'}</td>
-                <td className="px-4 py-3 text-textMuted">{boolFromMeta(item.meta, 'allowRegistration', false) ? 'yes' : 'no'}</td>
-                <td className="px-4 py-3 text-textMuted">{item.isActive ? 'yes' : 'no'}</td>
-                <td className="px-4 py-3 text-textMuted">{new Date(item.updatedAt).toLocaleString()}</td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-2">
-                    <Button variant="secondary" size="sm" onClick={() => rotateToken(item.tenantName)}>
-                      Rotate token
-                    </Button>
-                    <Button variant="danger" size="sm" onClick={() => removeTenant(item.tenantName)}>
-                      Delete
-                    </Button>
-                    {strFromMeta(item.meta, 'tenantDisplayName') ? (
-                      <span className="text-xs text-textMuted">{strFromMeta(item.meta, 'tenantDisplayName')}</span>
-                    ) : null}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </DataTable>
-        </DataCard>
+        <article className={cardClass}>
+          <h2 className="text-xl font-normal text-[#202124]">Current whitelist</h2>
+          <p className="mt-1 text-sm text-[#5F6368]">Showing {items.length} tenant entries</p>
+          <div className="mt-4 overflow-x-auto rounded-2xl border border-[#E8EAED] bg-white">
+            <table className="w-full border-collapse text-left text-sm text-[#202124]">
+              <thead className="bg-[#F8F9FA] text-[#5F6368]">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">Tenant</th>
+                  <th className="px-4 py-3 font-semibold">Tenant ID</th>
+                  <th className="px-4 py-3 font-semibold">Allow Reg</th>
+                  <th className="px-4 py-3 font-semibold">Active</th>
+                  <th className="px-4 py-3 font-semibold">Updated</th>
+                  <th className="px-4 py-3 font-semibold">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#E8EAED]">
+                {loading ? (
+                  <tr>
+                    <td className="px-4 py-3 text-[#5F6368]" colSpan={6}>
+                      Loading...
+                    </td>
+                  </tr>
+                ) : items.length > 0 ? (
+                  items.map((item) => (
+                    <tr key={item.tenantName} className="text-sm transition hover:bg-[#F8F9FA]">
+                      <td className="px-4 py-3 text-[#202124]">{item.tenantName}</td>
+                      <td className="px-4 py-3 text-[#5F6368]">{item.tenantRandId || 'n/a'}</td>
+                      <td className="px-4 py-3 text-[#5F6368]">
+                        {boolFromMeta(item.meta, 'allowRegistration', false) ? 'yes' : 'no'}
+                      </td>
+                      <td className="px-4 py-3 text-[#5F6368]">{item.isActive ? 'yes' : 'no'}</td>
+                      <td className="px-4 py-3 text-[#5F6368]">{new Date(item.updatedAt).toLocaleString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className={secondaryBtnClass}
+                            onClick={() => rotateToken(item.tenantName)}
+                          >
+                            Rotate token
+                          </button>
+                          <button
+                            type="button"
+                            className={dangerBtnClass}
+                            onClick={() => removeTenant(item.tenantName)}
+                          >
+                            Delete
+                          </button>
+                          {strFromMeta(item.meta, 'tenantDisplayName') ? (
+                            <span className="self-center text-xs text-[#5F6368]">
+                              {strFromMeta(item.meta, 'tenantDisplayName')}
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="px-4 py-3 text-[#5F6368]" colSpan={6}>
+                      No tenant whitelist entries found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </article>
       </div>
     </>
   );

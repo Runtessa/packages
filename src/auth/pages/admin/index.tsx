@@ -1,8 +1,6 @@
 import Head from 'next/head';
 import { useEffect, useState } from 'react';
 import { PageHeader } from '../../components/layout/PageHeader';
-import { DataCard } from '../../components/ui/DataCard';
-import { Button } from '../../components/ui/Button';
 
 interface SessionPayload {
   authenticated: boolean;
@@ -17,6 +15,12 @@ interface WhitelistResponse {
   items?: Array<{ isActive: boolean }>;
   error?: string;
 }
+
+const cardClass = 'rounded-[24px] p-6';
+const primaryBtnClass =
+  'inline-flex items-center justify-center gap-2 rounded-full bg-[#1A73E8] px-5 py-2.5 text-sm font-medium text-white transition-all duration-200 hover:bg-[#1765cc] active:brightness-95';
+const secondaryBtnClass =
+  'inline-flex items-center justify-center gap-2 rounded-full border border-[#DADCE0] bg-white px-5 py-2.5 text-sm font-medium text-[#1A73E8] transition-all duration-200 hover:bg-[#F6F9FE] active:brightness-95';
 
 export default function AuthAdminDashboardPage() {
   const [session, setSession] = useState<SessionPayload | null>(null);
@@ -70,41 +74,50 @@ export default function AuthAdminDashboardPage() {
           title="Dashboard"
           subtitle="Tenant SSO administration and security controls."
           actions={
-            <div className="flex gap-2">
-              <Button href="/profile" variant="secondary">
+            <div className="flex flex-wrap gap-2">
+              <a href="/profile" className={secondaryBtnClass}>
                 Back to profile
-              </Button>
-              <Button href="/admin/tenants" variant="primary">
+              </a>
+              <a href="/admin/tenants" className={primaryBtnClass}>
                 Open tenant panel
-              </Button>
+              </a>
             </div>
           }
         />
 
-        {error ? <div className="rounded-lg border border-danger bg-bgApp px-4 py-3 text-sm text-danger">{error}</div> : null}
+        {error ? <div className="rounded-xl border border-[#F28B82] bg-[#FDECEA] px-4 py-3 text-sm text-[#B3261E]">{error}</div> : null}
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <DataCard title="Auth admin user">
-            <p className="truncate text-lg font-semibold">{session?.user?.email || 'n/a'}</p>
-          </DataCard>
-          <DataCard title="Tenant whitelist entries">
-            <p className="text-lg font-semibold">{loading ? '...' : totalTenants}</p>
-          </DataCard>
-          <DataCard title="Active tenants">
-            <p className="text-lg font-semibold">{loading ? '...' : activeTenants}</p>
-          </DataCard>
-        </div>
+        <section className="grid w-full grid-cols-1 gap-6 xl:grid-cols-2">
+          <article className={cardClass}>
+            <h2 className="text-xl font-normal text-[#202124]">Overview</h2>
+            <div className="mt-4 space-y-3 text-sm text-[#5F6368]">
+              <p>
+                <span className="font-normal text-[#202124]">Auth admin user:</span>{' '}
+                {session?.user?.email || 'n/a'}
+              </p>
+              <p>
+                <span className="font-normal text-[#202124]">Tenant whitelist entries:</span>{' '}
+                {loading ? '...' : totalTenants}
+              </p>
+              <p>
+                <span className="font-normal text-[#202124]">Active tenants:</span>{' '}
+                {loading ? '...' : activeTenants}
+              </p>
+            </div>
+          </article>
 
-        <DataCard title="Quick actions">
-          <div className="flex flex-wrap gap-2">
-            <Button href="/admin/tenants" variant="primary">
-              Manage tenant whitelist
-            </Button>
-            <Button href="/profile" variant="secondary">
-              Open profile
-            </Button>
-          </div>
-        </DataCard>
+          <article className={cardClass}>
+            <h2 className="text-xl font-normal text-[#202124]">Quick Actions</h2>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <a href="/admin/tenants" className={primaryBtnClass}>
+                Manage tenant whitelist
+              </a>
+              <a href="/profile" className={secondaryBtnClass}>
+                Open profile
+              </a>
+            </div>
+          </article>
+        </section>
       </div>
     </>
   );

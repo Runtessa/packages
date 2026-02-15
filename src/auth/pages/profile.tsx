@@ -126,6 +126,7 @@ const primaryBtnClass =
 
 const secondaryBtnClass =
   'inline-flex items-center justify-center gap-2 rounded-full border border-[#DADCE0] bg-white px-5 py-2.5 text-sm font-medium text-[#1A73E8] transition-all duration-200 hover:bg-[#F6F9FE] active:brightness-95 disabled:cursor-not-allowed disabled:opacity-60';
+const desktopRailLeft = 'max(0.75rem, calc((100vw - 1400px) / 2 + 0.75rem))';
 
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
 const AVATAR_ALLOWED_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);
@@ -474,8 +475,11 @@ export default function ProfilePage() {
 
       <main className="min-h-screen overflow-x-hidden bg-[#F6F8FC] pb-20 pt-6 text-[#202124] md:pb-8">
         <div className="mx-auto flex min-h-[calc(100vh-8rem)] w-full max-w-[1400px] items-stretch gap-6 px-3 sm:px-4">
-          <aside className="hidden w-[280px] shrink-0 md:block md:h-full md:self-stretch">
-            <nav className={`${cardClass} sticky top-6 p-3`}>
+          <aside className="hidden w-[280px] shrink-0 md:block">
+            <nav
+              className={`${cardClass} md:fixed md:top-6 md:w-[280px] md:max-h-[calc(100vh-3rem)] md:overflow-y-auto md:hide-scrollbar p-3`}
+              style={{ left: desktopRailLeft }}
+            >
               <div className="grid h-24 place-items-center" style={{ marginBottom: '32px' }}>
                 <img src="/images/lw_dark.png" alt="ADA" className="h-14 w-auto" />
               </div>
@@ -514,7 +518,7 @@ export default function ProfilePage() {
             </nav>
           </aside>
 
-          <section className="min-w-0 flex w-full max-w-full flex-1 flex-col gap-6">
+          <section className="min-w-0 flex w-full max-w-full flex-1 flex-col justify-center gap-6">
             {loading ? <div className={`${cardClass} text-sm text-[#5F6368]`}>Loading profile...</div> : null}
             {error ? <div className="rounded-xl border border-[#F28B82] bg-[#FDECEA] px-4 py-3 text-sm text-[#B3261E]">{error}</div> : null}
             {success ? <div className="rounded-xl border border-[#81C995] bg-[#E6F4EA] px-4 py-3 text-sm text-[#137333]">{success}</div> : null}

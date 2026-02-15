@@ -19,9 +19,9 @@ export const DataTable = ({
   const pad = size === 'sm' ? 'px-3 py-2' : 'px-4 py-3';
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-borderSubtle bg-bgSurface">
-      <table className="w-full border-collapse text-left text-sm text-textPrimary">
-        <thead className="bg-bgApp text-textMuted">
+    <div className="overflow-x-auto rounded-2xl border border-[#E8EAED] bg-white">
+      <table className="w-full border-collapse text-left text-sm text-[#202124]">
+        <thead className="bg-[#F8F9FA] text-[#5F6368]">
           <tr>
             {headers.map((header) => (
               <th key={header} className={`${pad} font-semibold`}>
@@ -30,10 +30,10 @@ export const DataTable = ({
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-borderSubtle">
+        <tbody className="divide-y divide-[#E8EAED]">
           {loading ? (
             <tr>
-              <td className={`${pad} text-textMuted`} colSpan={headers.length}>
+              <td className={`${pad} text-[#5F6368]`} colSpan={headers.length}>
                 Loading...
               </td>
             </tr>
@@ -41,7 +41,7 @@ export const DataTable = ({
             children
           ) : (
             <tr>
-              <td className={`${pad} text-textMuted`} colSpan={headers.length}>
+              <td className={`${pad} text-[#5F6368]`} colSpan={headers.length}>
                 {emptyMessage}
               </td>
             </tr>
