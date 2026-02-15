@@ -24,3 +24,6 @@ Thumbs.db
 
 # Local codex gateway runtime data
 src/ideNew/.codex-gateway/
+
+project_dumps
+*.dump.md
