@@ -22,9 +22,15 @@ import {
   renewSession,
   revokeSession,
 } from './lib/sessions';
-import { requestIp, requestUserAgent, safeReturnTo } from './lib/http';
+import { parseBoolean, requestIp, requestUserAgent, safeReturnTo } from './lib/http';
 import { authenticateUser, registerUser } from './lib/services/auth';
 import { bootstrapAuthDefaults } from './lib/services/bootstrap';
+import {
+  getUserProfileSnapshot,
+  updateProfileDetails,
+  updateProfilePassword,
+  updateTwoFactorSettings,
+} from './lib/services/profile';
 import {
   assertScopeAllowed,
   consumeAuthorizationCode,
@@ -249,6 +255,134 @@ const boot = async (): Promise<void> => {
       },
       tenantRandId: req.sessionContext.session.tenantRandId,
     });
+  });
+
+  app.get('/api/profile', requireSession, async (req, res, next) => {
+    try {
+      const userRandId = req.sessionContext?.user.randId;
+      if (!userRandId) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+      }
+
+      const profile = await getUserProfileSnapshot(userRandId);
+      res.status(200).json({ profile });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/profile/details', requireTrustedOrigin, requireSession, requireCsrf, async (req, res, next) => {
+    try {
+      const userRandId = req.sessionContext?.user.randId;
+      if (!userRandId) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+      }
+
+      await updateProfileDetails(
+        userRandId,
+        {
+          firstName: optionalString(req.body.firstName ?? req.body.first_name, 120) || undefined,
+          lastName: optionalString(req.body.lastName ?? req.body.last_name, 120) || undefined,
+          nationalId: optionalString(req.body.nationalId ?? req.body.national_id, 96) || undefined,
+          phoneNumber: optionalString(req.body.phoneNumber ?? req.body.phone_number, 32) || undefined,
+          avatarUrl: req.body.avatarUrl ?? req.body.avatar_url ?? undefined,
+          birthday: req.body.birthday ?? req.body.birth_day ?? undefined,
+          gender: req.body.gender ?? undefined,
+        },
+        userRandId,
+      );
+
+      await logActivity({
+        eventType: 'auth.profile.updated',
+        actorUserRandId: userRandId,
+        targetType: 'user',
+        targetRandId: userRandId,
+        ipAddress: requestIp(req),
+        userAgent: requestUserAgent(req),
+      });
+
+      const profile = await getUserProfileSnapshot(userRandId);
+      res.status(200).json({ ok: true, profile });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/profile/password', requireTrustedOrigin, requireSession, requireCsrf, async (req, res, next) => {
+    try {
+      const userRandId = req.sessionContext?.user.randId;
+      if (!userRandId) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+      }
+
+      const currentPassword = String(req.body.currentPassword ?? req.body.current_password ?? '');
+      const newPassword = String(req.body.newPassword ?? req.body.new_password ?? '');
+      const confirmPassword = String(req.body.confirmPassword ?? req.body.confirm_password ?? '');
+
+      if (!currentPassword || !newPassword || !confirmPassword) {
+        res.status(400).json({ error: 'All password fields are required' });
+        return;
+      }
+
+      if (newPassword !== confirmPassword) {
+        res.status(400).json({ error: 'New password and confirmation do not match' });
+        return;
+      }
+
+      await updateProfilePassword(userRandId, currentPassword, newPassword, userRandId);
+
+      await logActivity({
+        eventType: 'auth.profile.password.updated',
+        actorUserRandId: userRandId,
+        targetType: 'user',
+        targetRandId: userRandId,
+        ipAddress: requestIp(req),
+        userAgent: requestUserAgent(req),
+      });
+
+      res.status(200).json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/profile/2fa', requireTrustedOrigin, requireSession, requireCsrf, async (req, res, next) => {
+    try {
+      const userRandId = req.sessionContext?.user.randId;
+      if (!userRandId) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+      }
+
+      await updateTwoFactorSettings(
+        userRandId,
+        {
+          enabled: parseBoolean(req.body.enabled ?? req.body.twoFactorEnabled, false),
+          method: optionalString(req.body.method ?? req.body.twoFactorMethod, 16) || undefined,
+          phoneNumber:
+            optionalString(req.body.phoneNumber ?? req.body.phone_number ?? req.body.twoFactorPhone, 32) ||
+            undefined,
+        },
+        userRandId,
+      );
+
+      await logActivity({
+        eventType: 'auth.profile.2fa.updated',
+        actorUserRandId: userRandId,
+        targetType: 'user',
+        targetRandId: userRandId,
+        ipAddress: requestIp(req),
+        userAgent: requestUserAgent(req),
+      });
+
+      const profile = await getUserProfileSnapshot(userRandId);
+      res.status(200).json({ ok: true, security: profile.security });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.post('/auth/login', loginLimiter, requireTrustedOrigin, async (req, res) => {
@@ -880,8 +1014,8 @@ const boot = async (): Promise<void> => {
     });
   });
 
-  const server = app.listen(config.port, () => {
-    console.log(`[auth-service] listening on ${config.baseUrl}`);
+  const server = app.listen(config.port, config.host, () => {
+    console.log(`[auth-service] listening on ${config.host}:${config.port} (${config.baseUrl})`);
   });
 
   const shutdown = async (): Promise<void> => {

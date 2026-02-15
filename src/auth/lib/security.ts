@@ -6,16 +6,19 @@ import { isWhitelistedOrigin } from './services/tenant-whitelist';
 
 export const defaultHelmet = helmet({
   contentSecurityPolicy: {
+    useDefaults: false,
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       imgSrc: ["'self'", 'data:'],
-      connectSrc: ["'self'"],
+      connectSrc: config.isDevelopment ? ["'self'", 'ws:', 'wss:'] : ["'self'"],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
       frameAncestors: ["'none'"],
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
       formAction: ["'self'"],
+      scriptSrcAttr: ["'none'"],
     },
   },
   crossOriginEmbedderPolicy: false,
@@ -49,6 +52,28 @@ const normalizeOrigin = (value: string): string => {
   } catch {
     return '';
   }
+};
+
+const hostHeaderToHostname = (value: string): string => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  try {
+    return new URL(`http://${raw}`).hostname.toLowerCase();
+  } catch {
+    if (raw.startsWith('[') && raw.includes(']')) {
+      return raw.slice(1, raw.indexOf(']')).toLowerCase();
+    }
+    return raw.split(':')[0].toLowerCase();
+  }
+};
+
+const isPrivateOrLoopbackHost = (hostHeader: string): boolean => {
+  const hostname = hostHeaderToHostname(hostHeader);
+  if (!hostname) return false;
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return true;
+  if (hostname.startsWith('10.') || hostname.startsWith('192.168.')) return true;
+  if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname)) return true;
+  return false;
 };
 
 const sameLoopbackHost = (left: string, right: string): boolean => {
@@ -155,7 +180,25 @@ export const requireTrustedOrigin = async (
 
   // Some same-origin form posts may omit Origin/Referer; allow only when browser
   // marks request as same-origin/none and host matches this auth service.
-  if (!origin && !referer && host && baseHost && host === baseHost) {
+  let hostAllowedWithoutOrigin = false;
+  if (host) {
+    if (baseHost && host === baseHost) {
+      hostAllowedWithoutOrigin = true;
+    } else {
+      const httpHostOrigin = `http://${host}`;
+      const httpsHostOrigin = `https://${host}`;
+      hostAllowedWithoutOrigin =
+        (await originAllowed(httpHostOrigin, req)) || (await originAllowed(httpsHostOrigin, req));
+    }
+
+    // Mobile browsers sometimes omit Origin/Referer for same-origin form posts.
+    // In development allow private/LAN hosts to avoid blocking local network testing.
+    if (!hostAllowedWithoutOrigin && config.isDevelopment && isPrivateOrLoopbackHost(host)) {
+      hostAllowedWithoutOrigin = true;
+    }
+  }
+
+  if (!origin && !referer && hostAllowedWithoutOrigin) {
     if (!secFetchSite || secFetchSite === 'same-origin' || secFetchSite === 'none') {
       next();
       return;

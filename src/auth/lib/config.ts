@@ -34,6 +34,7 @@ const isDevelopment = nodeEnv === 'development';
 
 const baseUrl = (process.env.AUTH_BASE_URL || '').trim() || 'http://localhost:3015';
 const port = asInt(process.env.AUTH_PORT, 3015, 1, 65535);
+const host = (process.env.AUTH_HOST || '').trim() || '0.0.0.0';
 
 const cookieSecure = asBool(process.env.AUTH_COOKIE_SECURE, true);
 const allowInsecureLocalhost = asBool(process.env.AUTH_ALLOW_INSECURE_LOCALHOST, false);
@@ -57,6 +58,7 @@ export interface AuthConfig {
   nodeEnv: string;
   isProduction: boolean;
   isDevelopment: boolean;
+  host: string;
   port: number;
   baseUrl: string;
   trustProxy: boolean;
@@ -104,6 +106,7 @@ export const config: AuthConfig = {
   nodeEnv,
   isProduction,
   isDevelopment,
+  host,
   port,
   baseUrl,
   trustProxy: asBool(process.env.AUTH_TRUST_PROXY, false),
