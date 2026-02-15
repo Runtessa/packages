@@ -1,0 +1,95 @@
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family:
+    'Inter',
+    'Vazirmatn',
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  @apply bg-bgApp text-textPrimary;
+  min-height: 100vh;
+  direction: ltr;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+}
+
+@layer components {
+  .page-container {
+    width: 100%;
+    max-width: 1150px;
+    margin-inline: auto;
+    padding-inline: 1rem;
+  }
+
+  @screen sm {
+    .page-container {
+      padding-inline: 1.5rem;
+    }
+  }
+
+  @screen lg {
+    .page-container {
+      padding-inline: 2.5rem;
+    }
+  }
+
+  .card {
+    @apply rounded-xl border border-borderSubtle bg-bgSurface shadow-soft;
+  }
+
+  .card-muted {
+    @apply rounded-xl border border-borderSubtle bg-bgApp shadow-soft;
+  }
+
+  .muted {
+    @apply text-textMuted;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-borderSubtle bg-bgApp px-3 py-2.5 text-sm text-textPrimary outline-none transition focus:border-accent;
+  }
+
+  .label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-[0.14em] text-textMuted;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-textPrimary shadow-soft transition hover:bg-primaryDark disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center rounded-xl border border-danger/60 bg-danger/15 px-3 py-2 text-sm font-semibold text-danger transition hover:bg-danger/20 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .alert-danger {
+    @apply rounded-xl border border-danger/60 bg-danger/10 px-3 py-2 text-sm text-danger;
+  }
+
+  .alert-success {
+    @apply rounded-xl border border-success/60 bg-success/10 px-3 py-2 text-sm text-success;
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "idp-auth-service",
+  "version": "1.0.0",
+  "description": "Standalone SSO and authentication service for IDP tenants",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch server.ts",
+    "build": "next build",
+    "start": "NODE_ENV=production tsx server.ts",
+    "type-check": "tsc --noEmit",
+    "migrate": "tsx scripts/migrate.ts",
+    "seed": "tsx scripts/seed.ts"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.5",
+    "ejs": "^3.1.10",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "helmet": "^8.0.0",
+    "next": "latest",
+    "pg": "^8.13.1",
+    "react": "latest",
+    "react-dom": "latest",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.28"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.9",
+    "@types/ejs": "^3.1.5",
+    "@types/express": "^4.17.23",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.14",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
