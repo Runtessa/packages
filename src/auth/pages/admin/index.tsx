@@ -1,6 +1,8 @@
 import Head from 'next/head';
 import { useEffect, useState } from 'react';
 import { PageHeader } from '../../components/layout/PageHeader';
+import { localeDir, useUiLocale } from '../../lib/ui/locale';
+import { getAuthMessages } from '../../lib/ui/i18n';
 
 interface SessionPayload {
   authenticated: boolean;
@@ -23,6 +25,8 @@ const secondaryBtnClass =
   'inline-flex items-center justify-center gap-2 rounded-full border border-[#DADCE0] bg-white px-5 py-2.5 text-sm font-medium text-[#1A73E8] transition-all duration-200 hover:bg-[#F6F9FE] active:brightness-95';
 
 export default function AuthAdminDashboardPage() {
+  const { locale, isRtl } = useUiLocale();
+  const copy = getAuthMessages(locale).dashboard;
   const [session, setSession] = useState<SessionPayload | null>(null);
   const [totalTenants, setTotalTenants] = useState(0);
   const [activeTenants, setActiveTenants] = useState(0);
@@ -40,46 +44,47 @@ export default function AuthAdminDashboardPage() {
         setSession(sessionData);
 
         if (!sessionData.authenticated) {
-          setError('Authentication required');
+          setError(copy.authenticationRequired);
           return;
         }
 
         const listRes = await fetch('/api/admin/tenant-whitelist', { credentials: 'include' });
         const listData = (await listRes.json()) as WhitelistResponse;
         if (!listRes.ok) {
-          throw new Error(listData.error || 'Failed to load tenant whitelist');
+          throw new Error(listData.error || copy.loadTenantFailed);
         }
 
         const items = listData.items || [];
         setTotalTenants(items.length);
         setActiveTenants(items.filter((item) => item.isActive).length);
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : 'Unexpected error');
+        setError(loadError instanceof Error ? loadError.message : copy.unexpectedError);
       } finally {
         setLoading(false);
       }
     };
 
     void load();
-  }, []);
+  }, [copy.authenticationRequired, copy.loadTenantFailed, copy.unexpectedError]);
 
   return (
     <>
       <Head>
-        <title>Auth Admin | Dashboard</title>
+        <title>{copy.headTitle}</title>
       </Head>
 
-      <div className="space-y-6">
+      <div className="space-y-6" dir={localeDir(locale)}>
         <PageHeader
-          title="Dashboard"
-          subtitle="Tenant SSO administration and security controls."
+          title={copy.title}
+          subtitle={copy.subtitle}
+          align={isRtl ? 'right' : 'left'}
           actions={
             <div className="flex flex-wrap gap-2">
               <a href="/profile" className={secondaryBtnClass}>
-                Back to profile
+                {copy.backToProfile}
               </a>
               <a href="/admin/tenants" className={primaryBtnClass}>
-                Open tenant panel
+                {copy.openTenantPanel}
               </a>
             </div>
           }
@@ -90,31 +95,31 @@ export default function AuthAdminDashboardPage() {
 
         <section className="grid w-full grid-cols-1 gap-6 xl:grid-cols-2">
           <article className={cardClass}>
-            <h2 className="text-xl font-normal text-[#202124]">Overview</h2>
+            <h2 className="text-xl font-normal text-[#202124]">{copy.overview}</h2>
             <div className="mt-4 space-y-3 text-sm text-[#5F6368]">
               <p>
-                <span className="font-normal text-[#202124]">Auth admin user:</span>{' '}
-                {session?.user?.email || 'n/a'}
+                <span className="font-normal text-[#202124]">{copy.authAdminUser}:</span>{' '}
+                {session?.user?.email || copy.na}
               </p>
               <p>
-                <span className="font-normal text-[#202124]">Tenant whitelist entries:</span>{' '}
+                <span className="font-normal text-[#202124]">{copy.tenantWhitelistEntries}:</span>{' '}
                 {loading ? '...' : totalTenants}
               </p>
               <p>
-                <span className="font-normal text-[#202124]">Active tenants:</span>{' '}
+                <span className="font-normal text-[#202124]">{copy.activeTenants}:</span>{' '}
                 {loading ? '...' : activeTenants}
               </p>
             </div>
           </article>
 
           <article className={cardClass}>
-            <h2 className="text-xl font-normal text-[#202124]">Quick Actions</h2>
+            <h2 className="text-xl font-normal text-[#202124]">{copy.quickActions}</h2>
             <div className="mt-4 flex flex-wrap gap-3">
               <a href="/admin/tenants" className={primaryBtnClass}>
-                Manage tenant whitelist
+                {copy.manageTenantWhitelist}
               </a>
               <a href="/profile" className={secondaryBtnClass}>
-                Open profile
+                {copy.openProfile}
               </a>
             </div>
           </article>

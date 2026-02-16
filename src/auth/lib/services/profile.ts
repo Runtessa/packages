@@ -3,6 +3,7 @@ import { hashPassword, verifyPassword } from '../crypto';
 import { assertPassword, assertPhone, normalizeText, requireString } from '../validation';
 import { findCurrentUserByRandId, schemas, upsertVersionedRecord } from './versioning';
 import { buildTotpUri, generateTotpSecret, normalizeTotpCode, verifyTotpCode } from './totp';
+import { isManagedAvatarUrl } from './avatar-storage';
 import {
   ActivityEntity,
   AuthSessionEntity,
@@ -108,11 +109,11 @@ const normalizeAvatarUrl = (value: unknown): string | null => {
   const raw = normalizeText(value ?? '', 1024);
   if (!raw) return null;
 
-  if (raw.startsWith('http://') || raw.startsWith('https://') || raw.startsWith('data:image/')) {
+  if (raw.startsWith('http://') || raw.startsWith('https://') || isManagedAvatarUrl(raw)) {
     return raw;
   }
 
-  const error = new Error('Avatar URL must start with http://, https://, or data:image/');
+  const error = new Error('Avatar URL must be an http(s) URL or a managed upload path');
   (error as Error & { statusCode: number }).statusCode = 400;
   throw error;
 };

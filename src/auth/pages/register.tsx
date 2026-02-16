@@ -2,6 +2,8 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
+import { localeDir, useUiLocale } from '../lib/ui/locale';
+import { getAuthMessages } from '../lib/ui/i18n';
 
 const one = (value: string | string[] | undefined): string =>
   Array.isArray(value) ? value[0] || '' : value || '';
@@ -20,6 +22,8 @@ const tenantFromReturnTo = (returnTo: string): string => {
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { locale } = useUiLocale();
+  const copy = getAuthMessages(locale).register;
 
   const error = one(router.query.error);
   const returnTo = one(router.query.returnTo) || '/profile';
@@ -47,16 +51,16 @@ export default function RegisterPage() {
         const allowed = Boolean(data?.allowRegistration);
         setAllowRegistration(allowed);
         if (!allowed) {
-          setPolicyMessage('Registration is disabled for this tenant. Contact your administrator.');
+          setPolicyMessage(copy.registrationDisabledTenant);
         }
       } catch {
         setAllowRegistration(false);
-        setPolicyMessage('Unable to verify tenant registration policy.');
+        setPolicyMessage(copy.registrationPolicyFailed);
       }
     };
 
     load();
-  }, [clientId, tenantName]);
+  }, [clientId, tenantName, copy.registrationDisabledTenant, copy.registrationPolicyFailed]);
 
   const loginHref = useMemo(
     () =>
@@ -69,7 +73,7 @@ export default function RegisterPage() {
   return (
     <>
       <Head>
-        <title>Register | IDP Auth</title>
+        <title>{copy.headTitle}</title>
       </Head>
 
       <main
@@ -78,16 +82,17 @@ export default function RegisterPage() {
           backgroundImage:
             'radial-gradient(circle at 20% 20%, rgba(77, 107, 255, 0.08), transparent 25%), radial-gradient(circle at 80% 80%, rgba(29, 53, 87, 0.16), transparent 30%)',
         }}
+        dir={localeDir(locale)}
       >
         <div className="flex min-h-screen items-center justify-center px-4 py-10">
           <div className="w-full max-w-5xl overflow-hidden rounded-3xl border border-borderSubtle bg-bgSurface/90 shadow-soft backdrop-blur transition-transform duration-200 hover:-translate-y-0.5">
             <div className="flex flex-col md:flex-row">
               <aside className="flex flex-col gap-6 bg-gradient-to-b from-primaryDark/80 to-bgSurface px-8 py-10 md:w-1/2 md:px-10">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-textMuted">IDP AUTH</p>
-                  <h1 className="mt-4 text-3xl font-semibold md:text-4xl">Create account</h1>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-textMuted">{copy.pageTag}</p>
+                  <h1 className="mt-4 text-3xl font-semibold md:text-4xl">{copy.heroTitle}</h1>
                   <p className="mt-2 text-textMuted">
-                    Tenant-aware registration with versioned identity history and auditable changes.
+                    {copy.heroSubtitle}
                   </p>
                 </div>
 
@@ -95,22 +100,22 @@ export default function RegisterPage() {
                   <div className="flex items-start gap-3">
                     <span className="mt-1 h-2.5 w-2.5 rounded-full bg-accent/80" />
                     <div>
-                      <p className="text-sm font-semibold text-textPrimary">Append-only model</p>
-                      <p className="text-xs text-textMuted">All changes are stored as new record versions.</p>
+                      <p className="text-sm font-semibold text-textPrimary">{copy.sideFeatureAppendOnlyTitle}</p>
+                      <p className="text-xs text-textMuted">{copy.sideFeatureAppendOnlyDescription}</p>
                     </div>
                   </div>
                   <div className="flex items-start gap-3">
                     <span className="mt-1 h-2.5 w-2.5 rounded-full bg-primary/80" />
                     <div>
-                      <p className="text-sm font-semibold text-textPrimary">Tenant policy</p>
-                      <p className="text-xs text-textMuted">Registration follows tenant allow-register rules.</p>
+                      <p className="text-sm font-semibold text-textPrimary">{copy.sideFeatureTenantPolicyTitle}</p>
+                      <p className="text-xs text-textMuted">{copy.sideFeatureTenantPolicyDescription}</p>
                     </div>
                   </div>
                   <div className="flex items-start gap-3">
                     <span className="mt-1 h-2.5 w-2.5 rounded-full bg-borderSubtle" />
                     <div>
-                      <p className="text-sm font-semibold text-textPrimary">SSO continuation</p>
-                      <p className="text-xs text-textMuted">On success, flow continues into tenant OAuth callback.</p>
+                      <p className="text-sm font-semibold text-textPrimary">{copy.sideFeatureSsoTitle}</p>
+                      <p className="text-xs text-textMuted">{copy.sideFeatureSsoDescription}</p>
                     </div>
                   </div>
                 </div>
@@ -118,9 +123,9 @@ export default function RegisterPage() {
 
               <section className="flex flex-col justify-center gap-6 bg-bgSurface/90 px-8 py-10 md:w-1/2 md:px-10">
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-textMuted">Register</p>
-                  <h2 className="text-2xl font-semibold">New identity</h2>
-                  <p className="text-sm text-textMuted">Enter your details to create your account.</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-textMuted">{copy.formTag}</p>
+                  <h2 className="text-2xl font-semibold">{copy.formTitle}</h2>
+                  <p className="text-sm text-textMuted">{copy.formSubtitle}</p>
                 </div>
 
                 {error ? <div className="alert-danger">{error}</div> : null}
@@ -134,7 +139,7 @@ export default function RegisterPage() {
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div>
                       <label className="label" htmlFor="first_name">
-                        First name
+                        {copy.firstName}
                       </label>
                       <input
                         id="first_name"
@@ -148,7 +153,7 @@ export default function RegisterPage() {
                     </div>
                     <div>
                       <label className="label" htmlFor="last_name">
-                        Last name
+                        {copy.lastName}
                       </label>
                       <input
                         id="last_name"
@@ -164,7 +169,7 @@ export default function RegisterPage() {
 
                   <div>
                     <label className="label" htmlFor="national_id">
-                      National ID
+                      {copy.nationalId}
                     </label>
                     <input
                       id="national_id"
@@ -179,7 +184,7 @@ export default function RegisterPage() {
 
                   <div>
                     <label className="label" htmlFor="phone_number">
-                      Phone number
+                      {copy.phoneNumber}
                     </label>
                     <input
                       id="phone_number"
@@ -195,7 +200,7 @@ export default function RegisterPage() {
 
                   <div>
                     <label className="label" htmlFor="email">
-                      Email
+                      {copy.email}
                     </label>
                     <input
                       id="email"
@@ -210,7 +215,7 @@ export default function RegisterPage() {
 
                   <div>
                     <label className="label" htmlFor="password">
-                      Password
+                      {copy.password}
                     </label>
                     <input
                       id="password"
@@ -225,13 +230,13 @@ export default function RegisterPage() {
                   </div>
 
                   <button type="submit" className="btn-primary w-full" disabled={!allowRegistration}>
-                    Register
+                    {copy.submit}
                   </button>
 
                   <p className="text-center text-xs text-textMuted">
-                    Already have an account?{' '}
+                    {copy.alreadyHaveAccount}{' '}
                     <Link className="text-accent underline-offset-2 hover:underline" href={loginHref}>
-                      Sign in
+                      {copy.signIn}
                     </Link>
                   </p>
                 </form>

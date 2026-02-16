@@ -15,6 +15,9 @@ import {
   FiShield,
   FiUser,
 } from 'react-icons/fi';
+import { LanguageToggle } from '../components/ui/LanguageToggle';
+import { localeDir, useUiLocale } from '../lib/ui/locale';
+import { getAuthMessages } from '../lib/ui/i18n';
 
 interface SessionPayload {
   authenticated: boolean;
@@ -90,36 +93,37 @@ type RailKey =
 
 const railItems: Array<{
   key: RailKey;
-  label: string;
   icon: React.ComponentType<{ className?: string }>;
   sectionId: string;
 }> = [
-  { key: 'home', label: 'Home', icon: FiHome, sectionId: 'section-hero' },
-  { key: 'personal-info', label: 'Personal Info', icon: FiUser, sectionId: 'section-personal-info-form' },
-  { key: 'contact-info', label: 'Contact Info', icon: FiPhone, sectionId: 'section-contact-info' },
-  { key: 'data-privacy', label: 'Data & Privacy', icon: FiDatabase, sectionId: 'section-privacy' },
-  { key: 'security', label: 'Security', icon: FiShield, sectionId: 'section-security' },
-  { key: 'two-factor', label: '2FA Settings', icon: FiKey, sectionId: 'section-two-factor' },
+  { key: 'home', icon: FiHome, sectionId: 'section-hero' },
+  { key: 'personal-info', icon: FiUser, sectionId: 'section-personal-info-form' },
+  { key: 'contact-info', icon: FiPhone, sectionId: 'section-contact-info' },
+  { key: 'data-privacy', icon: FiDatabase, sectionId: 'section-privacy' },
+  { key: 'security', icon: FiShield, sectionId: 'section-security' },
+  { key: 'two-factor', icon: FiKey, sectionId: 'section-two-factor' },
 ];
 
 const mobilePrimaryKeys: RailKey[] = ['home', 'personal-info', 'security', 'two-factor'];
 const mobileBeforeHomeKeys: RailKey[] = ['personal-info', 'security'];
 const mobileAfterHomeKeys: RailKey[] = ['two-factor'];
 
-const formatDateTime = (value: string | null | undefined): string => {
-  if (!value) return 'n/a';
+const formatDateTime = (value: string | null | undefined, fallback = 'n/a'): string => {
+  if (!value) return fallback;
   const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return 'n/a';
+  if (Number.isNaN(date.valueOf())) return fallback;
   return date.toLocaleString();
 };
 
 const BIRTHDAY_INPUT_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
-const CALENDAR_WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-const monthLabelFormatter = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' });
-const calendarMonthOptions = Array.from({ length: 12 }, (_, month) => ({
-  value: month,
-  label: new Intl.DateTimeFormat('en-US', { month: 'long' }).format(new Date(2020, month, 1)),
-}));
+const monthLabelFormatterFor = (calendarLocale: string): Intl.DateTimeFormat =>
+  new Intl.DateTimeFormat(calendarLocale || 'en-US', { month: 'long', year: 'numeric' });
+
+const calendarMonthOptionsFor = (calendarLocale: string): Array<{ value: number; label: string }> =>
+  Array.from({ length: 12 }, (_, month) => ({
+    value: month,
+    label: new Intl.DateTimeFormat(calendarLocale || 'en-US', { month: 'long' }).format(new Date(2020, month, 1)),
+  }));
 
 const parseDateOnly = (value: string): Date | null => {
   const match = BIRTHDAY_INPUT_PATTERN.exec(value || '');
@@ -147,13 +151,6 @@ const toDateOnly = (value: Date): string => {
   return `${year}-${month}-${day}`;
 };
 
-const toUsDateOnly = (value: Date): string => {
-  const month = String(value.getMonth() + 1).padStart(2, '0');
-  const day = String(value.getDate()).padStart(2, '0');
-  const year = String(value.getFullYear());
-  return `${month}/${day}/${year}`;
-};
-
 const monthStart = (value: Date): Date => new Date(value.getFullYear(), value.getMonth(), 1);
 
 const buildCalendarGrid = (month: Date): Array<Date | null> => {
@@ -179,14 +176,6 @@ const isSameDay = (left: Date | null, right: Date | null): boolean => {
   );
 };
 
-const genderOptions = [
-  { value: '', label: 'Select gender' },
-  { value: 'female', label: 'Female' },
-  { value: 'male', label: 'Male' },
-  { value: 'non_binary', label: 'Non-binary' },
-  { value: 'prefer_not_to_say', label: 'Prefer not to say' },
-];
-
 const initialsFrom = (firstName: string, lastName: string): string => {
   const first = String(firstName || '').trim().charAt(0);
   const last = String(lastName || '').trim().charAt(0);
@@ -210,15 +199,15 @@ const desktopRailLeft = 'max(0.75rem, calc((100vw - 1400px) / 2 + 0.75rem))';
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
 const AVATAR_ALLOWED_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);
 
-const infoRow = (label: string, value: string, onClick?: () => void) => (
+const infoRow = (label: string, value: string, onClick?: () => void, isRtl = false) => (
   <button
     type="button"
     onClick={onClick}
-    className="group flex w-full items-center justify-between gap-3 px-1 py-3 text-left transition-all duration-200 hover:bg-[#F8F9FA]"
+    className={`group flex w-full items-center justify-between gap-3 px-1 py-3 transition-all duration-200 hover:bg-[#F8F9FA] ${isRtl ? 'text-right' : 'text-left'}`}
   >
     <div>
       <p className="text-xs font-medium uppercase tracking-[0.08em] text-[#5F6368]">{label}</p>
-      <p className="mt-1 text-sm text-[#202124]">{value || 'Not set'}</p>
+      <p className="mt-1 text-sm text-[#202124]">{value}</p>
     </div>
     <FiChevronRight className="h-4 w-4 text-[#5F6368] transition-transform duration-200 group-hover:translate-x-0.5" />
   </button>
@@ -233,6 +222,8 @@ interface ToastEntry {
 }
 
 export default function ProfilePage() {
+  const { locale, isRtl, setLocale } = useUiLocale();
+  const copy = getAuthMessages(locale).profile;
   const [session, setSession] = useState<SessionPayload | null>(null);
   const [profile, setProfile] = useState<ProfilePayload['profile'] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -309,7 +300,7 @@ export default function ProfilePage() {
       setSession(sessionData);
 
       if (!sessionData.authenticated) {
-        pushToast('error', 'Session expired. Please sign in again.');
+        pushToast('error', copy.toasts.sessionExpired);
         setProfile(null);
         return;
       }
@@ -317,12 +308,12 @@ export default function ProfilePage() {
       const profileRes = await fetch('/api/profile', { credentials: 'include' });
       const profileData = (await profileRes.json()) as ProfilePayload & { error?: string };
       if (!profileRes.ok) {
-        throw new Error(profileData.error || 'Failed to load profile');
+        throw new Error(profileData.error || copy.errors.loadProfileFailed);
       }
 
       applyProfileState(profileData.profile);
     } catch (loadError) {
-      pushToast('error', loadError instanceof Error ? loadError.message : 'Failed to load profile');
+      pushToast('error', loadError instanceof Error ? loadError.message : copy.errors.loadProfileFailed);
       setProfile(null);
     } finally {
       setLoading(false);
@@ -364,7 +355,7 @@ export default function ProfilePage() {
       .catch(() => {
         if (cancelled) return;
         setTwoFaQrDataUrl('');
-        setTwoFaQrError('QR code is unavailable. Use the manual setup key.');
+        setTwoFaQrError(copy.errors.twoFactorQrUnavailable);
       })
       .finally(() => {
         if (cancelled) return;
@@ -374,7 +365,7 @@ export default function ProfilePage() {
     return () => {
       cancelled = true;
     };
-  }, [twoFaSetup?.otpauthUri]);
+  }, [twoFaSetup?.otpauthUri, copy.errors.twoFactorQrUnavailable]);
 
   useEffect(() => {
     if (!mobileMenuOpen) return;
@@ -453,8 +444,24 @@ export default function ProfilePage() {
     () => mobileOverflowItems.some((item) => item.key === activeRail),
     [activeRail, mobileOverflowItems],
   );
+  const toggleCornerClass = isRtl ? 'left-4' : 'right-4';
+
+  const railLabels: Record<RailKey, string> = useMemo(
+    () => ({
+      home: copy.nav.home,
+      'personal-info': copy.nav.personalInfo,
+      'contact-info': copy.nav.contactInfo,
+      'data-privacy': copy.nav.dataPrivacy,
+      security: copy.nav.security,
+      'two-factor': copy.nav.twoFactor,
+    }),
+    [copy],
+  );
 
   const profileAvatar = detailsForm.avatarUrl || profile?.user.avatarUrl || '';
+  const calendarWeekdays = copy.calendarWeekdays;
+  const monthLabelFormatter = useMemo(() => monthLabelFormatterFor(copy.calendarLocale), [copy.calendarLocale]);
+  const calendarMonthOptions = useMemo(() => calendarMonthOptionsFor(copy.calendarLocale), [copy.calendarLocale]);
   const selectedBirthday = useMemo(() => parseDateOnly(detailsForm.birthday), [detailsForm.birthday]);
   const birthdayCells = useMemo(() => buildCalendarGrid(birthdayMonth), [birthdayMonth]);
   const today = useMemo(() => {
@@ -470,7 +477,9 @@ export default function ProfilePage() {
     }
     return years;
   }, [today]);
-  const birthdayDisplay = selectedBirthday ? toUsDateOnly(selectedBirthday) : 'MM/DD/YYYY';
+  const birthdayDisplay = selectedBirthday
+    ? new Intl.DateTimeFormat(copy.calendarLocale || 'en-US').format(selectedBirthday)
+    : copy.birthdayPlaceholder;
 
   const handleSectionNav = (key: RailKey, sectionId: string) => {
     setActiveRail(key);
@@ -494,39 +503,40 @@ export default function ProfilePage() {
     event.target.value = '';
     if (!file) return;
 
+    if (!csrfToken) {
+      pushToast('error', copy.toasts.sessionExpired);
+      return;
+    }
+
     if (!AVATAR_ALLOWED_TYPES.has(file.type.toLowerCase())) {
-      pushToast('error', 'Avatar file must be PNG, JPG, or WEBP.');
+      pushToast('error', copy.errors.avatarFileType);
       return;
     }
 
     if (file.size > AVATAR_MAX_BYTES) {
-      pushToast('error', 'Avatar file is too large. Maximum size is 2 MB.');
+      pushToast('error', copy.errors.avatarFileSize);
       return;
     }
 
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          if (typeof reader.result === 'string') {
-            resolve(reader.result);
-            return;
-          }
-          reject(new Error('Failed to read avatar file'));
-        };
-        reader.onerror = () => reject(new Error('Failed to read avatar file'));
-        reader.readAsDataURL(file);
+      const uploadRes = await fetch('/api/profile/avatar/upload', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': file.type,
+          'X-CSRF-Token': csrfToken,
+        },
+        body: file,
       });
-
-      if (!dataUrl.startsWith('data:image/')) {
-        pushToast('error', 'Avatar file is invalid.');
-        return;
+      const uploadData = (await uploadRes.json()) as { ok?: boolean; avatarUrl?: string; error?: string };
+      if (!uploadRes.ok || !uploadData.avatarUrl) {
+        throw new Error(uploadData.error || copy.errors.avatarLoadFailed);
       }
 
-      setDetailsForm((prev) => ({ ...prev, avatarUrl: dataUrl }));
-      pushToast('success', 'Avatar image selected. Click "Save profile details" to apply.');
+      setDetailsForm((prev) => ({ ...prev, avatarUrl: uploadData.avatarUrl || '' }));
+      pushToast('success', copy.toasts.avatarSelected);
     } catch (uploadError) {
-      pushToast('error', uploadError instanceof Error ? uploadError.message : 'Failed to load avatar image');
+      pushToast('error', uploadError instanceof Error ? uploadError.message : copy.errors.avatarLoadFailed);
     }
   };
 
@@ -577,12 +587,12 @@ export default function ProfilePage() {
     const phoneNumber = detailsForm.phoneNumber.trim();
 
     if (!firstName || !lastName || !nationalId) {
-      pushToast('error', 'First name, last name, and national ID are required to save profile details.');
+      pushToast('error', copy.toasts.requiredProfileFields);
       return;
     }
 
     if (!phoneNumber) {
-      pushToast('error', 'Phone number is required.');
+      pushToast('error', copy.toasts.requiredPhone);
       return;
     }
 
@@ -606,11 +616,11 @@ export default function ProfilePage() {
         }),
       });
       const data = (await res.json()) as { ok?: boolean; profile?: ProfilePayload['profile']; error?: string };
-      if (!res.ok) throw new Error(data.error || 'Failed to update profile details');
+      if (!res.ok) throw new Error(data.error || copy.errors.updateProfileFailed);
       if (data.profile) applyProfileState(data.profile);
-      pushToast('success', 'Profile details updated successfully.');
+      pushToast('success', copy.toasts.profileUpdated);
     } catch (submitError) {
-      pushToast('error', submitError instanceof Error ? submitError.message : 'Failed to update profile details');
+      pushToast('error', submitError instanceof Error ? submitError.message : copy.errors.updateProfileFailed);
     } finally {
       setDetailsSaving(false);
     }
@@ -621,7 +631,7 @@ export default function ProfilePage() {
     if (!csrfToken) return;
 
     if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      pushToast('error', 'New password and confirmation do not match.');
+      pushToast('error', copy.toasts.passwordMismatch);
       return;
     }
 
@@ -637,7 +647,7 @@ export default function ProfilePage() {
         body: JSON.stringify(passwordForm),
       });
       const data = (await res.json()) as { ok?: boolean; error?: string };
-      if (!res.ok) throw new Error(data.error || 'Failed to change password');
+      if (!res.ok) throw new Error(data.error || copy.errors.changePasswordFailed);
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
       setProfile((prev) =>
         prev
@@ -650,9 +660,9 @@ export default function ProfilePage() {
             }
           : prev,
       );
-      pushToast('success', 'Password updated successfully.');
+      pushToast('success', copy.toasts.passwordUpdated);
     } catch (submitError) {
-      pushToast('error', submitError instanceof Error ? submitError.message : 'Failed to change password');
+      pushToast('error', submitError instanceof Error ? submitError.message : copy.errors.changePasswordFailed);
     } finally {
       setPasswordSaving(false);
     }
@@ -674,12 +684,12 @@ export default function ProfilePage() {
         setup?: { secret: string; otpauthUri: string };
         error?: string;
       };
-      if (!res.ok || !data.setup) throw new Error(data.error || 'Failed to prepare authenticator setup');
+      if (!res.ok || !data.setup) throw new Error(data.error || copy.errors.prepareTwoFactorFailed);
       setTwoFaSetup(data.setup);
       setTwoFaCode('');
-      pushToast('success', 'Authenticator setup generated. Add it to your app and confirm with verification code.');
+      pushToast('success', copy.toasts.twoFactorSetupGenerated);
     } catch (submitError) {
-      pushToast('error', submitError instanceof Error ? submitError.message : 'Failed to prepare authenticator setup');
+      pushToast('error', submitError instanceof Error ? submitError.message : copy.errors.prepareTwoFactorFailed);
     } finally {
       setTwoFaSaving(false);
     }
@@ -700,15 +710,15 @@ export default function ProfilePage() {
         body: JSON.stringify({ verificationCode: twoFaCode }),
       });
       const data = (await res.json()) as { ok?: boolean; security?: ProfilePayload['profile']['security']; error?: string };
-      if (!res.ok || !data.security) throw new Error(data.error || 'Failed to enable 2FA');
+      if (!res.ok || !data.security) throw new Error(data.error || copy.errors.enableTwoFactorFailed);
       if (profile) {
         applyProfileState({ ...profile, security: data.security });
       }
       setTwoFaCode('');
       setTwoFaSetup(null);
-      pushToast('success', 'Two-factor authentication enabled.');
+      pushToast('success', copy.toasts.twoFactorEnabled);
     } catch (submitError) {
-      pushToast('error', submitError instanceof Error ? submitError.message : 'Failed to enable 2FA');
+      pushToast('error', submitError instanceof Error ? submitError.message : copy.errors.enableTwoFactorFailed);
     } finally {
       setTwoFaSaving(false);
     }
@@ -726,15 +736,15 @@ export default function ProfilePage() {
         },
       });
       const data = (await res.json()) as { ok?: boolean; security?: ProfilePayload['profile']['security']; error?: string };
-      if (!res.ok || !data.security) throw new Error(data.error || 'Failed to disable 2FA');
+      if (!res.ok || !data.security) throw new Error(data.error || copy.errors.disableTwoFactorFailed);
       if (profile) {
         applyProfileState({ ...profile, security: data.security });
       }
       setTwoFaCode('');
       setTwoFaSetup(null);
-      pushToast('success', 'Two-factor authentication disabled.');
+      pushToast('success', copy.toasts.twoFactorDisabled);
     } catch (submitError) {
-      pushToast('error', submitError instanceof Error ? submitError.message : 'Failed to disable 2FA');
+      pushToast('error', submitError instanceof Error ? submitError.message : copy.errors.disableTwoFactorFailed);
     } finally {
       setTwoFaSaving(false);
     }
@@ -743,10 +753,10 @@ export default function ProfilePage() {
   return (
     <>
       <Head>
-        <title>Profile & Settings | Google Account Style</title>
+        <title>{copy.title}</title>
       </Head>
 
-      <main className="min-h-screen overflow-x-hidden bg-[#F6F8FC] pb-20 pt-6 text-[#202124] md:pb-8">
+      <main className="min-h-screen overflow-x-hidden bg-[#F6F8FC] pb-20 pt-6 text-[#202124] md:pb-8" dir={localeDir(locale)}>
         <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-[calc(100vw-2rem)] max-w-[380px] flex-col gap-2">
           {toasts.map((toast) => (
             <div
@@ -762,11 +772,15 @@ export default function ProfilePage() {
           ))}
         </div>
 
+        <div className={`fixed top-4 z-[60] ${toggleCornerClass}`}>
+          <LanguageToggle locale={locale} onChange={setLocale} />
+        </div>
+
         <div className="mx-auto flex min-h-[calc(100vh-8rem)] w-full max-w-[1400px] items-stretch gap-6 px-3 sm:px-4">
           <aside className="hidden w-[280px] shrink-0 md:block">
             <nav
               className={`${cardClass} md:fixed md:top-6 md:w-[280px] md:max-h-[calc(100vh-3rem)] md:overflow-y-auto md:hide-scrollbar p-3`}
-              style={{ left: desktopRailLeft }}
+              style={isRtl ? { right: desktopRailLeft } : { left: desktopRailLeft }}
             >
               <div className="grid h-24 place-items-center" style={{ marginBottom: '32px' }}>
                 <img src="/images/lw_dark.png" alt="ADA" className="h-14 w-auto" />
@@ -778,16 +792,16 @@ export default function ProfilePage() {
                   return (
                     <li key={item.key}>
                       <button
-                        type="button"
-                        onClick={() => handleSectionNav(item.key, item.sectionId)}
-                        className={`flex w-full items-center gap-3 rounded-full px-4 py-2.5 text-left text-sm font-normal transition-all duration-200 ${
+                      type="button"
+                      onClick={() => handleSectionNav(item.key, item.sectionId)}
+                      className={`flex w-full items-center gap-3 rounded-full px-4 py-2.5 text-sm font-normal transition-all duration-200 ${
                           active
                             ? 'bg-[#E8F0FE] text-[#1A73E8]'
                             : 'text-[#5F6368] hover:bg-[#F1F3F4] hover:text-[#202124]'
-                        }`}
+                        } ${isRtl ? 'text-right' : 'text-left'}`}
                       >
                         <Icon className="h-6 w-6" />
-                        <span>{item.label}</span>
+                        <span>{railLabels[item.key]}</span>
                       </button>
                     </li>
                   );
@@ -796,10 +810,10 @@ export default function ProfilePage() {
                   <button
                     type="button"
                     onClick={logout}
-                    className="flex w-full items-center gap-3 rounded-full px-4 py-2.5 text-left text-sm font-medium text-[#B3261E] transition-all duration-200 hover:bg-[#FDECEA]"
+                    className={`flex w-full items-center gap-3 rounded-full px-4 py-2.5 text-sm font-medium text-[#B3261E] transition-all duration-200 hover:bg-[#FDECEA] ${isRtl ? 'text-right' : 'text-left'}`}
                   >
                     <FiLogOut className="h-6 w-6" />
-                    <span>Logout</span>
+                    <span>{copy.nav.logout}</span>
                   </button>
                 </li>
               </ul>
@@ -807,7 +821,7 @@ export default function ProfilePage() {
           </aside>
 
           <section className="min-w-0 flex w-full max-w-full flex-1 flex-col justify-center gap-6">
-            {loading ? <div className={`${cardClass} text-sm text-[#5F6368]`}>Loading profile...</div> : null}
+            {loading ? <div className={`${cardClass} text-sm text-[#5F6368]`}>{copy.loadingProfile}</div> : null}
             <input
               ref={avatarFileInputRef}
               type="file"
@@ -824,7 +838,7 @@ export default function ProfilePage() {
                     <div className="relative mx-auto h-[120px] w-[120px]">
                       <div className="flex h-[120px] w-[120px] items-center justify-center overflow-hidden rounded-full border border-[#DADCE0] bg-[#F1F3F4] text-3xl font-normal text-[#1A73E8]">
                         {profileAvatar ? (
-                          <img src={profileAvatar} alt="Profile avatar" className="h-full w-full object-cover" />
+                          <img src={profileAvatar} alt={copy.profileAvatar} className="h-full w-full object-cover" />
                         ) : (
                           avatarInitials
                         )}
@@ -833,23 +847,25 @@ export default function ProfilePage() {
                         type="button"
                         onClick={handleAvatarFabClick}
                         className="absolute bottom-1 right-1 inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#DADCE0] bg-white text-[#1A73E8] shadow-[0_1px_2px_0_rgba(60,64,67,.3),0_1px_3px_1px_rgba(60,64,67,.15)] transition-all duration-200 hover:bg-[#E8F0FE] active:brightness-95"
-                        aria-label="Change avatar"
+                        aria-label={copy.changeAvatarAria}
                       >
                         <FiCamera className="h-4 w-4" />
                       </button>
                     </div>
 
-                    <h1 className="mt-5 text-[28px] font-normal text-[#202124]">Welcome, {profile.user.firstName}</h1>
+                    <h1 className="mt-5 text-[28px] font-normal text-[#202124]">
+                      {copy.welcome}، {profile.user.firstName}
+                    </h1>
                     <p className="mx-auto mt-2 max-w-3xl text-sm font-normal text-[#5F6368]">
-                      Manage your info, privacy, and security to make Google work better for you.
+                      {copy.welcomeSubtitle}
                     </p>
 
                     <div className="mt-5 flex flex-wrap items-center justify-center gap-2 text-xs text-[#5F6368]">
                       <span className="rounded-full bg-[#F1F3F4] px-3 py-1">
-                        Last login: {formatDateTime(profile.audit.lastLoginAt)}
+                        {copy.lastLogin}: {formatDateTime(profile.audit.lastLoginAt, copy.notSet)}
                       </span>
                       <span className="rounded-full bg-[#F1F3F4] px-3 py-1">
-                        Last seen: {formatDateTime(profile.audit.lastSeenAt)}
+                        {copy.lastSeen}: {formatDateTime(profile.audit.lastSeenAt, copy.notSet)}
                       </span>
                       <span className="max-w-full break-all rounded-full bg-[#F1F3F4] px-3 py-1">
                         {profile.user.email}
@@ -859,7 +875,7 @@ export default function ProfilePage() {
                     <div className="mt-6 flex flex-wrap justify-center gap-3">
                       {session.user.isAuthAdmin ? (
                         <Link href="/admin" className={secondaryBtnClass}>
-                          Open Auth Admin
+                          {copy.openAuthAdmin}
                         </Link>
                       ) : null}
                     </div>
@@ -869,11 +885,11 @@ export default function ProfilePage() {
                 {activeRail === 'contact-info' ? (
                   <section id="section-contact-info" className="grid w-full grid-cols-1 gap-6 sm:w-[75%]">
                     <article className={cardClass}>
-                      <h2 className="text-xl font-normal text-[#202124]">Contact Info</h2>
+                      <h2 className="text-xl font-normal text-[#202124]">{copy.contactInfo}</h2>
                       <div className="mt-4 divide-y divide-[#E8EAED]">
-                        {infoRow('Primary Email', profile.user.email)}
-                        {infoRow('Recovery Email', 'Not set')}
-                        {infoRow('Phone Number', profile.user.phoneNumber || 'Not set')}
+                        {infoRow(copy.primaryEmail, profile.user.email || copy.notSet, undefined, isRtl)}
+                        {infoRow(copy.recoveryEmail, copy.notSet, undefined, isRtl)}
+                        {infoRow(copy.phoneNumber, profile.user.phoneNumber || copy.notSet, undefined, isRtl)}
                       </div>
                     </article>
                   </section>
@@ -883,15 +899,15 @@ export default function ProfilePage() {
                   <section id="section-privacy" className={`${cardClass} w-full sm:w-[75%]`}>
                     <div className="flex flex-col gap-4 rounded-[20px] border border-[#D2E3FC] bg-[#E8F0FE] p-5 md:flex-row md:items-center md:justify-between">
                       <div className="space-y-2">
-                        <h3 className="text-lg font-normal text-[#202124]">Privacy Check-up</h3>
+                        <h3 className="text-lg font-normal text-[#202124]">{copy.privacyCheckup}</h3>
                         <p className="text-sm font-normal text-[#5F6368]">
-                          Guided step-by-step through your key privacy settings.
+                          {copy.privacyCheckupHelp}
                         </p>
                         <button
                           type="button"
                           className="inline-flex items-center justify-center gap-2 rounded-full border border-[#1A73E8] bg-white px-5 py-2.5 text-sm font-medium text-[#1A73E8] transition-all duration-200 hover:bg-[#DBE8FD] active:brightness-95"
                         >
-                          Take Check-up
+                          {copy.takeCheckup}
                         </button>
                       </div>
                       <div className="relative h-24 w-full overflow-hidden rounded-2xl bg-white/70 md:w-56">
@@ -906,14 +922,15 @@ export default function ProfilePage() {
                 {activeRail === 'security' ? (
                   <section id="section-security" className="grid w-full grid-cols-1 gap-6 sm:w-[75%] xl:grid-cols-2">
                     <article className={cardClass}>
-                      <h2 className="text-xl font-normal text-[#202124]">Password Settings</h2>
+                      <h2 className="text-xl font-normal text-[#202124]">{copy.passwordSettings}</h2>
                       <form className="mt-4 space-y-4" onSubmit={handleChangePassword}>
                         {profile.security.hasPassword ? (
                           <div>
-                            <label className="mb-1 block text-sm font-normal text-[#202124]">Current password</label>
+                            <label className="mb-1 block text-sm font-normal text-[#202124]">{copy.currentPassword}</label>
                             <input
                               type="password"
-                              className={inputClass}
+                              className={`${inputClass} text-left`}
+                              dir="ltr"
                               value={passwordForm.currentPassword}
                               onChange={(event) =>
                                 setPasswordForm((prev) => ({ ...prev, currentPassword: event.target.value }))
@@ -924,10 +941,11 @@ export default function ProfilePage() {
                           </div>
                         ) : null}
                         <div>
-                          <label className="mb-1 block text-sm font-normal text-[#202124]">New password</label>
+                          <label className="mb-1 block text-sm font-normal text-[#202124]">{copy.newPassword}</label>
                           <input
                             type="password"
-                            className={inputClass}
+                            className={`${inputClass} text-left`}
+                            dir="ltr"
                             value={passwordForm.newPassword}
                             onChange={(event) => setPasswordForm((prev) => ({ ...prev, newPassword: event.target.value }))}
                             autoComplete="new-password"
@@ -936,10 +954,11 @@ export default function ProfilePage() {
                           />
                         </div>
                         <div>
-                          <label className="mb-1 block text-sm font-normal text-[#202124]">Confirm new password</label>
+                          <label className="mb-1 block text-sm font-normal text-[#202124]">{copy.confirmNewPassword}</label>
                           <input
                             type="password"
-                            className={inputClass}
+                            className={`${inputClass} text-left`}
+                            dir="ltr"
                             value={passwordForm.confirmPassword}
                             onChange={(event) =>
                               setPasswordForm((prev) => ({ ...prev, confirmPassword: event.target.value }))
@@ -951,29 +970,29 @@ export default function ProfilePage() {
                         </div>
 
                         <button type="submit" className={primaryBtnClass} disabled={passwordSaving}>
-                          {passwordSaving ? 'Updating...' : profile.security.hasPassword ? 'Update password' : 'Set password'}
+                          {passwordSaving ? copy.updating : profile.security.hasPassword ? copy.updatePassword : copy.setPassword}
                         </button>
                       </form>
                     </article>
 
                     <article className={cardClass}>
-                      <h2 className="text-xl font-normal text-[#202124]">Last Login & Session</h2>
+                      <h2 className="text-xl font-normal text-[#202124]">{copy.lastLoginSession}</h2>
                       <div className="mt-4 space-y-3 text-sm text-[#5F6368]">
                         <p>
-                          <span className="font-normal text-[#202124]">Last login:</span>{' '}
-                          {formatDateTime(profile.audit.lastLoginAt)}
+                          <span className="font-normal text-[#202124]">{copy.lastLogin}:</span>{' '}
+                          {formatDateTime(profile.audit.lastLoginAt, copy.notSet)}
                         </p>
                         <p>
-                          <span className="font-normal text-[#202124]">IP address:</span>{' '}
-                          {profile.audit.lastLoginIp || 'n/a'}
+                          <span className="font-normal text-[#202124]">{copy.ipAddress}:</span>{' '}
+                          {profile.audit.lastLoginIp || copy.notSet}
                         </p>
                         <p>
-                          <span className="font-normal text-[#202124]">User agent:</span>{' '}
-                          {profile.audit.lastLoginUserAgent || 'n/a'}
+                          <span className="font-normal text-[#202124]">{copy.userAgent}:</span>{' '}
+                          {profile.audit.lastLoginUserAgent || copy.notSet}
                         </p>
                         <p>
-                          <span className="font-normal text-[#202124]">Last seen:</span>{' '}
-                          {formatDateTime(profile.audit.lastSeenAt)}
+                          <span className="font-normal text-[#202124]">{copy.lastSeen}:</span>{' '}
+                          {formatDateTime(profile.audit.lastSeenAt, copy.notSet)}
                         </p>
                       </div>
                     </article>
@@ -983,26 +1002,26 @@ export default function ProfilePage() {
                 {activeRail === 'personal-info' ? (
                   <section id="section-personal-info-form" className="grid w-full grid-cols-1 gap-6 sm:w-[75%] xl:grid-cols-2">
                     <article id="section-settings" className={`${cardClass} xl:col-span-2`}>
-                      <h2 className="text-xl font-normal text-[#202124]">Personal Info</h2>
+                      <h2 className="text-xl font-normal text-[#202124]">{copy.personalInfo}</h2>
                       <form className="mt-4 space-y-4" onSubmit={handleSaveDetails}>
                         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                           <div>
-                            <label className="mb-1 block text-sm font-normal text-[#202124]">First name</label>
+                            <label className="mb-1 block text-sm font-normal text-[#202124]">{copy.firstName}</label>
                             <input
                               className={inputClass}
                               value={detailsForm.firstName}
                               onChange={(event) => setDetailsForm((prev) => ({ ...prev, firstName: event.target.value }))}
-                              placeholder="Enter first name"
+                              placeholder={copy.placeholders.firstName}
                               maxLength={120}
                             />
                           </div>
                           <div>
-                            <label className="mb-1 block text-sm font-normal text-[#202124]">Last name</label>
+                            <label className="mb-1 block text-sm font-normal text-[#202124]">{copy.lastName}</label>
                             <input
                               className={inputClass}
                               value={detailsForm.lastName}
                               onChange={(event) => setDetailsForm((prev) => ({ ...prev, lastName: event.target.value }))}
-                              placeholder="Enter last name"
+                              placeholder={copy.placeholders.lastName}
                               maxLength={120}
                             />
                           </div>
@@ -1010,11 +1029,11 @@ export default function ProfilePage() {
 
                         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                           <div>
-                            <label className="mb-1 block text-sm font-normal text-[#202124]">Birthday</label>
+                            <label className="mb-1 block text-sm font-normal text-[#202124]">{copy.birthday}</label>
                             <div ref={birthdayPickerRef} className="relative">
                               <button
                                 type="button"
-                                className={`${inputClass} flex items-center justify-between text-left`}
+                                className={`${inputClass} flex items-center justify-between ${isRtl ? 'text-right' : 'text-left'}`}
                                 onClick={() => (birthdayPickerOpen ? setBirthdayPickerOpen(false) : openBirthdayPicker())}
                               >
                                 <span className={detailsForm.birthday ? 'text-[#202124]' : 'text-[#5F6368]'}>
@@ -1060,7 +1079,7 @@ export default function ProfilePage() {
                                         type="button"
                                         className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#5F6368] transition-colors hover:bg-[#F1F3F4] hover:text-[#202124]"
                                         onClick={() => changeBirthdayMonth(-1)}
-                                        aria-label="Previous month"
+                                        aria-label={copy.previousMonth}
                                       >
                                         <FiChevronLeft className="h-4 w-4" />
                                       </button>
@@ -1071,14 +1090,14 @@ export default function ProfilePage() {
                                         type="button"
                                         className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#5F6368] transition-colors hover:bg-[#F1F3F4] hover:text-[#202124]"
                                         onClick={() => changeBirthdayMonth(1)}
-                                        aria-label="Next month"
+                                        aria-label={copy.nextMonth}
                                       >
                                         <FiChevronRight className="h-4 w-4" />
                                       </button>
                                     </div>
                                   </div>
                                   <div className="grid grid-cols-7 gap-1 pb-1">
-                                    {CALENDAR_WEEKDAYS.map((weekday) => (
+                                    {calendarWeekdays.map((weekday) => (
                                       <span key={weekday} className="text-center text-[11px] uppercase tracking-[0.08em] text-[#5F6368]">
                                         {weekday}
                                       </span>
@@ -1118,14 +1137,14 @@ export default function ProfilePage() {
                                         setBirthdayPickerOpen(false);
                                       }}
                                     >
-                                      Clear
+                                      {copy.clear}
                                     </button>
                                     <button
                                       type="button"
                                       className="inline-flex items-center justify-center rounded-full bg-[#1A73E8] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#1765cc]"
                                       onClick={() => setBirthdayPickerOpen(false)}
                                     >
-                                      Done
+                                      {copy.done}
                                     </button>
                                   </div>
                                 </div>
@@ -1133,14 +1152,14 @@ export default function ProfilePage() {
                             </div>
                           </div>
                           <div>
-                            <label className="mb-1 block text-sm font-normal text-[#202124]">Gender</label>
+                            <label className="mb-1 block text-sm font-normal text-[#202124]">{copy.gender}</label>
                             <div className="relative">
                               <select
                                 className={`${inputClass} appearance-none pr-10`}
                                 value={detailsForm.gender}
                                 onChange={(event) => setDetailsForm((prev) => ({ ...prev, gender: event.target.value }))}
                               >
-                                {genderOptions.map((option) => (
+                                {copy.genderOptions.map((option) => (
                                   <option key={option.value || 'empty'} value={option.value}>
                                     {option.label}
                                   </option>
@@ -1153,32 +1172,34 @@ export default function ProfilePage() {
 
                         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                           <div>
-                            <label className="mb-1 block text-sm font-normal text-[#202124]">National ID</label>
+                            <label className="mb-1 block text-sm font-normal text-[#202124]">{copy.nationalId}</label>
                             <input
-                              className={inputClass}
+                              className={`${inputClass} text-left`}
+                              dir="ltr"
                               value={detailsForm.nationalId}
                               onChange={(event) => setDetailsForm((prev) => ({ ...prev, nationalId: event.target.value }))}
-                              placeholder="Enter national ID"
+                              placeholder={copy.placeholders.nationalId}
                               maxLength={96}
                             />
                           </div>
                           <div>
-                            <label className="mb-1 block text-sm font-normal text-[#202124]">Phone number</label>
+                            <label className="mb-1 block text-sm font-normal text-[#202124]">{copy.phoneNumber}</label>
                             <input
-                              className={inputClass}
+                              className={`${inputClass} text-left`}
+                              dir="ltr"
                               value={detailsForm.phoneNumber}
                               onChange={(event) => setDetailsForm((prev) => ({ ...prev, phoneNumber: event.target.value }))}
-                              placeholder="Enter phone number"
+                              placeholder={copy.placeholders.phoneNumber}
                               maxLength={32}
                             />
                           </div>
                         </div>
 
                         <div className="space-y-2">
-                          <label className="mb-1 block text-sm font-normal text-[#202124]">Profile avatar</label>
+                          <label className="mb-1 block text-sm font-normal text-[#202124]">{copy.profileAvatar}</label>
                           <div className="flex flex-wrap items-center gap-3">
                             <button type="button" className={secondaryBtnClass} onClick={handleAvatarFabClick}>
-                              Upload avatar
+                              {copy.uploadAvatar}
                             </button>
                             {detailsForm.avatarUrl ? (
                               <button
@@ -1186,29 +1207,29 @@ export default function ProfilePage() {
                                 className="inline-flex items-center justify-center rounded-full border border-[#DADCE0] px-4 py-2 text-sm font-medium text-[#5F6368] transition-all duration-200 hover:bg-[#F1F3F4]"
                                 onClick={() => setDetailsForm((prev) => ({ ...prev, avatarUrl: '' }))}
                               >
-                                Remove avatar
+                                {copy.removeAvatar}
                               </button>
                             ) : null}
                           </div>
-                          <p className="text-xs text-[#5F6368]">PNG, JPG, WEBP up to 2 MB.</p>
+                          <p className="text-xs text-[#5F6368]">{copy.avatarHint}</p>
                         </div>
 
                         <button type="submit" className={primaryBtnClass} disabled={detailsSaving}>
-                          {detailsSaving ? 'Saving...' : 'Save profile details'}
+                          {detailsSaving ? copy.updating : copy.saveProfileDetails}
                         </button>
                       </form>
                     </article>
 
                     <article className={cardClass}>
-                      <h2 className="text-xl font-normal text-[#202124]">Assigned Roles</h2>
+                      <h2 className="text-xl font-normal text-[#202124]">{copy.assignedRoles}</h2>
                       {profile.roles.length ? (
                         <div className="mt-4 overflow-x-auto">
-                          <table className="w-full border-collapse text-left text-sm">
+                          <table className={`w-full border-collapse text-sm ${isRtl ? 'text-right' : 'text-left'}`}>
                             <thead>
                               <tr className="border-b border-[#E8EAED] text-[#5F6368]">
-                                <th className="px-2 py-2 font-normal">Role</th>
-                                <th className="px-2 py-2 font-normal">Code</th>
-                                <th className="px-2 py-2 font-normal">Organization</th>
+                                <th className="px-2 py-2 font-normal">{copy.role}</th>
+                                <th className="px-2 py-2 font-normal">{copy.code}</th>
+                                <th className="px-2 py-2 font-normal">{copy.organization}</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1223,20 +1244,20 @@ export default function ProfilePage() {
                           </table>
                         </div>
                       ) : (
-                        <p className="mt-4 text-sm font-normal text-[#5F6368]">No active roles assigned.</p>
+                        <p className="mt-4 text-sm font-normal text-[#5F6368]">{copy.noActiveRoles}</p>
                       )}
                     </article>
 
                     <article className={cardClass}>
-                      <h2 className="text-xl font-normal text-[#202124]">Assigned Organizations</h2>
+                      <h2 className="text-xl font-normal text-[#202124]">{copy.assignedOrganizations}</h2>
                       {profile.organizations.length ? (
                         <div className="mt-4 overflow-x-auto">
-                          <table className="w-full border-collapse text-left text-sm">
+                          <table className={`w-full border-collapse text-sm ${isRtl ? 'text-right' : 'text-left'}`}>
                             <thead>
                               <tr className="border-b border-[#E8EAED] text-[#5F6368]">
-                                <th className="px-2 py-2 font-normal">Organization</th>
-                                <th className="px-2 py-2 font-normal">Code</th>
-                                <th className="px-2 py-2 font-normal">Assigned At</th>
+                                <th className="px-2 py-2 font-normal">{copy.organization}</th>
+                                <th className="px-2 py-2 font-normal">{copy.code}</th>
+                                <th className="px-2 py-2 font-normal">{copy.assignedAt}</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1244,14 +1265,14 @@ export default function ProfilePage() {
                                 <tr key={org.assignmentRandId} className="border-b border-[#F1F3F4]">
                                   <td className="px-2 py-2 text-[#202124]">{org.orgName}</td>
                                   <td className="px-2 py-2 text-[#5F6368]">{org.orgCode}</td>
-                                  <td className="px-2 py-2 text-[#5F6368]">{formatDateTime(org.assignedAt)}</td>
+                                  <td className="px-2 py-2 text-[#5F6368]">{formatDateTime(org.assignedAt, copy.notSet)}</td>
                                 </tr>
                               ))}
                             </tbody>
                           </table>
                         </div>
                       ) : (
-                        <p className="mt-4 text-sm font-normal text-[#5F6368]">No active organizations assigned.</p>
+                        <p className="mt-4 text-sm font-normal text-[#5F6368]">{copy.noActiveOrganizations}</p>
                       )}
                     </article>
                   </section>
@@ -1260,23 +1281,22 @@ export default function ProfilePage() {
                 {activeRail === 'two-factor' ? (
                   <section id="section-two-factor" className="grid w-full grid-cols-1 gap-6 sm:w-[75%]">
                     <article className={cardClass}>
-                      <h2 className="text-xl font-normal text-[#202124]">2FA Settings</h2>
+                      <h2 className="text-xl font-normal text-[#202124]">{copy.twoFactor.title}</h2>
                       <div className="mt-4 space-y-4">
                         <p className="text-sm text-[#5F6368]">
-                          Status:{' '}
+                          {copy.twoFactor.status}:{' '}
                           <span className="font-medium text-[#202124]">
-                            {profile.security.twoFactorEnabled ? 'Enabled' : 'Disabled'}
+                            {profile.security.twoFactorEnabled ? copy.twoFactor.enabled : copy.twoFactor.disabled}
                           </span>{' '}
-                          · Method: <span className="font-medium text-[#202124]">Authenticator app</span> · Updated{' '}
-                          {formatDateTime(profile.security.updatedAt)}
+                          · {copy.twoFactor.method}: <span className="font-medium text-[#202124]">{copy.twoFactor.methodAuthenticator}</span> · {copy.twoFactor.updated}{' '}
+                          {formatDateTime(profile.security.updatedAt, copy.notSet)}
                         </p>
 
                         {!profile.security.twoFactorEnabled ? (
                           <>
                             <div className="rounded-2xl border border-[#DADCE0] bg-[#F8FAFF] p-4">
                               <p className="text-sm text-[#202124]">
-                                1) Generate a setup secret. 2) Add it to Google Authenticator (or any TOTP app). 3)
-                                Enter the 6-digit code to enable.
+                                {copy.twoFactor.setupSteps}
                               </p>
                               <div className="mt-3">
                                 <button
@@ -1285,7 +1305,7 @@ export default function ProfilePage() {
                                   onClick={handleGenerateTwoFactorSetup}
                                   disabled={twoFaSaving}
                                 >
-                                  {twoFaSaving ? 'Preparing...' : 'Generate setup secret'}
+                                  {twoFaSaving ? copy.twoFactor.preparing : copy.twoFactor.generateSetupSecret}
                                 </button>
                               </div>
                             </div>
@@ -1298,23 +1318,23 @@ export default function ProfilePage() {
                                       {twoFaQrDataUrl ? (
                                         <img
                                           src={twoFaQrDataUrl}
-                                          alt="Scan this QR code with your authenticator app"
+                                          alt={copy.twoFactor.qrAlt}
                                           className="h-[220px] w-[220px]"
                                         />
                                       ) : (
                                         <div className="grid h-[220px] w-[220px] place-items-center text-center text-xs text-[#5F6368]">
-                                          {twoFaQrLoading ? 'Generating QR code...' : twoFaQrError || 'QR code not ready'}
+                                          {twoFaQrLoading ? copy.twoFactor.qrGenerating : twoFaQrError || copy.twoFactor.qrNotReady}
                                         </div>
                                       )}
                                     </div>
                                   </div>
                                   <div className="space-y-3">
                                     <p className="text-sm text-[#202124]">
-                                      Scan this QR code in Google Authenticator, Microsoft Authenticator, or any TOTP app.
+                                      {copy.twoFactor.scanHelp}
                                     </p>
                                     <div>
                                       <p className="text-xs font-medium uppercase tracking-[0.08em] text-[#5F6368]">
-                                        Manual setup key
+                                        {copy.twoFactor.manualSetupKey}
                                       </p>
                                       <p className="mt-1 break-all font-mono text-sm text-[#202124]">{twoFaSetup.secret}</p>
                                     </div>
@@ -1323,10 +1343,11 @@ export default function ProfilePage() {
                                 <form className="space-y-3 border-t border-[#ECEFF3] pt-4" onSubmit={handleEnableTwoFactor}>
                                   <div>
                                     <label className="mb-1 block text-sm font-normal text-[#202124]">
-                                      Authenticator verification code
+                                      {copy.twoFactor.verificationCode}
                                     </label>
                                     <input
                                       className={`${inputClass} text-center font-mono tracking-[0.2em]`}
+                                      dir="ltr"
                                       value={twoFaCode}
                                       onChange={(event) => setTwoFaCode(event.target.value.replace(/\D+/g, '').slice(0, 6))}
                                       inputMode="numeric"
@@ -1337,7 +1358,7 @@ export default function ProfilePage() {
                                     />
                                   </div>
                                   <button type="submit" className={primaryBtnClass} disabled={twoFaSaving}>
-                                    {twoFaSaving ? 'Enabling...' : 'Enable 2FA'}
+                                    {twoFaSaving ? copy.twoFactor.enabling : copy.twoFactor.enableAction}
                                   </button>
                                 </form>
                               </div>
@@ -1346,7 +1367,7 @@ export default function ProfilePage() {
                         ) : (
                           <div className="rounded-2xl border border-[#DADCE0] bg-white p-4">
                             <p className="text-sm text-[#5F6368]">
-                              Two-factor authentication is active for this account.
+                              {copy.twoFactor.activeDescription}
                             </p>
                             <div className="mt-3">
                               <button
@@ -1355,7 +1376,7 @@ export default function ProfilePage() {
                                 onClick={handleDisableTwoFactor}
                                 disabled={twoFaSaving}
                               >
-                                {twoFaSaving ? 'Disabling...' : 'Disable 2FA'}
+                                {twoFaSaving ? copy.twoFactor.disabling : copy.twoFactor.disableAction}
                               </button>
                             </div>
                           </div>
@@ -1367,9 +1388,9 @@ export default function ProfilePage() {
                 </>
               ) : !loading ? (
                 <div className={cardClass}>
-                  <p className="text-sm font-normal text-[#5F6368]">You are not signed in.</p>
+                  <p className="text-sm font-normal text-[#5F6368]">{copy.signedOut}</p>
                   <Link href="/login" className={`${secondaryBtnClass} mt-4`}>
-                    Go to login
+                    {copy.goToLogin}
                   </Link>
                 </div>
               ) : null}
@@ -1377,7 +1398,7 @@ export default function ProfilePage() {
           </section>
         </div>
 
-        <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#E8EAED] bg-white px-2 py-2 md:hidden">
+        <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#E8EAED] bg-white px-2 py-2 md:hidden" dir={localeDir(locale)}>
           <div className="mx-auto grid max-w-[640px] grid-cols-5 gap-1">
             {mobileBeforeHomeItems.map((item) => {
               const Icon = item.icon;
@@ -1392,10 +1413,11 @@ export default function ProfilePage() {
                   }`}
                 >
                   <Icon className="mb-1 h-4 w-4" />
-                  <span className="leading-tight">{item.label.split(' ').slice(0, 2).join(' ')}</span>
+                  <span className="leading-tight">{railLabels[item.key]}</span>
                 </button>
               );
             })}
+
             {mobileHomeItem ? (
               <button
                 type="button"
@@ -1413,6 +1435,7 @@ export default function ProfilePage() {
             ) : (
               <span />
             )}
+
             {mobileAfterHomeItems.map((item) => {
               const Icon = item.icon;
               const active = item.key === activeRail;
@@ -1426,10 +1449,11 @@ export default function ProfilePage() {
                   }`}
                 >
                   <Icon className="mb-1 h-4 w-4" />
-                  <span className="leading-tight">{item.label.split(' ').slice(0, 2).join(' ')}</span>
+                  <span className="leading-tight">{railLabels[item.key]}</span>
                 </button>
               );
             })}
+
             <div className="relative flex" ref={mobileMenuRef}>
               <button
                 type="button"
@@ -1439,10 +1463,11 @@ export default function ProfilePage() {
                 }`}
               >
                 <FiMoreHorizontal className="mb-1 h-4 w-4" />
-                <span className="leading-tight">More</span>
+                <span className="leading-tight">{copy.more}</span>
               </button>
+
               {mobileMenuOpen ? (
-                <div className="absolute bottom-14 right-0 z-50 w-52 overflow-hidden rounded-2xl border border-[#E8EAED] bg-white shadow-[0_8px_24px_rgba(60,64,67,.2)]">
+                <div className={`absolute bottom-14 z-50 w-52 overflow-hidden rounded-2xl border border-[#E8EAED] bg-white shadow-[0_8px_24px_rgba(60,64,67,.2)] ${isRtl ? 'left-0' : 'right-0'}`}>
                   <div className="p-1">
                     {mobileOverflowItems.map((item) => {
                       const Icon = item.icon;
@@ -1452,12 +1477,12 @@ export default function ProfilePage() {
                           key={item.key}
                           type="button"
                           onClick={() => handleSectionNav(item.key, item.sectionId)}
-                          className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition-all duration-200 ${
+                          className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm transition-all duration-200 ${
                             active ? 'bg-[#E8F0FE] text-[#1A73E8]' : 'text-[#5F6368] hover:bg-[#F1F3F4]'
-                          }`}
+                          } ${isRtl ? 'text-right' : 'text-left'}`}
                         >
                           <Icon className="h-4 w-4" />
-                          <span>{item.label}</span>
+                          <span>{railLabels[item.key]}</span>
                         </button>
                       );
                     })}
@@ -1465,10 +1490,10 @@ export default function ProfilePage() {
                     <button
                       type="button"
                       onClick={logout}
-                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-[#B3261E] transition-all duration-200 hover:bg-[#FDECEA]"
+                      className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-[#B3261E] transition-all duration-200 hover:bg-[#FDECEA] ${isRtl ? 'text-right' : 'text-left'}`}
                     >
                       <FiLogOut className="h-4 w-4" />
-                      <span>Logout</span>
+                      <span>{copy.nav.logout}</span>
                     </button>
                   </div>
                 </div>

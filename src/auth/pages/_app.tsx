@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import '../styles/globals.css';
 import { AdminShell } from '../components/layout/AdminShell';
+import { useUiLocale } from '../lib/ui/locale';
+import { getAuthMessages } from '../lib/ui/i18n';
 
 const RENEW_INTERVAL_MS = 5 * 60 * 1000;
 const INSTALL_BANNER_DISMISS_KEY = 'ada-auth-install-banner-dismissed-at';
@@ -16,6 +18,8 @@ type BeforeInstallPromptEvent = Event & {
 
 export default function App({ Component, pageProps }: AppProps) {
   const router = useRouter();
+  const { locale } = useUiLocale();
+  const appCopy = getAuthMessages(locale).app;
   const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [manualInstallHint, setManualInstallHint] = useState<string | null>(null);
@@ -123,17 +127,17 @@ export default function App({ Component, pageProps }: AppProps) {
     let fallbackTimer: number | null = null;
 
     if (!installEligibleOrigin && isMobile) {
-      setManualInstallHint('PWA install is disabled on HTTP LAN addresses. Open this URL with HTTPS to install.');
+      setManualInstallHint(appCopy.installInsecureHint);
       setShowInstallBanner(true);
       return;
     }
 
     if (isIos && isSafari) {
-      setManualInstallHint('On iPhone/iPad, tap Share then choose Add to Home Screen.');
+      setManualInstallHint(appCopy.installIosHint);
       setShowInstallBanner(true);
     } else if (isMobile) {
       fallbackTimer = window.setTimeout(() => {
-        setManualInstallHint('Use your browser menu and choose Add to Home Screen to install ADA Auth.');
+        setManualInstallHint(appCopy.installBrowserHint);
         setShowInstallBanner(true);
       }, 1600);
     }
@@ -167,7 +171,7 @@ export default function App({ Component, pageProps }: AppProps) {
       window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt);
       window.removeEventListener('appinstalled', onAppInstalled);
     };
-  }, []);
+  }, [appCopy.installBrowserHint, appCopy.installInsecureHint, appCopy.installIosHint]);
 
   const dismissInstallBanner = () => {
     if (typeof window !== 'undefined') {
@@ -214,9 +218,9 @@ export default function App({ Component, pageProps }: AppProps) {
   const installBanner = renderInstallBanner ? (
     <div className="fixed inset-x-3 bottom-4 z-[70] md:hidden">
       <div className="rounded-2xl border border-borderSubtle bg-bgSurface/95 p-3 shadow-soft backdrop-blur">
-        <p className="text-sm font-semibold text-textPrimary">Install ADA Auth</p>
+        <p className="text-sm font-semibold text-textPrimary">{appCopy.installTitle}</p>
         {deferredInstallPrompt ? (
-          <p className="mt-1 text-xs text-textMuted">Add this app to your home screen for faster and reliable access.</p>
+          <p className="mt-1 text-xs text-textMuted">{appCopy.installBody}</p>
         ) : (
           <p className="mt-1 text-xs text-textMuted">{manualInstallHint}</p>
         )}
@@ -229,7 +233,7 @@ export default function App({ Component, pageProps }: AppProps) {
               }}
               className="btn-primary min-w-[112px] px-3 py-2 text-xs"
             >
-              Install
+              {appCopy.installAction}
             </button>
           ) : null}
           <button
@@ -237,7 +241,7 @@ export default function App({ Component, pageProps }: AppProps) {
             onClick={dismissInstallBanner}
             className="inline-flex items-center justify-center rounded-xl border border-borderSubtle px-3 py-2 text-xs font-semibold text-textMuted transition hover:bg-bgApp"
           >
-            {deferredInstallPrompt ? 'Not now' : 'Got it'}
+            {deferredInstallPrompt ? appCopy.installDismiss : appCopy.installAcknowledge}
           </button>
         </div>
       </div>

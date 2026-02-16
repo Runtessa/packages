@@ -1,6 +1,8 @@
 import Head from 'next/head';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { PageHeader } from '../../components/layout/PageHeader';
+import { localeDir, useUiLocale } from '../../lib/ui/locale';
+import { getAuthMessages } from '../../lib/ui/i18n';
 
 interface SessionPayload {
   authenticated: boolean;
@@ -46,6 +48,8 @@ const dangerBtnClass =
   'inline-flex items-center justify-center gap-2 rounded-full border border-[#F28B82] bg-white px-5 py-2.5 text-sm font-medium text-[#B3261E] transition-all duration-200 hover:bg-[#FDECEA] active:brightness-95 disabled:cursor-not-allowed disabled:opacity-60';
 
 export default function AdminTenantsPage() {
+  const { locale, isRtl } = useUiLocale();
+  const copy = getAuthMessages(locale).tenants;
   const [session, setSession] = useState<SessionPayload | null>(null);
   const [items, setItems] = useState<TenantItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,7 +79,7 @@ export default function AdminTenantsPage() {
       setSession(sessionData);
 
       if (!sessionData.authenticated) {
-        setError('Authentication required');
+        setError(copy.authenticationRequired);
         setLoading(false);
         return;
       }
@@ -83,12 +87,12 @@ export default function AdminTenantsPage() {
       const res = await fetch('/api/admin/tenant-whitelist', { credentials: 'include' });
       const data = (await res.json()) as { items?: TenantItem[]; error?: string };
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to load tenant whitelist');
+        throw new Error(data.error || copy.loadFailed);
       }
 
       setItems(data.items || []);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Unexpected error');
+      setError(loadError instanceof Error ? loadError.message : copy.unexpectedError);
     } finally {
       setLoading(false);
     }
@@ -126,17 +130,17 @@ export default function AdminTenantsPage() {
 
       const data = (await res.json()) as { generatedToken?: string; error?: string };
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to save tenant');
+        throw new Error(data.error || copy.saveFailed);
       }
 
-      setSuccess('Tenant whitelist entry saved.');
+      setSuccess(copy.saveSuccess);
       if (data.generatedToken) {
         setGeneratedToken(data.generatedToken);
       }
       setForm((prev) => ({ ...prev, customToken: '' }));
       await load();
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Unexpected error');
+      setError(submitError instanceof Error ? submitError.message : copy.unexpectedError);
     }
   };
 
@@ -156,16 +160,16 @@ export default function AdminTenantsPage() {
 
       const data = (await res.json()) as { generatedToken?: string; error?: string };
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to rotate token');
+        throw new Error(data.error || copy.rotateFailed);
       }
 
       if (data.generatedToken) {
         setGeneratedToken(data.generatedToken);
       }
-      setSuccess(`Token rotated for ${tenantName}.`);
+      setSuccess(copy.rotatedFor.replace('{tenant}', tenantName));
       await load();
     } catch (rotateError) {
-      setError(rotateError instanceof Error ? rotateError.message : 'Unexpected error');
+      setError(rotateError instanceof Error ? rotateError.message : copy.unexpectedError);
     }
   };
 
@@ -185,13 +189,13 @@ export default function AdminTenantsPage() {
 
       const data = (await res.json()) as { error?: string };
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to delete tenant');
+        throw new Error(data.error || copy.deleteFailed);
       }
 
-      setSuccess(`Deleted ${tenantName}.`);
+      setSuccess(copy.deleted.replace('{tenant}', tenantName));
       await load();
     } catch (removeError) {
-      setError(removeError instanceof Error ? removeError.message : 'Unexpected error');
+      setError(removeError instanceof Error ? removeError.message : copy.unexpectedError);
     }
   };
 
@@ -201,13 +205,13 @@ export default function AdminTenantsPage() {
     return (
       <>
         <Head>
-          <title>Auth Admin | Tenant SSO Whitelist</title>
+          <title>{copy.headTitle}</title>
         </Head>
-        <div className="space-y-6">
-          <PageHeader title="Tenants" subtitle="Tenant SSO whitelist management." />
+        <div className="space-y-6" dir={localeDir(locale)}>
+          <PageHeader title={copy.tenants} subtitle={copy.subtitle} align={isRtl ? 'right' : 'left'} />
           <article className={cardClass}>
-            <h2 className="text-xl font-normal text-[#202124]">Permission Denied</h2>
-            <p className="mt-2 text-sm text-[#5F6368]">Use an auth admin account to access this panel.</p>
+            <h2 className="text-xl font-normal text-[#202124]">{copy.permissionDenied}</h2>
+            <p className="mt-2 text-sm text-[#5F6368]">{copy.permissionHelp}</p>
           </article>
         </div>
       </>
@@ -217,17 +221,18 @@ export default function AdminTenantsPage() {
   return (
     <>
       <Head>
-        <title>Auth Admin | Tenant SSO Whitelist</title>
+        <title>{copy.headTitle}</title>
       </Head>
 
-      <div className="space-y-6">
+      <div className="space-y-6" dir={localeDir(locale)}>
         <PageHeader
-          title="Tenants"
-          subtitle="Standard callback pattern: https://tenant-host/auth"
+          title={copy.tenants}
+          subtitle={copy.subtitle}
+          align={isRtl ? 'right' : 'left'}
           actions={
             <div className="flex flex-wrap gap-2">
               <a href="/admin" className={secondaryBtnClass}>
-                Back to dashboard
+                {copy.backToDashboard}
               </a>
             </div>
           }
@@ -238,7 +243,7 @@ export default function AdminTenantsPage() {
         {success ? <div className="rounded-xl border border-[#81C995] bg-[#E6F4EA] px-4 py-3 text-sm text-[#137333]">{success}</div> : null}
         {generatedToken ? (
           <div className="rounded-xl border border-[#81C995] bg-[#E6F4EA] px-4 py-3 text-sm text-[#137333]">
-            <p className="font-semibold">Generated tenant SSO token</p>
+            <p className="font-semibold">{copy.generatedTokenTitle}</p>
             <code className="mt-2 block overflow-x-auto rounded-lg border border-[#DADCE0] bg-white px-2 py-1 text-xs text-[#202124]">
               {generatedToken}
             </code>
@@ -248,48 +253,48 @@ export default function AdminTenantsPage() {
 
         <section className="grid w-full grid-cols-1 gap-6 xl:grid-cols-3">
           <article className={cardClass}>
-            <h2 className="text-xl font-normal text-[#202124]">Total entries</h2>
+            <h2 className="text-xl font-normal text-[#202124]">{copy.totalEntries}</h2>
             <p className="mt-2 text-sm text-[#5F6368]">{items.length}</p>
           </article>
           <article className={cardClass}>
-            <h2 className="text-xl font-normal text-[#202124]">Active entries</h2>
+            <h2 className="text-xl font-normal text-[#202124]">{copy.activeEntries}</h2>
             <p className="mt-2 text-sm text-[#5F6368]">{activeCount}</p>
           </article>
           <article className={cardClass}>
-            <h2 className="text-xl font-normal text-[#202124]">Session user</h2>
-            <p className="mt-2 truncate text-sm text-[#5F6368]">{session?.user?.email || 'n/a'}</p>
+            <h2 className="text-xl font-normal text-[#202124]">{copy.sessionUser}</h2>
+            <p className="mt-2 truncate text-sm text-[#5F6368]">{session?.user?.email || copy.na}</p>
           </article>
         </section>
         <div className="section-separator" />
 
         <article className={cardClass}>
-          <h2 className="text-xl font-normal text-[#202124]">Create or update tenant entry</h2>
-          <p className="mt-1 text-sm text-[#5F6368]">Whitelist controls for tenant host and SSO token validation.</p>
+          <h2 className="text-xl font-normal text-[#202124]">{copy.createOrUpdate}</h2>
+          <p className="mt-1 text-sm text-[#5F6368]">{copy.createOrUpdateHelp}</p>
           <form className="mt-4 space-y-4" onSubmit={submit}>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
                 <label className={labelClass} htmlFor="tenant_name">
-                  Tenant name (host)
+                  {copy.tenantName}
                 </label>
                 <input
                   id="tenant_name"
                   className={inputClass}
                   value={form.tenantName}
                   onChange={(e) => setForm((prev) => ({ ...prev, tenantName: e.target.value }))}
-                  placeholder="tenant.example.com"
+                  placeholder={copy.tenantNamePlaceholder}
                   required
                 />
               </div>
               <div>
                 <label className={labelClass} htmlFor="tenant_rand_id">
-                  Tenant rand id (optional)
+                  {copy.tenantRandId}
                 </label>
                 <input
                   id="tenant_rand_id"
                   className={inputClass}
                   value={form.tenantRandId}
                   onChange={(e) => setForm((prev) => ({ ...prev, tenantRandId: e.target.value }))}
-                  placeholder="tenant-rand-id"
+                  placeholder={copy.tenantRandIdPlaceholder}
                 />
               </div>
             </div>
@@ -297,26 +302,26 @@ export default function AdminTenantsPage() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
                 <label className={labelClass} htmlFor="tenant_display_name">
-                  Tenant display name (optional)
+                  {copy.tenantDisplayName}
                 </label>
                 <input
                   id="tenant_display_name"
                   className={inputClass}
                   value={form.tenantDisplayName}
                   onChange={(e) => setForm((prev) => ({ ...prev, tenantDisplayName: e.target.value }))}
-                  placeholder="Tenant Display Name"
+                  placeholder={copy.tenantDisplayNamePlaceholder}
                 />
               </div>
               <div>
                 <label className={labelClass} htmlFor="custom_sso_token">
-                  Custom SSO token (optional)
+                  {copy.customToken}
                 </label>
                 <input
                   id="custom_sso_token"
                   className={inputClass}
                   value={form.customToken}
                   onChange={(e) => setForm((prev) => ({ ...prev, customToken: e.target.value }))}
-                  placeholder="empty = auto-generate"
+                  placeholder={copy.customTokenPlaceholder}
                 />
               </div>
             </div>
@@ -329,7 +334,7 @@ export default function AdminTenantsPage() {
                   checked={form.allowRegistration}
                   onChange={(e) => setForm((prev) => ({ ...prev, allowRegistration: e.target.checked }))}
                 />
-                Allow registration for this tenant
+                {copy.allowRegistration}
               </label>
 
               <label className="inline-flex items-center gap-2 text-sm text-[#5F6368]">
@@ -339,48 +344,48 @@ export default function AdminTenantsPage() {
                   checked={form.isActive}
                   onChange={(e) => setForm((prev) => ({ ...prev, isActive: e.target.checked }))}
                 />
-                Entry is active
+                {copy.entryActive}
               </label>
             </div>
 
             <button type="submit" className={primaryBtnClass} disabled={loading || !csrfToken || !canManage}>
-              Save tenant entry
+              {copy.saveEntry}
             </button>
           </form>
         </article>
         <div className="section-separator" />
 
         <article className={cardClass}>
-          <h2 className="text-xl font-normal text-[#202124]">Current whitelist</h2>
-          <p className="mt-1 text-sm text-[#5F6368]">Showing {items.length} tenant entries</p>
+          <h2 className="text-xl font-normal text-[#202124]">{copy.currentWhitelist}</h2>
+          <p className="mt-1 text-sm text-[#5F6368]">{copy.showingEntries.replace('{count}', String(items.length))}</p>
           <div className="mt-4 overflow-x-auto rounded-2xl border border-[#E8EAED] bg-white">
-            <table className="w-full border-collapse text-left text-sm text-[#202124]">
+            <table className={`w-full border-collapse text-sm text-[#202124] ${isRtl ? 'text-right' : 'text-left'}`}>
               <thead className="bg-[#F8F9FA] text-[#5F6368]">
                 <tr>
-                  <th className="px-4 py-3 font-semibold">Tenant</th>
-                  <th className="px-4 py-3 font-semibold">Tenant ID</th>
-                  <th className="px-4 py-3 font-semibold">Allow Reg</th>
-                  <th className="px-4 py-3 font-semibold">Active</th>
-                  <th className="px-4 py-3 font-semibold">Updated</th>
-                  <th className="px-4 py-3 font-semibold">Actions</th>
+                  <th className="px-4 py-3 font-semibold">{copy.table.tenant}</th>
+                  <th className="px-4 py-3 font-semibold">{copy.table.tenantId}</th>
+                  <th className="px-4 py-3 font-semibold">{copy.table.allowReg}</th>
+                  <th className="px-4 py-3 font-semibold">{copy.table.active}</th>
+                  <th className="px-4 py-3 font-semibold">{copy.table.updated}</th>
+                  <th className="px-4 py-3 font-semibold">{copy.table.actions}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E8EAED]">
                 {loading ? (
                   <tr>
                     <td className="px-4 py-3 text-[#5F6368]" colSpan={6}>
-                      Loading...
+                      {copy.table.loading}
                     </td>
                   </tr>
                 ) : items.length > 0 ? (
                   items.map((item) => (
                     <tr key={item.tenantName} className="text-sm transition hover:bg-[#F8F9FA]">
                       <td className="px-4 py-3 text-[#202124]">{item.tenantName}</td>
-                      <td className="px-4 py-3 text-[#5F6368]">{item.tenantRandId || 'n/a'}</td>
+                      <td className="px-4 py-3 text-[#5F6368]">{item.tenantRandId || copy.na}</td>
                       <td className="px-4 py-3 text-[#5F6368]">
-                        {boolFromMeta(item.meta, 'allowRegistration', false) ? 'yes' : 'no'}
+                        {boolFromMeta(item.meta, 'allowRegistration', false) ? copy.table.yes : copy.table.no}
                       </td>
-                      <td className="px-4 py-3 text-[#5F6368]">{item.isActive ? 'yes' : 'no'}</td>
+                      <td className="px-4 py-3 text-[#5F6368]">{item.isActive ? copy.table.yes : copy.table.no}</td>
                       <td className="px-4 py-3 text-[#5F6368]">{new Date(item.updatedAt).toLocaleString()}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-2">
@@ -389,14 +394,14 @@ export default function AdminTenantsPage() {
                             className={secondaryBtnClass}
                             onClick={() => rotateToken(item.tenantName)}
                           >
-                            Rotate token
+                            {copy.rotateToken}
                           </button>
                           <button
                             type="button"
                             className={dangerBtnClass}
                             onClick={() => removeTenant(item.tenantName)}
                           >
-                            Delete
+                            {copy.delete}
                           </button>
                           {strFromMeta(item.meta, 'tenantDisplayName') ? (
                             <span className="self-center text-xs text-[#5F6368]">
@@ -410,7 +415,7 @@ export default function AdminTenantsPage() {
                 ) : (
                   <tr>
                     <td className="px-4 py-3 text-[#5F6368]" colSpan={6}>
-                      No tenant whitelist entries found.
+                      {copy.table.empty}
                     </td>
                   </tr>
                 )}

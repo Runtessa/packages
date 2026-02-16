@@ -68,6 +68,7 @@ import {
   normalizeTenantName,
   rotateWhitelistTenantToken,
 } from './lib/services/tenant-whitelist';
+import { removeManagedAvatarFromDisk, saveAvatarDataUrlToDisk, saveAvatarToDisk } from './lib/services/avatar-storage';
 
 const dev = config.nodeEnv !== 'production';
 const nextApp = next({ dev, dir: __dirname });
@@ -97,6 +98,24 @@ const optionalString = (value: unknown, max = 2048): string => {
   const raw = String(value || '').trim();
   if (!raw) return '';
   return raw.slice(0, max);
+};
+
+const AVATAR_UPLOAD_MAX_BYTES = 2 * 1024 * 1024;
+
+const readRequestBuffer = async (req: Request, maxBytes: number): Promise<Buffer> => {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const part of req) {
+    const chunk = Buffer.isBuffer(part) ? part : Buffer.from(part);
+    total += chunk.length;
+    if (total > maxBytes) {
+      const error = new Error('Avatar file is too large. Maximum size is 2 MB.') as Error & { statusCode: number };
+      error.statusCode = 413;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
 };
 
 const appendAuthContext = (
@@ -431,6 +450,31 @@ const boot = async (): Promise<void> => {
     }
   });
 
+  app.post('/api/profile/avatar/upload', requireTrustedOrigin, requireSession, requireCsrf, async (req, res, next) => {
+    try {
+      const userRandId = req.sessionContext?.user.randId;
+      if (!userRandId) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+      }
+
+      const contentType = String(req.headers['content-type'] || '')
+        .split(';')[0]
+        ?.trim()
+        .toLowerCase();
+      if (!contentType) {
+        res.status(400).json({ error: 'Avatar content type is required' });
+        return;
+      }
+
+      const avatar = await readRequestBuffer(req, AVATAR_UPLOAD_MAX_BYTES);
+      const avatarUrl = await saveAvatarToDisk(userRandId, avatar, contentType);
+      res.status(200).json({ ok: true, avatarUrl });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post('/api/profile/details', requireTrustedOrigin, requireSession, requireCsrf, async (req, res, next) => {
     try {
       const userRandId = req.sessionContext?.user.randId;
@@ -454,6 +498,13 @@ const boot = async (): Promise<void> => {
         return;
       }
 
+      const previousAvatar = (await getUserProfileSnapshot(userRandId)).user.avatarUrl;
+      const avatarRaw = req.body.avatarUrl ?? req.body.avatar_url ?? undefined;
+      let normalizedAvatar: string | null | undefined = avatarRaw;
+      if (typeof avatarRaw === 'string' && avatarRaw.trim().toLowerCase().startsWith('data:image/')) {
+        normalizedAvatar = await saveAvatarDataUrlToDisk(userRandId, avatarRaw, AVATAR_UPLOAD_MAX_BYTES);
+      }
+
       await updateProfileDetails(
         userRandId,
         {
@@ -461,7 +512,7 @@ const boot = async (): Promise<void> => {
           lastName,
           nationalId,
           phoneNumber,
-          avatarUrl: req.body.avatarUrl ?? req.body.avatar_url ?? undefined,
+          avatarUrl: normalizedAvatar,
           birthday: req.body.birthday ?? req.body.birth_day ?? undefined,
           gender: req.body.gender ?? undefined,
         },
@@ -478,6 +529,13 @@ const boot = async (): Promise<void> => {
       });
 
       const profile = await getUserProfileSnapshot(userRandId);
+      if (previousAvatar && previousAvatar !== profile.user.avatarUrl) {
+        try {
+          await removeManagedAvatarFromDisk(previousAvatar);
+        } catch (avatarError) {
+          console.warn('[auth] failed to remove old avatar file', avatarError);
+        }
+      }
       res.status(200).json({ ok: true, profile });
     } catch (error) {
       next(error);

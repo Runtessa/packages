@@ -3,6 +3,9 @@ import Image from 'next/image';
 import { ClipboardEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, MutableRefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import branding from '../branding.json';
+import { LanguageToggle } from '../components/ui/LanguageToggle';
+import { localeDir, useUiLocale } from '../lib/ui/locale';
+import { getAuthMessages } from '../lib/ui/i18n';
 
 const one = (value: string | string[] | undefined): string =>
   Array.isArray(value) ? value[0] || '' : value || '';
@@ -152,6 +155,8 @@ const parseJsonSafe = async (response: Response): Promise<Record<string, unknown
 
 export default function LoginPage() {
   const router = useRouter();
+  const { locale, isRtl, setLocale } = useUiLocale();
+  const copy = getAuthMessages(locale).login;
   const [mode, setMode] = useState<Mode>('signin');
   const [signinStep, setSigninStep] = useState<SigninStep>('phone');
   const [signupStep, setSignupStep] = useState<SignupStep>('phone');
@@ -178,7 +183,7 @@ export default function LoginPage() {
   const returnTo = one(router.query.returnTo) || '/profile';
   const clientId = one(router.query.client_id);
   const tenantName = one(router.query.tenant_name) || tenantFromReturnTo(returnTo);
-  const loginTitle = tenantName ? `Access ${tenantName}` : 'Login to profile';
+  const loginTitle = tenantName ? `${copy.access} ${tenantName}` : copy.loginToProfile;
 
   const selectedCountry = useMemo(() => countryByCode(selectedCountryCode), [selectedCountryCode]);
   const formattedNationalPhone = useMemo(
@@ -316,7 +321,7 @@ export default function LoginPage() {
     const digits = context === 'signin' ? signinOtpDigits : signupOtpDigits;
     const refs = refsFor(context);
     return (
-      <div className="flex items-center justify-center gap-2">
+      <div className="flex items-center justify-center gap-2" dir="ltr" style={{ direction: 'ltr' }}>
         {digits.map((digit, index) => (
           <input
             key={`${baseId}-${index}`}
@@ -330,6 +335,7 @@ export default function LoginPage() {
             pattern="[0-9]"
             autoComplete="one-time-code"
             maxLength={1}
+            dir="ltr"
             value={digit}
             onChange={(event) => handleOtpDigitChange(context, index, event.target.value)}
             onKeyDown={(event) => handleOtpKeyDown(context, index, event)}
@@ -343,9 +349,12 @@ export default function LoginPage() {
   const renderPhoneInput = (fieldId: string) => (
     <div>
       <label className="mb-1 block text-sm font-normal text-[#202124]" htmlFor={fieldId}>
-        Phone number
+        {copy.phoneNumber}
       </label>
-      <div className="relative flex w-full items-center rounded-2xl border border-[#D6DCE8] bg-white shadow-[0_8px_22px_-20px_rgba(26,115,232,0.85)] transition-all duration-200 focus-within:border-[#1A73E8] focus-within:ring-2 focus-within:ring-[#1A73E8]/20">
+      <div
+        className="relative flex w-full items-center rounded-2xl border border-[#D6DCE8] bg-white shadow-[0_8px_22px_-20px_rgba(26,115,232,0.85)] transition-all duration-200 focus-within:border-[#1A73E8] focus-within:ring-2 focus-within:ring-[#1A73E8]/20"
+        dir="ltr"
+      >
         <div
           ref={countryPickerRef}
           className="relative h-[48px] w-[76px] shrink-0 rounded-l-2xl border-r border-[#E6EBF2] bg-[#F7FAFF]"
@@ -353,7 +362,7 @@ export default function LoginPage() {
           <button
             type="button"
             className="flex h-full w-full items-center justify-center gap-1 rounded-l-2xl bg-transparent text-lg text-[#202124] outline-none transition-colors hover:bg-[#EEF3FD]"
-            aria-label="Select country"
+            aria-label={copy.selectCountry}
             aria-expanded={countryPickerOpen}
             onClick={() => setCountryPickerOpen((prev) => !prev)}
           >
@@ -372,24 +381,27 @@ export default function LoginPage() {
                 <button
                   key={country.code}
                   type="button"
-                  className={`group flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
+                  className={`group flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-sm transition-colors ${
                     selectedCountry.code === country.code ? 'bg-[#E8F0FE] text-[#1A73E8]' : 'text-[#202124] hover:bg-[#F3F7FF]'
-                  }`}
+                  } ${isRtl ? 'text-right' : 'text-left'}`}
                   onClick={() => handleCountryChange(country.code)}
                 >
                   <span className="text-lg">{country.flag}</span>
-                  <span className="truncate font-medium">{country.name}</span>
+                  <span className="truncate font-medium">{copy.countryNames[country.code] || country.name}</span>
                   <span className="ml-auto text-xs font-semibold text-[#5F6368] group-hover:text-[#3E506E]">{country.dialCode}</span>
                 </button>
               ))}
             </div>
           ) : null}
         </div>
-        <span className="shrink-0 border-r border-[#E6EBF2] px-3 text-sm font-semibold text-[#4A5A73]">{selectedCountry.dialCode}</span>
+        <span className="shrink-0 border-r border-[#E6EBF2] px-3 text-left text-sm font-semibold text-[#4A5A73]" dir="ltr">
+          {selectedCountry.dialCode}
+        </span>
         <input
           id={fieldId}
-          className="h-[48px] min-w-0 w-full rounded-r-2xl border-0 bg-transparent px-3 text-sm text-[#202124] outline-none placeholder:text-[#9AA0A6]"
+          className="h-[48px] min-w-0 w-full rounded-r-2xl border-0 bg-transparent px-3 text-left text-sm text-[#202124] outline-none placeholder:text-[#9AA0A6]"
           type="tel"
+          dir="ltr"
           value={formattedNationalPhone}
           onChange={(event) => handlePhoneInputChange(event.target.value)}
           placeholder={countryPlaceholder(selectedCountry)}
@@ -433,7 +445,7 @@ export default function LoginPage() {
   const startOtpLogin = async (): Promise<boolean> => {
     const phone = fullPhoneNumber.trim();
     if (!phone) {
-      pushToast('error', 'Phone number is required');
+      pushToast('error', copy.phoneRequired);
       return false;
     }
 
@@ -446,7 +458,7 @@ export default function LoginPage() {
       });
 
       if (!ok || (status !== 202 && status !== 200)) {
-        pushToast('error', String(data.error || 'Failed to send verification code'));
+        pushToast('error', String(data.error || copy.failedSendCode));
         return false;
       }
 
@@ -465,11 +477,11 @@ export default function LoginPage() {
       const debugCode = String(data.otpDebugCode || '').trim();
       pushToast(
         'success',
-        debugCode ? `Verification code sent. Dev code: ${debugCode}` : 'Verification code sent to your phone',
+        debugCode ? copy.codeSentDev.replace('{code}', debugCode) : copy.codeSent,
       );
       return true;
     } catch {
-      pushToast('error', 'Failed to send verification code');
+      pushToast('error', copy.failedSendCode);
       return false;
     } finally {
       setBusyAction('');
@@ -480,7 +492,7 @@ export default function LoginPage() {
     event.preventDefault();
     const phone = fullPhoneNumber.trim();
     if (!phone) {
-      pushToast('error', 'Phone number is required');
+      pushToast('error', copy.phoneRequired);
       return;
     }
 
@@ -494,10 +506,10 @@ export default function LoginPage() {
 
       if (!res.ok) {
         if (res.status === 404) {
-          pushToast('error', 'Account not found');
+          pushToast('error', copy.accountNotFound);
           return;
         }
-        pushToast('error', String(data.error || 'Unable to resolve login options'));
+        pushToast('error', String(data.error || copy.unableResolveLoginOptions));
         return;
       }
 
@@ -510,7 +522,7 @@ export default function LoginPage() {
 
       await startOtpLogin();
     } catch {
-      pushToast('error', 'Unable to continue login');
+      pushToast('error', copy.unableContinueLogin);
     } finally {
       setBusyAction('');
     }
@@ -521,11 +533,11 @@ export default function LoginPage() {
     const phone = fullPhoneNumber.trim();
     const pwd = password;
     if (!phone) {
-      pushToast('error', 'Phone number is required');
+      pushToast('error', copy.phoneRequired);
       return;
     }
     if (!pwd) {
-      pushToast('error', 'Password is required');
+      pushToast('error', copy.passwordRequired);
       return;
     }
 
@@ -553,13 +565,13 @@ export default function LoginPage() {
           otpWaitUntilMs: 0,
           savedAt: Date.now(),
         });
-        pushToast('success', String(data.message || 'Enter authenticator verification code'));
+        pushToast('success', String(data.message || copy.twoFactorPromptToast));
         return;
       }
 
-      pushToast('error', String(data.error || 'Invalid credentials'));
+      pushToast('error', String(data.error || copy.invalidCredentials));
     } catch {
-      pushToast('error', 'Login failed');
+      pushToast('error', copy.loginFailed);
     } finally {
       setBusyAction('');
     }
@@ -570,15 +582,15 @@ export default function LoginPage() {
     const phone = fullPhoneNumber.trim();
     const code = otpCodeFor('signin').trim();
     if (!phone) {
-      pushToast('error', 'Phone number is required');
+      pushToast('error', copy.phoneRequired);
       return;
     }
     if (!code) {
-      pushToast('error', 'Verification code is required');
+      pushToast('error', copy.codeRequired);
       return;
     }
     if (code.length !== 6) {
-      pushToast('error', 'Verification code must be 6 digits');
+      pushToast('error', copy.codeLength);
       return;
     }
 
@@ -602,19 +614,19 @@ export default function LoginPage() {
           otpWaitUntilMs: 0,
           savedAt: Date.now(),
         });
-        pushToast('success', String(data.message || 'Enter authenticator verification code'));
+        pushToast('success', String(data.message || copy.twoFactorPromptToast));
         return;
       }
 
       if (!ok) {
-        pushToast('error', String(data.error || 'Verification code check failed'));
+        pushToast('error', String(data.error || copy.codeCheckFailed));
         return;
       }
 
       clearOtpProgress();
       window.location.href = String(data.returnTo || returnTo);
     } catch {
-      pushToast('error', 'Verification code check failed');
+      pushToast('error', copy.codeCheckFailed);
     } finally {
       setBusyAction('');
     }
@@ -624,11 +636,11 @@ export default function LoginPage() {
     event.preventDefault();
     const code = otpCodeFor('signin').trim();
     if (!code) {
-      pushToast('error', 'Verification code is required');
+      pushToast('error', copy.codeRequired);
       return;
     }
     if (code.length !== 6) {
-      pushToast('error', 'Verification code must be 6 digits');
+      pushToast('error', copy.codeLength);
       return;
     }
 
@@ -640,14 +652,14 @@ export default function LoginPage() {
       });
 
       if (!ok) {
-        pushToast('error', String(data.error || 'Two-factor verification failed'));
+        pushToast('error', String(data.error || copy.twoFactorFailed));
         return;
       }
 
       clearOtpProgress();
       window.location.href = String(data.returnTo || returnTo);
     } catch {
-      pushToast('error', 'Two-factor verification failed');
+      pushToast('error', copy.twoFactorFailed);
     } finally {
       setBusyAction('');
     }
@@ -661,11 +673,11 @@ export default function LoginPage() {
   const requestSignupOtp = async (): Promise<void> => {
     const phone = fullPhoneNumber.trim();
     if (!phone) {
-      pushToast('error', 'Phone number is required');
+      pushToast('error', copy.phoneRequired);
       return;
     }
     if (!allowRegistration) {
-      pushToast('error', 'Registration is disabled for this tenant');
+      pushToast('error', copy.registrationDisabledTenant);
       return;
     }
 
@@ -678,7 +690,7 @@ export default function LoginPage() {
       });
 
       if (!ok || (status !== 202 && status !== 200)) {
-        pushToast('error', String(data.error || 'Failed to send verification code'));
+        pushToast('error', String(data.error || copy.failedSendCode));
         return;
       }
 
@@ -696,10 +708,10 @@ export default function LoginPage() {
       const debugCode = String(data.otpDebugCode || '').trim();
       pushToast(
         'success',
-        debugCode ? `Verification code sent. Dev code: ${debugCode}` : 'Verification code sent to your phone',
+        debugCode ? copy.codeSentDev.replace('{code}', debugCode) : copy.codeSent,
       );
     } catch {
-      pushToast('error', 'Failed to send verification code');
+      pushToast('error', copy.failedSendCode);
     } finally {
       setBusyAction('');
     }
@@ -710,15 +722,15 @@ export default function LoginPage() {
     const phone = fullPhoneNumber.trim();
     const code = otpCodeFor('signup').trim();
     if (!phone) {
-      pushToast('error', 'Phone number is required');
+      pushToast('error', copy.phoneRequired);
       return;
     }
     if (!code) {
-      pushToast('error', 'Verification code is required');
+      pushToast('error', copy.codeRequired);
       return;
     }
     if (code.length !== 6) {
-      pushToast('error', 'Verification code must be 6 digits');
+      pushToast('error', copy.codeLength);
       return;
     }
 
@@ -731,14 +743,14 @@ export default function LoginPage() {
       });
 
       if (!ok) {
-        pushToast('error', String(data.error || 'Sign up failed'));
+        pushToast('error', String(data.error || copy.signUpFailed));
         return;
       }
 
       clearOtpProgress();
       window.location.href = String(data.returnTo || returnTo);
     } catch {
-      pushToast('error', 'Sign up failed');
+      pushToast('error', copy.signUpFailed);
     } finally {
       setBusyAction('');
     }
@@ -768,15 +780,15 @@ export default function LoginPage() {
         const data = await parseJsonSafe(res);
         const allowed = Boolean(data.allowRegistration);
         setAllowRegistration(allowed);
-        if (!allowed) pushToast('error', 'Registration is disabled for this tenant.');
+        if (!allowed) pushToast('error', copy.registrationDisabledTenant);
       } catch {
         setAllowRegistration(false);
-        pushToast('error', 'Unable to verify tenant registration policy.');
+        pushToast('error', copy.registrationPolicyFailed);
       }
     };
 
     void loadPolicy();
-  }, [clientId, tenantName]);
+  }, [clientId, tenantName, copy.registrationDisabledTenant, copy.registrationPolicyFailed]);
 
   useEffect(() => {
     if (!router.isReady) return;
@@ -884,10 +896,10 @@ export default function LoginPage() {
   return (
     <>
       <Head>
-        <title>Sign In | IDP Auth</title>
+        <title>{copy.headTitle}</title>
       </Head>
 
-      <main className="auth-login-page relative min-h-[100dvh] overflow-x-hidden bg-[#F6F8FC] text-[#202124]" dir="ltr">
+      <main className="auth-login-page relative min-h-[100dvh] overflow-x-hidden bg-[#F6F8FC] text-[#202124]" dir={localeDir(locale)}>
         <div className="pointer-events-none absolute bottom-8 left-8 z-0 login-bg-logo opacity-[0.08]">
           <Image src="/images/lm_dark.png" alt="" width={180} height={180} priority className="h-[130px] w-auto md:h-[160px]" />
         </div>
@@ -910,58 +922,62 @@ export default function LoginPage() {
         <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-[1400px] items-end justify-center px-4 pb-10 pt-4 sm:px-6 sm:pt-6 md:items-center md:pb-0">
           <section className="w-full max-w-[520px] login-shell-enter">
             <div className="text-center">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#5F6368]">{mode === 'signup' ? 'Sign up' : 'Sign in'}</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#5F6368]">{mode === 'signup' ? copy.signUp : copy.signIn}</p>
               <h1 className="mt-1 text-[28px] font-normal text-[#202124]">
-                {mode === 'signup' ? 'Create Account' : loginTitle}
+                {mode === 'signup' ? copy.createAccount : loginTitle}
               </h1>
               <p className="mt-2 text-sm text-[#5F6368]">
                 {mode === 'signup'
-                  ? 'Lets start with your Phone number'
-                  : 'Welcom back'}
+                  ? copy.startWithPhone
+                  : copy.welcomeBack}
               </p>
             </div>
 
             <div className="mt-6 flex justify-center">
               <div className="inline-flex items-center gap-1 rounded-full border border-[#DADCE0] bg-white p-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    clearOtpProgress();
-                    setMode('signin');
-                    setSigninStep('phone');
-                    clearOtpDigits('signin');
-                  }}
-                  className={`${tabBaseClass} ${
-                    mode === 'signin'
-                      ? 'bg-[#E8F0FE] text-[#1A73E8]'
-                      : 'text-[#5F6368] hover:bg-[#F1F3F4] hover:text-[#202124]'
-                  }`}
-                >
-                  Sign in
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    clearOtpProgress();
-                    setMode('signup');
-                    setSignupStep('phone');
-                    clearOtpDigits('signup');
-                  }}
-                  className={`${tabBaseClass} ${
-                    mode === 'signup'
-                      ? 'bg-[#E8F0FE] text-[#1A73E8]'
-                      : 'text-[#5F6368] hover:bg-[#F1F3F4] hover:text-[#202124]'
-                  }`}
-                >
-                  Sign up
-                </button>
+                <div className="inline-flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearOtpProgress();
+                      setMode('signin');
+                      setSigninStep('phone');
+                      clearOtpDigits('signin');
+                    }}
+                    className={`${tabBaseClass} ${
+                      mode === 'signin'
+                        ? 'bg-[#E8F0FE] text-[#1A73E8]'
+                        : 'text-[#5F6368] hover:bg-[#F1F3F4] hover:text-[#202124]'
+                    }`}
+                  >
+                    {copy.signIn}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearOtpProgress();
+                      setMode('signup');
+                      setSignupStep('phone');
+                      clearOtpDigits('signup');
+                    }}
+                    className={`${tabBaseClass} ${
+                      mode === 'signup'
+                        ? 'bg-[#E8F0FE] text-[#1A73E8]'
+                        : 'text-[#5F6368] hover:bg-[#F1F3F4] hover:text-[#202124]'
+                    }`}
+                  >
+                    {copy.signUp}
+                  </button>
+                </div>
+                <span className="mx-1 h-5 w-px bg-[#E8EAED]" aria-hidden />
+                <LanguageToggle locale={locale} onChange={setLocale} variant="inline" />
               </div>
             </div>
 
             {tenantName ? (
               <div className="mt-2 flex justify-center">
                 <span className="inline-flex items-center rounded-full bg-[#E8F0FE] px-3 py-1 text-xs font-medium text-[#1A73E8]">
-                  Tenant: {tenantName}
+                  {copy.tenant}: {tenantName}
                 </span>
               </div>
             ) : null}
@@ -972,7 +988,7 @@ export default function LoginPage() {
                   {renderPhoneInput('signin_phone')}
                   <div className="flex items-center justify-center gap-3 pt-2">
                     <button type="submit" className={primaryBtnClass} disabled={busyAction === 'signin-phone-continue'}>
-                      {busyAction === 'signin-phone-continue' ? 'Checking...' : 'Continue'}
+                      {busyAction === 'signin-phone-continue' ? copy.checking : copy.continue}
                     </button>
                   </div>
                 </form>
@@ -983,7 +999,7 @@ export default function LoginPage() {
                   <div>
                     <div className="mb-1 flex items-center justify-between">
                       <label className="block text-sm font-normal text-[#202124]" htmlFor="signin_password">
-                        Password
+                        {copy.password}
                       </label>
                       <button
                         type="button"
@@ -993,13 +1009,14 @@ export default function LoginPage() {
                         }}
                         disabled={busyAction === 'signin-otp-send'}
                       >
-                        {busyAction === 'signin-otp-send' ? 'Sending code...' : 'Login with verification code'}
+                        {busyAction === 'signin-otp-send' ? copy.sendingCode : copy.loginWithVerificationCode}
                       </button>
                     </div>
                     <input
                       id="signin_password"
-                      className={inputClass}
+                      className={`${inputClass} text-left`}
                       type="password"
+                      dir="ltr"
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
                       autoComplete="current-password"
@@ -1008,10 +1025,10 @@ export default function LoginPage() {
                   </div>
                   <div className="flex items-center justify-center gap-3 pt-2">
                     <button type="submit" className={primaryBtnClass} disabled={busyAction === 'signin-password-submit'}>
-                      {busyAction === 'signin-password-submit' ? 'Signing in...' : 'Sign in'}
+                      {busyAction === 'signin-password-submit' ? copy.signingIn : copy.signIn}
                     </button>
                     <button type="button" className={secondaryBtnClass} onClick={enterSigninPhoneStep}>
-                      Change phone
+                      {copy.changePhone}
                     </button>
                   </div>
                 </form>
@@ -1022,7 +1039,7 @@ export default function LoginPage() {
                   <div>{renderOtpInputs('signin', 'signin-otp')}</div>
                   <div className="flex items-center justify-center gap-3 pt-2">
                     <button type="submit" className={primaryBtnClass} disabled={busyAction === 'signin-otp-verify'}>
-                      {busyAction === 'signin-otp-verify' ? 'Verifying...' : 'Verify'}
+                      {busyAction === 'signin-otp-verify' ? copy.verifying : copy.verify}
                     </button>
                     <button
                       type="button"
@@ -1033,7 +1050,7 @@ export default function LoginPage() {
                         clearOtpDigits('signin');
                       }}
                     >
-                      Back
+                      {copy.back}
                     </button>
                   </div>
                   <div className="text-center">
@@ -1046,10 +1063,10 @@ export default function LoginPage() {
                       }}
                     >
                       {resendRemainingSec > 0
-                        ? `Send code again in ${formatCountdown(resendRemainingSec)}`
+                        ? copy.sendCodeAgainIn.replace('{time}', formatCountdown(resendRemainingSec))
                         : busyAction === 'signin-otp-send'
-                          ? 'Sending...'
-                          : 'Send code again'}
+                          ? copy.sendingCode
+                          : copy.sendCodeAgain}
                     </button>
                   </div>
                 </form>
@@ -1057,11 +1074,11 @@ export default function LoginPage() {
 
               {mode === 'signin' && signinStep === 'twofactor' ? (
                 <form onSubmit={handleSigninTwoFactorVerify} className="mx-auto w-full max-w-[360px] space-y-4">
-                  <p className="text-center text-sm text-[#5F6368]">Enter your authenticator verification code</p>
+                  <p className="text-center text-sm text-[#5F6368]">{copy.authenticatorPrompt}</p>
                   <div>{renderOtpInputs('signin', 'signin-twofactor')}</div>
                   <div className="flex items-center justify-center gap-3 pt-2">
                     <button type="submit" className={primaryBtnClass} disabled={busyAction === 'signin-2fa-verify'}>
-                      {busyAction === 'signin-2fa-verify' ? 'Verifying...' : 'Verify'}
+                      {busyAction === 'signin-2fa-verify' ? copy.verifying : copy.verify}
                     </button>
                     <button
                       type="button"
@@ -1072,7 +1089,7 @@ export default function LoginPage() {
                         clearOtpDigits('signin');
                       }}
                     >
-                      Back
+                      {copy.back}
                     </button>
                   </div>
                 </form>
@@ -1083,7 +1100,7 @@ export default function LoginPage() {
                   <fieldset disabled={!allowRegistration}>{renderPhoneInput('signup_phone')}</fieldset>
                   <div className="flex items-center justify-center gap-3 pt-2">
                     <button type="submit" className={primaryBtnClass} disabled={!allowRegistration || busyAction === 'signup-otp-send'}>
-                      {busyAction === 'signup-otp-send' ? 'Sending code...' : 'Send verification code'}
+                      {busyAction === 'signup-otp-send' ? copy.sendingCode : copy.sendVerificationCode}
                     </button>
                   </div>
                 </form>
@@ -1094,7 +1111,7 @@ export default function LoginPage() {
                   <div>{renderOtpInputs('signup', 'signup-otp')}</div>
                   <div className="flex items-center justify-center gap-3 pt-2">
                     <button type="submit" className={primaryBtnClass} disabled={busyAction === 'signup-otp-verify'}>
-                      {busyAction === 'signup-otp-verify' ? 'Verifying...' : 'Complete sign up'}
+                      {busyAction === 'signup-otp-verify' ? copy.verifying : copy.completeSignUp}
                     </button>
                     <button
                       type="button"
@@ -1104,7 +1121,7 @@ export default function LoginPage() {
                         setSignupStep('phone');
                       }}
                     >
-                      Back
+                      {copy.back}
                     </button>
                   </div>
                   <div className="text-center">
@@ -1117,10 +1134,10 @@ export default function LoginPage() {
                       }}
                     >
                       {resendRemainingSec > 0
-                        ? `Send SMS again in ${formatCountdown(resendRemainingSec)}`
+                        ? copy.sendSmsAgainIn.replace('{time}', formatCountdown(resendRemainingSec))
                         : busyAction === 'signup-otp-send'
-                          ? 'Sending...'
-                          : 'Send SMS again'}
+                          ? copy.sendingCode
+                          : copy.sendSmsAgain}
                     </button>
                   </div>
                 </form>

@@ -8,6 +8,9 @@ import {
   FiMoreHorizontal,
   FiUser,
 } from 'react-icons/fi';
+import { LanguageToggle } from '../ui/LanguageToggle';
+import { localeDir, useUiLocale } from '../../lib/ui/locale';
+import { getAuthMessages } from '../../lib/ui/i18n';
 
 type SessionPayload = {
   authenticated: boolean;
@@ -20,15 +23,14 @@ type AdminShellProps = {
 
 type NavItem = {
   key: 'dashboard' | 'tenants' | 'profile';
-  label: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
 };
 
 const navItems: NavItem[] = [
-  { key: 'dashboard', label: 'Dashboard', href: '/admin', icon: FiGrid },
-  { key: 'tenants', label: 'Tenants', href: '/admin/tenants', icon: FiLayers },
-  { key: 'profile', label: 'Profile', href: '/profile', icon: FiUser },
+  { key: 'dashboard', href: '/admin', icon: FiGrid },
+  { key: 'tenants', href: '/admin/tenants', icon: FiLayers },
+  { key: 'profile', href: '/profile', icon: FiUser },
 ];
 
 const mobileBeforeKeys: Array<NavItem['key']> = ['tenants'];
@@ -39,9 +41,11 @@ const desktopRailLeft = 'max(0.75rem, calc((100vw - 1400px) / 2 + 0.75rem))';
 
 export const AdminShell = ({ children }: AdminShellProps) => {
   const router = useRouter();
+  const { locale, isRtl, setLocale } = useUiLocale();
   const [session, setSession] = useState<SessionPayload | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
+  const copy = getAuthMessages(locale).shell;
 
   useEffect(() => {
     const loadSession = async () => {
@@ -125,16 +129,21 @@ export const AdminShell = ({ children }: AdminShellProps) => {
     () => mobileOverflowItems.some((item) => isActive(item.href)),
     [mobileOverflowItems, router.pathname],
   );
+  const toggleCornerClass = isRtl ? 'left-4' : 'right-4';
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-[#F6F8FC] pb-20 pt-6 text-[#202124] md:pb-8" dir="ltr">
+    <main className="min-h-screen overflow-x-hidden bg-[#F6F8FC] pb-20 pt-6 text-[#202124] md:pb-8" dir={localeDir(locale)}>
+      <div className={`fixed top-4 z-[60] ${toggleCornerClass}`}>
+        <LanguageToggle locale={locale} onChange={setLocale} />
+      </div>
+
       <div className="mx-auto flex min-h-[calc(100vh-8rem)] w-full max-w-[1400px] items-stretch gap-6 px-3 sm:px-4">
         <aside className="hidden w-[280px] shrink-0 md:block">
           <nav
             className={`${railCardClass} md:fixed md:top-6 md:w-[280px] md:max-h-[calc(100vh-3rem)] md:overflow-y-auto md:hide-scrollbar p-3`}
-            style={{ left: desktopRailLeft }}
+            style={isRtl ? { right: desktopRailLeft } : { left: desktopRailLeft }}
           >
-            <div className="grid h-24 place-items-center" style={{ marginBottom: '32px' }}>
+            <div className="grid h-24 place-items-center" style={{ marginBottom: '24px' }}>
               <img src="/images/lw_dark.png" alt="ADA" className="h-14 w-auto" />
             </div>
             <ul className="space-y-1">
@@ -146,14 +155,14 @@ export const AdminShell = ({ children }: AdminShellProps) => {
                     <button
                       type="button"
                       onClick={() => navigate(item.href)}
-                      className={`flex w-full items-center gap-3 rounded-full px-4 py-2.5 text-left text-sm font-normal transition-all duration-200 ${
+                      className={`flex w-full items-center gap-3 rounded-full px-4 py-2.5 text-sm font-normal transition-all duration-200 ${
                         active
                           ? 'bg-[#E8F0FE] text-[#1A73E8]'
                           : 'text-[#5F6368] hover:bg-[#F1F3F4] hover:text-[#202124]'
-                      }`}
+                      } ${isRtl ? 'text-right' : 'text-left'}`}
                     >
                       <Icon className="h-6 w-6" />
-                      <span>{item.label}</span>
+                      <span>{copy.nav[item.key]}</span>
                     </button>
                   </li>
                 );
@@ -164,10 +173,10 @@ export const AdminShell = ({ children }: AdminShellProps) => {
                   onClick={() => {
                     void logout();
                   }}
-                  className="flex w-full items-center gap-3 rounded-full px-4 py-2.5 text-left text-sm font-medium text-[#B3261E] transition-all duration-200 hover:bg-[#FDECEA]"
+                  className={`flex w-full items-center gap-3 rounded-full px-4 py-2.5 text-sm font-medium text-[#B3261E] transition-all duration-200 hover:bg-[#FDECEA] ${isRtl ? 'text-right' : 'text-left'}`}
                 >
                   <FiLogOut className="h-6 w-6" />
-                  <span>Logout</span>
+                  <span>{copy.logout}</span>
                 </button>
               </li>
             </ul>
@@ -179,7 +188,7 @@ export const AdminShell = ({ children }: AdminShellProps) => {
         </section>
       </div>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#E8EAED] bg-white px-2 py-2 md:hidden">
+      <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#E8EAED] bg-white px-2 py-2 md:hidden" dir={localeDir(locale)}>
         <div className="mx-auto grid max-w-[640px] grid-cols-4 gap-1">
           {mobileBeforeItems.map((item) => {
             const Icon = item.icon;
@@ -194,7 +203,7 @@ export const AdminShell = ({ children }: AdminShellProps) => {
                 }`}
               >
                 <Icon className="mb-1 h-4 w-4" />
-                <span className="leading-tight">{item.label.split(' ').slice(0, 2).join(' ')}</span>
+                <span className="leading-tight">{copy.nav[item.key]}</span>
               </button>
             );
           })}
@@ -230,7 +239,7 @@ export const AdminShell = ({ children }: AdminShellProps) => {
                 }`}
               >
                 <Icon className="mb-1 h-4 w-4" />
-                <span className="leading-tight">{item.label.split(' ').slice(0, 2).join(' ')}</span>
+                <span className="leading-tight">{copy.nav[item.key]}</span>
               </button>
             );
           })}
@@ -244,11 +253,11 @@ export const AdminShell = ({ children }: AdminShellProps) => {
               }`}
             >
               <FiMoreHorizontal className="mb-1 h-4 w-4" />
-              <span className="leading-tight">More</span>
+              <span className="leading-tight">{copy.more}</span>
             </button>
 
             {mobileMenuOpen ? (
-              <div className="absolute bottom-14 right-0 z-50 w-52 overflow-hidden rounded-2xl border border-[#E8EAED] bg-white shadow-[0_8px_24px_rgba(60,64,67,.2)]">
+              <div className={`absolute bottom-14 z-50 w-52 overflow-hidden rounded-2xl border border-[#E8EAED] bg-white shadow-[0_8px_24px_rgba(60,64,67,.2)] ${isRtl ? 'left-0' : 'right-0'}`}>
                 <div className="p-1">
                   {mobileOverflowItems.map((item) => {
                     const Icon = item.icon;
@@ -258,12 +267,12 @@ export const AdminShell = ({ children }: AdminShellProps) => {
                         key={item.key}
                         type="button"
                         onClick={() => navigate(item.href)}
-                        className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition-all duration-200 ${
+                        className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm transition-all duration-200 ${
                           active ? 'bg-[#E8F0FE] text-[#1A73E8]' : 'text-[#5F6368] hover:bg-[#F1F3F4]'
-                        }`}
+                        } ${isRtl ? 'text-right' : 'text-left'}`}
                       >
                         <Icon className="h-4 w-4" />
-                        <span>{item.label}</span>
+                        <span>{copy.nav[item.key]}</span>
                       </button>
                     );
                   })}
@@ -274,10 +283,10 @@ export const AdminShell = ({ children }: AdminShellProps) => {
                       setMobileMenuOpen(false);
                       void logout();
                     }}
-                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-[#B3261E] transition-all duration-200 hover:bg-[#FDECEA]"
+                    className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-[#B3261E] transition-all duration-200 hover:bg-[#FDECEA] ${isRtl ? 'text-right' : 'text-left'}`}
                   >
                     <FiLogOut className="h-4 w-4" />
-                    <span>Logout</span>
+                    <span>{copy.logout}</span>
                   </button>
                 </div>
               </div>

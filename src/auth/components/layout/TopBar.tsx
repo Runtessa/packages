@@ -3,6 +3,8 @@ import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { FiLogOut, FiMenu, FiUser } from 'react-icons/fi';
 import { Button } from '../ui/Button';
+import { localeDir, useUiLocale } from '../../lib/ui/locale';
+import { getAuthMessages } from '../../lib/ui/i18n';
 
 type TopBarProps = {
   onMenuToggle?: () => void;
@@ -21,6 +23,8 @@ type SessionPayload = {
 
 export const TopBar = ({ onMenuToggle }: TopBarProps) => {
   const router = useRouter();
+  const { locale } = useUiLocale();
+  const copy = getAuthMessages(locale).topBar;
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [session, setSession] = useState<SessionPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -62,7 +66,7 @@ export const TopBar = ({ onMenuToggle }: TopBarProps) => {
   return (
     <header
       className="sticky top-0 z-30 flex h-16 items-center border-b border-borderSubtle bg-primaryDark text-textPrimary backdrop-blur px-4 py-4"
-      dir="ltr"
+      dir={localeDir(locale)}
     >
       <div className="flex h-full w-full flex-row items-center gap-4">
         <div className="flex flex-row items-center gap-3">
@@ -71,13 +75,13 @@ export const TopBar = ({ onMenuToggle }: TopBarProps) => {
             variant="secondary"
             size="md"
             className="h-11 w-11 !p-0 lg:hidden"
-            aria-label="Toggle navigation"
+            aria-label={copy.toggleNavigation}
           >
             <FiMenu className="h-5 w-5" />
           </Button>
           <div className="px-4 py-2 text-left">
-            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-textMuted">ADA Idp</div>
-            <div className="text-sm font-semibold text-textPrimary">Control Panel</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-textMuted">{copy.productName}</div>
+            <div className="text-sm font-semibold text-textPrimary">{copy.panelName}</div>
           </div>
         </div>
 
@@ -87,7 +91,7 @@ export const TopBar = ({ onMenuToggle }: TopBarProps) => {
               <button
                 onClick={() => setIsUserMenuOpen((prev) => !prev)}
                 className="flex h-10 w-10 items-center justify-center rounded-full border border-borderSubtle bg-bgApp text-sm font-semibold text-textPrimary hover:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
-                aria-label="User menu"
+                aria-label={copy.userMenu}
               >
                 {userInitial ? <span className="text-base">{userInitial}</span> : <FiUser className="h-5 w-5" />}
               </button>
@@ -101,19 +105,19 @@ export const TopBar = ({ onMenuToggle }: TopBarProps) => {
                         {userInitial || <FiUser className="h-7 w-7" />}
                       </div>
                       <div className="text-center">
-                        <p className="text-sm font-semibold text-textPrimary">{email || 'Unknown user'}</p>
+                        <p className="text-sm font-semibold text-textPrimary">{email || copy.unknownUser}</p>
                         <p className="text-xs uppercase text-textMuted">
-                          {session.user?.isAuthAdmin ? 'Auth Admin' : 'User'}
+                          {session.user?.isAuthAdmin ? copy.authAdmin : copy.regularUser}
                         </p>
-                        <p className="text-xs text-textMuted">No team scope</p>
+                        <p className="text-xs text-textMuted">{copy.noTeamScope}</p>
                       </div>
                     </div>
                     <div className="border-t border-borderSubtle px-3 py-3">
                       <label className="mb-1 block text-xs uppercase tracking-[0.08em] text-textMuted">
-                        Team Scope
+                        {copy.teamScope}
                       </label>
                       <p className="rounded-md border border-borderSubtle bg-bgApp px-2 py-2 text-xs text-textMuted">
-                        Not applicable in auth service.
+                        {copy.teamScopeNotApplicable}
                       </p>
                     </div>
                     <div className="border-t border-borderSubtle px-2 py-2">
@@ -123,7 +127,7 @@ export const TopBar = ({ onMenuToggle }: TopBarProps) => {
                         onClick={() => setIsUserMenuOpen(false)}
                       >
                         <FiUser className="h-4 w-4" />
-                        <span>Manage Account</span>
+                        <span>{copy.manageAccount}</span>
                       </Link>
                       <button
                         onClick={() => {
@@ -133,7 +137,7 @@ export const TopBar = ({ onMenuToggle }: TopBarProps) => {
                         className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-textPrimary hover:bg-bgApp"
                       >
                         <FiLogOut className="h-4 w-4" />
-                        <span>Sign out</span>
+                        <span>{copy.signOut}</span>
                       </button>
                     </div>
                   </div>
@@ -142,7 +146,7 @@ export const TopBar = ({ onMenuToggle }: TopBarProps) => {
             </div>
           ) : (
             <Button onClick={() => router.push('/login')} variant="ghost" size="sm" className="!px-2 !py-1 text-xs">
-              Login
+              {copy.login}
             </Button>
           )}
         </div>
