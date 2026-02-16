@@ -439,13 +439,28 @@ const boot = async (): Promise<void> => {
         return;
       }
 
+      const firstName = optionalString(req.body.firstName ?? req.body.first_name, 120);
+      const lastName = optionalString(req.body.lastName ?? req.body.last_name, 120);
+      const nationalId = optionalString(req.body.nationalId ?? req.body.national_id, 96);
+      const phoneNumber = optionalString(req.body.phoneNumber ?? req.body.phone_number, 32);
+
+      if (!firstName || !lastName || !nationalId) {
+        res.status(400).json({ error: 'firstName, lastName, and nationalId are required' });
+        return;
+      }
+
+      if (!phoneNumber) {
+        res.status(400).json({ error: 'phoneNumber is required' });
+        return;
+      }
+
       await updateProfileDetails(
         userRandId,
         {
-          firstName: optionalString(req.body.firstName ?? req.body.first_name, 120) || undefined,
-          lastName: optionalString(req.body.lastName ?? req.body.last_name, 120) || undefined,
-          nationalId: optionalString(req.body.nationalId ?? req.body.national_id, 96) || undefined,
-          phoneNumber: optionalString(req.body.phoneNumber ?? req.body.phone_number, 32) || undefined,
+          firstName,
+          lastName,
+          nationalId,
+          phoneNumber,
           avatarUrl: req.body.avatarUrl ?? req.body.avatar_url ?? undefined,
           birthday: req.body.birthday ?? req.body.birth_day ?? undefined,
           gender: req.body.gender ?? undefined,

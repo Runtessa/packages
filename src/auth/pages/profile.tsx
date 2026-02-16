@@ -2,7 +2,9 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  FiCalendar,
   FiCamera,
+  FiChevronLeft,
   FiChevronRight,
   FiDatabase,
   FiHome,
@@ -111,6 +113,80 @@ const formatDateTime = (value: string | null | undefined): string => {
   return date.toLocaleString();
 };
 
+const BIRTHDAY_INPUT_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const CALENDAR_WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+const monthLabelFormatter = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' });
+const calendarMonthOptions = Array.from({ length: 12 }, (_, month) => ({
+  value: month,
+  label: new Intl.DateTimeFormat('en-US', { month: 'long' }).format(new Date(2020, month, 1)),
+}));
+
+const parseDateOnly = (value: string): Date | null => {
+  const match = BIRTHDAY_INPUT_PATTERN.exec(value || '');
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const candidate = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(candidate.valueOf()) ||
+    candidate.getFullYear() !== year ||
+    candidate.getMonth() !== month - 1 ||
+    candidate.getDate() !== day
+  ) {
+    return null;
+  }
+  return candidate;
+};
+
+const toDateOnly = (value: Date): string => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const toUsDateOnly = (value: Date): string => {
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  const year = String(value.getFullYear());
+  return `${month}/${day}/${year}`;
+};
+
+const monthStart = (value: Date): Date => new Date(value.getFullYear(), value.getMonth(), 1);
+
+const buildCalendarGrid = (month: Date): Array<Date | null> => {
+  const start = monthStart(month);
+  const offset = start.getDay();
+  const daysInMonth = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate();
+  const cells: Array<Date | null> = [];
+
+  for (let index = 0; index < offset; index += 1) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    cells.push(new Date(start.getFullYear(), start.getMonth(), day));
+  }
+  while (cells.length % 7 !== 0) cells.push(null);
+  return cells;
+};
+
+const isSameDay = (left: Date | null, right: Date | null): boolean => {
+  if (!left || !right) return false;
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+};
+
+const genderOptions = [
+  { value: '', label: 'Select gender' },
+  { value: 'female', label: 'Female' },
+  { value: 'male', label: 'Male' },
+  { value: 'non_binary', label: 'Non-binary' },
+  { value: 'prefer_not_to_say', label: 'Prefer not to say' },
+];
+
 const initialsFrom = (firstName: string, lastName: string): string => {
   const first = String(firstName || '').trim().charAt(0);
   const last = String(lastName || '').trim().charAt(0);
@@ -190,8 +266,11 @@ export default function ProfilePage() {
   const [twoFaQrDataUrl, setTwoFaQrDataUrl] = useState('');
   const [twoFaQrLoading, setTwoFaQrLoading] = useState(false);
   const [twoFaQrError, setTwoFaQrError] = useState('');
+  const [birthdayPickerOpen, setBirthdayPickerOpen] = useState(false);
+  const [birthdayMonth, setBirthdayMonth] = useState<Date>(() => monthStart(new Date()));
   const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
+  const birthdayPickerRef = useRef<HTMLDivElement | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const csrfToken = session?.csrfToken || '';
@@ -321,6 +400,30 @@ export default function ProfilePage() {
     };
   }, [mobileMenuOpen]);
 
+  useEffect(() => {
+    if (!birthdayPickerOpen) return;
+
+    const handleOutsideClick = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (birthdayPickerRef.current && target && !birthdayPickerRef.current.contains(target)) {
+        setBirthdayPickerOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setBirthdayPickerOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [birthdayPickerOpen]);
+
   const avatarInitials = useMemo(() => {
     if (!profile) return 'U';
     return initialsFrom(profile.user.firstName, profile.user.lastName);
@@ -352,6 +455,22 @@ export default function ProfilePage() {
   );
 
   const profileAvatar = detailsForm.avatarUrl || profile?.user.avatarUrl || '';
+  const selectedBirthday = useMemo(() => parseDateOnly(detailsForm.birthday), [detailsForm.birthday]);
+  const birthdayCells = useMemo(() => buildCalendarGrid(birthdayMonth), [birthdayMonth]);
+  const today = useMemo(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }, []);
+  const birthdayYearOptions = useMemo(() => {
+    const currentYear = today.getFullYear();
+    const startYear = 1900;
+    const years: number[] = [];
+    for (let year = currentYear; year >= startYear; year -= 1) {
+      years.push(year);
+    }
+    return years;
+  }, [today]);
+  const birthdayDisplay = selectedBirthday ? toUsDateOnly(selectedBirthday) : 'MM/DD/YYYY';
 
   const handleSectionNav = (key: RailKey, sectionId: string) => {
     setActiveRail(key);
@@ -411,6 +530,30 @@ export default function ProfilePage() {
     }
   };
 
+  const openBirthdayPicker = () => {
+    setBirthdayMonth(monthStart(selectedBirthday || new Date()));
+    setBirthdayPickerOpen(true);
+  };
+
+  const changeBirthdayMonth = (delta: number) => {
+    setBirthdayMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
+  };
+
+  const setBirthdayMonthValue = (month: number) => {
+    setBirthdayMonth((prev) => new Date(prev.getFullYear(), month, 1));
+  };
+
+  const setBirthdayYearValue = (year: number) => {
+    setBirthdayMonth((prev) => new Date(year, prev.getMonth(), 1));
+  };
+
+  const selectBirthday = (value: Date) => {
+    const normalized = new Date(value.getFullYear(), value.getMonth(), value.getDate());
+    if (normalized.getTime() > today.getTime()) return;
+    setDetailsForm((prev) => ({ ...prev, birthday: toDateOnly(normalized) }));
+    setBirthdayPickerOpen(false);
+  };
+
   const logout = async () => {
     if (!csrfToken) return;
     setMobileMenuOpen(false);
@@ -428,6 +571,21 @@ export default function ProfilePage() {
     event.preventDefault();
     if (!csrfToken) return;
 
+    const firstName = detailsForm.firstName.trim();
+    const lastName = detailsForm.lastName.trim();
+    const nationalId = detailsForm.nationalId.trim();
+    const phoneNumber = detailsForm.phoneNumber.trim();
+
+    if (!firstName || !lastName || !nationalId) {
+      pushToast('error', 'First name, last name, and national ID are required to save profile details.');
+      return;
+    }
+
+    if (!phoneNumber) {
+      pushToast('error', 'Phone number is required.');
+      return;
+    }
+
     setDetailsSaving(true);
     try {
       const res = await fetch('/api/profile/details', {
@@ -438,10 +596,10 @@ export default function ProfilePage() {
           'X-CSRF-Token': csrfToken,
         },
         body: JSON.stringify({
-          firstName: detailsForm.firstName,
-          lastName: detailsForm.lastName,
-          nationalId: detailsForm.nationalId,
-          phoneNumber: detailsForm.phoneNumber,
+          firstName,
+          lastName,
+          nationalId,
+          phoneNumber,
           avatarUrl: detailsForm.avatarUrl,
           birthday: detailsForm.birthday,
           gender: detailsForm.gender,
@@ -834,8 +992,8 @@ export default function ProfilePage() {
                               className={inputClass}
                               value={detailsForm.firstName}
                               onChange={(event) => setDetailsForm((prev) => ({ ...prev, firstName: event.target.value }))}
+                              placeholder="Enter first name"
                               maxLength={120}
-                              required
                             />
                           </div>
                           <div>
@@ -844,8 +1002,8 @@ export default function ProfilePage() {
                               className={inputClass}
                               value={detailsForm.lastName}
                               onChange={(event) => setDetailsForm((prev) => ({ ...prev, lastName: event.target.value }))}
+                              placeholder="Enter last name"
                               maxLength={120}
-                              required
                             />
                           </div>
                         </div>
@@ -853,22 +1011,143 @@ export default function ProfilePage() {
                         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                           <div>
                             <label className="mb-1 block text-sm font-normal text-[#202124]">Birthday</label>
-                            <input
-                              type="date"
-                              className={inputClass}
-                              value={detailsForm.birthday}
-                              onChange={(event) => setDetailsForm((prev) => ({ ...prev, birthday: event.target.value }))}
-                            />
+                            <div ref={birthdayPickerRef} className="relative">
+                              <button
+                                type="button"
+                                className={`${inputClass} flex items-center justify-between text-left`}
+                                onClick={() => (birthdayPickerOpen ? setBirthdayPickerOpen(false) : openBirthdayPicker())}
+                              >
+                                <span className={detailsForm.birthday ? 'text-[#202124]' : 'text-[#5F6368]'}>
+                                  {birthdayDisplay}
+                                </span>
+                                <FiCalendar className="h-4 w-4 text-[#5F6368]" />
+                              </button>
+                              {birthdayPickerOpen ? (
+                                <div className="absolute left-0 z-30 mt-2 w-[clamp(16rem,100%,19rem)] max-w-[calc(100vw-2rem)] rounded-2xl border border-[#DADCE0] bg-white p-4 shadow-[0_16px_28px_-18px_rgba(32,33,36,0.45)]">
+                                  <div className="mb-3 space-y-2">
+                                    <div className="grid grid-cols-[1fr,110px] gap-2">
+                                      <div className="relative">
+                                        <select
+                                          className="w-full appearance-none rounded-xl border border-[#DADCE0] bg-white px-3 py-2 pr-8 text-sm text-[#202124] outline-none transition-all focus:border-[#1A73E8] focus:ring-2 focus:ring-[#1A73E8]/20"
+                                          value={birthdayMonth.getMonth()}
+                                          onChange={(event) => setBirthdayMonthValue(Number(event.target.value))}
+                                        >
+                                          {calendarMonthOptions.map((option) => (
+                                            <option key={option.value} value={option.value}>
+                                              {option.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <FiChevronRight className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 rotate-90 text-[#5F6368]" />
+                                      </div>
+                                      <div className="relative">
+                                        <select
+                                          className="w-full appearance-none rounded-xl border border-[#DADCE0] bg-white px-3 py-2 pr-8 text-sm text-[#202124] outline-none transition-all focus:border-[#1A73E8] focus:ring-2 focus:ring-[#1A73E8]/20"
+                                          value={birthdayMonth.getFullYear()}
+                                          onChange={(event) => setBirthdayYearValue(Number(event.target.value))}
+                                        >
+                                          {birthdayYearOptions.map((year) => (
+                                            <option key={year} value={year}>
+                                              {year}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <FiChevronRight className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 rotate-90 text-[#5F6368]" />
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                      <button
+                                        type="button"
+                                        className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#5F6368] transition-colors hover:bg-[#F1F3F4] hover:text-[#202124]"
+                                        onClick={() => changeBirthdayMonth(-1)}
+                                        aria-label="Previous month"
+                                      >
+                                        <FiChevronLeft className="h-4 w-4" />
+                                      </button>
+                                      <p className="text-xs font-medium text-[#5F6368]">
+                                        {monthLabelFormatter.format(birthdayMonth)}
+                                      </p>
+                                      <button
+                                        type="button"
+                                        className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#5F6368] transition-colors hover:bg-[#F1F3F4] hover:text-[#202124]"
+                                        onClick={() => changeBirthdayMonth(1)}
+                                        aria-label="Next month"
+                                      >
+                                        <FiChevronRight className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-7 gap-1 pb-1">
+                                    {CALENDAR_WEEKDAYS.map((weekday) => (
+                                      <span key={weekday} className="text-center text-[11px] uppercase tracking-[0.08em] text-[#5F6368]">
+                                        {weekday}
+                                      </span>
+                                    ))}
+                                  </div>
+                                  <div className="grid grid-cols-7 gap-1">
+                                    {birthdayCells.map((day, index) => {
+                                      if (!day) {
+                                        return <span key={`empty-${index}`} className="h-9 w-9" />;
+                                      }
+
+                                      const selected = isSameDay(selectedBirthday, day);
+                                      const inFuture = day.getTime() > today.getTime();
+                                      return (
+                                        <button
+                                          key={toDateOnly(day)}
+                                          type="button"
+                                          className={`h-9 w-9 rounded-xl text-sm transition-all ${
+                                            selected
+                                              ? 'bg-[#1A73E8] font-medium text-white'
+                                              : 'text-[#202124] hover:bg-[#E8F0FE] hover:text-[#1A73E8]'
+                                          } ${inFuture ? 'cursor-not-allowed opacity-35 hover:bg-transparent hover:text-[#202124]' : ''}`}
+                                          onClick={() => selectBirthday(day)}
+                                          disabled={inFuture}
+                                        >
+                                          {day.getDate()}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  <div className="mt-3 flex justify-end gap-2">
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-medium text-[#5F6368] transition-colors hover:bg-[#F1F3F4]"
+                                      onClick={() => {
+                                        setDetailsForm((prev) => ({ ...prev, birthday: '' }));
+                                        setBirthdayPickerOpen(false);
+                                      }}
+                                    >
+                                      Clear
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center justify-center rounded-full bg-[#1A73E8] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#1765cc]"
+                                      onClick={() => setBirthdayPickerOpen(false)}
+                                    >
+                                      Done
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
                           <div>
                             <label className="mb-1 block text-sm font-normal text-[#202124]">Gender</label>
-                            <input
-                              className={inputClass}
-                              value={detailsForm.gender}
-                              onChange={(event) => setDetailsForm((prev) => ({ ...prev, gender: event.target.value }))}
-                              placeholder="e.g. Female"
-                              maxLength={40}
-                            />
+                            <div className="relative">
+                              <select
+                                className={`${inputClass} appearance-none pr-10`}
+                                value={detailsForm.gender}
+                                onChange={(event) => setDetailsForm((prev) => ({ ...prev, gender: event.target.value }))}
+                              >
+                                {genderOptions.map((option) => (
+                                  <option key={option.value || 'empty'} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <FiChevronRight className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 rotate-90 text-[#5F6368]" />
+                            </div>
                           </div>
                         </div>
 
@@ -879,8 +1158,8 @@ export default function ProfilePage() {
                               className={inputClass}
                               value={detailsForm.nationalId}
                               onChange={(event) => setDetailsForm((prev) => ({ ...prev, nationalId: event.target.value }))}
+                              placeholder="Enter national ID"
                               maxLength={96}
-                              required
                             />
                           </div>
                           <div>
@@ -889,8 +1168,8 @@ export default function ProfilePage() {
                               className={inputClass}
                               value={detailsForm.phoneNumber}
                               onChange={(event) => setDetailsForm((prev) => ({ ...prev, phoneNumber: event.target.value }))}
+                              placeholder="Enter phone number"
                               maxLength={32}
-                              required
                             />
                           </div>
                         </div>
