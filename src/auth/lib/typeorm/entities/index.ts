@@ -3,6 +3,7 @@ export { AuthSessionEntity } from './AuthSessionEntity';
 export { OAuthAccessTokenEntity } from './OAuthAccessTokenEntity';
 export { OAuthAuthorizationCodeEntity } from './OAuthAuthorizationCodeEntity';
 export { OAuthClientEntity } from './OAuthClientEntity';
+export { OtpChallengeEntity } from './OtpChallengeEntity';
 export { OrganizationEntity } from './OrganizationEntity';
 export { RoleEntity } from './RoleEntity';
 export { TenantWhitelistEntity } from './TenantWhitelistEntity';

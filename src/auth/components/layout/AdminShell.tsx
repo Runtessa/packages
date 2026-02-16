@@ -95,7 +95,7 @@ export const AdminShell = ({ children }: AdminShellProps) => {
         });
       }
     } finally {
-      void router.push('/login?success=' + encodeURIComponent('Signed out successfully'));
+      void router.push('/login');
     }
   };
 

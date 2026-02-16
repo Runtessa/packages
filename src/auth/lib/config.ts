@@ -47,6 +47,11 @@ const defaultAllowedOrigins = [baseUrl];
 const configuredAllowedOrigins = splitCsv(process.env.AUTH_ALLOWED_ORIGINS);
 const allowedOrigins = configuredAllowedOrigins.length ? configuredAllowedOrigins : defaultAllowedOrigins;
 
+const otpSmsProviderRaw = (process.env.AUTH_OTP_SMS_PROVIDER || 'none').trim().toLowerCase();
+if (otpSmsProviderRaw !== 'none' && otpSmsProviderRaw !== 'ghasedak') {
+  throw new Error('AUTH_OTP_SMS_PROVIDER must be one of: none, ghasedak');
+}
+
 type SameSite = 'lax' | 'none' | 'strict';
 
 const sameSiteRaw = (process.env.AUTH_COOKIE_SAME_SITE || 'none').trim().toLowerCase();
@@ -84,6 +89,21 @@ export interface AuthConfig {
   oauth: {
     codeTtlSec: number;
     accessTokenTtlSec: number;
+  };
+  otp: {
+    ttlSec: number;
+    resendIntervalSec: number;
+    smsProvider: 'none' | 'ghasedak';
+    ghasedakApiKey?: string;
+    ghasedakTemplateName: string;
+    ghasedakIsVoice: boolean;
+    ghasedakUdh: boolean;
+  };
+  totp: {
+    issuer: string;
+    digits: number;
+    periodSec: number;
+    window: number;
   };
   db: {
     connectionString: string;
@@ -132,6 +152,21 @@ export const config: AuthConfig = {
   oauth: {
     codeTtlSec: asInt(process.env.AUTH_CODE_TTL_SEC, 300, 60, 3600),
     accessTokenTtlSec: asInt(process.env.AUTH_ACCESS_TOKEN_TTL_SEC, 3600, 60, 24 * 3600),
+  },
+  otp: {
+    ttlSec: asInt(process.env.AUTH_OTP_TTL_SEC, 300, 60, 1800),
+    resendIntervalSec: asInt(process.env.AUTH_OTP_RESEND_INTERVAL_SEC, 120, 30, 900),
+    smsProvider: otpSmsProviderRaw as 'none' | 'ghasedak',
+    ghasedakApiKey: (process.env.AUTH_OTP_SMS_GHASEDAK_API_KEY || '').trim() || undefined,
+    ghasedakTemplateName: (process.env.AUTH_OTP_SMS_GHASEDAK_TEMPLATE || '').trim() || 'adaidp',
+    ghasedakIsVoice: asBool(process.env.AUTH_OTP_SMS_GHASEDAK_IS_VOICE, false),
+    ghasedakUdh: asBool(process.env.AUTH_OTP_SMS_GHASEDAK_UDH, true),
+  },
+  totp: {
+    issuer: (process.env.AUTH_TOTP_ISSUER || '').trim() || 'ADA IDP',
+    digits: asInt(process.env.AUTH_TOTP_DIGITS, 6, 6, 8),
+    periodSec: asInt(process.env.AUTH_TOTP_PERIOD_SEC, 30, 15, 60),
+    window: asInt(process.env.AUTH_TOTP_WINDOW, 1, 0, 2),
   },
   db: {
     connectionString: (process.env.DATABASE_URL || '').trim(),

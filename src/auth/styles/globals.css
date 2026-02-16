@@ -26,6 +26,13 @@ body {
   @apply bg-bgApp text-textPrimary;
   min-height: 100vh;
   direction: ltr;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+html {
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 a {
@@ -100,6 +107,22 @@ button {
   .section-separator {
     @apply h-px w-full bg-[#E8EAED];
   }
+
+  .login-shell-enter {
+    animation: login-shell-enter 680ms cubic-bezier(0.22, 0.8, 0.25, 1) both;
+  }
+
+  .login-tabs-enter {
+    animation: login-tabs-enter 560ms cubic-bezier(0.22, 0.8, 0.25, 1) 120ms both;
+  }
+
+  .login-form-enter {
+    animation: login-form-enter 720ms cubic-bezier(0.22, 0.8, 0.25, 1) 170ms both;
+  }
+
+  .login-bg-logo {
+    animation: login-bg-float 8.5s ease-in-out infinite;
+  }
 }
 
 @layer utilities {
@@ -111,4 +134,52 @@ button {
   .hide-scrollbar::-webkit-scrollbar {
     display: none;
   }
+}
+
+@keyframes login-shell-enter {
+  from {
+    transform: translateY(24px) scale(0.985);
+  }
+  to {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes login-tabs-enter {
+  from {
+    transform: translateY(-10px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes login-form-enter {
+  from {
+    transform: translateY(18px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes login-bg-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.auth-login-page input:-webkit-autofill,
+.auth-login-page input:-webkit-autofill:hover,
+.auth-login-page input:-webkit-autofill:focus,
+.auth-login-page input:-webkit-autofill:active {
+  -webkit-text-fill-color: #202124;
+  caret-color: #202124;
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset;
+  box-shadow: 0 0 0 1000px #ffffff inset;
+  transition: background-color 9999s ease-out 0s;
 }

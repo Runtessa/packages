@@ -22,14 +22,25 @@ import {
   renewSession,
   revokeSession,
 } from './lib/sessions';
-import { parseBoolean, requestIp, requestUserAgent, safeReturnTo } from './lib/http';
-import { authenticateUser, registerUser } from './lib/services/auth';
+import { requestIp, requestUserAgent, safeReturnTo } from './lib/http';
+import {
+  assertPhoneRegistrationAllowed,
+  authenticateUser,
+  readActiveUserByPhone,
+  readActiveUserByRandId,
+  readUserLoginCapabilities,
+  readUserSecurityState,
+  registerUser,
+  registerUserByPhone,
+} from './lib/services/auth';
 import { bootstrapAuthDefaults } from './lib/services/bootstrap';
 import {
+  createTwoFactorSetup,
+  disableTwoFactor,
+  enableTwoFactorWithCode,
   getUserProfileSnapshot,
   updateProfileDetails,
   updateProfilePassword,
-  updateTwoFactorSettings,
 } from './lib/services/profile';
 import {
   assertScopeAllowed,
@@ -45,6 +56,8 @@ import {
   verifyClientSecret,
 } from './lib/oauth';
 import { logActivity } from './lib/activity';
+import { issueOtpChallenge, verifyOtpChallenge } from './lib/services/otp';
+import { normalizeTotpCode, verifyTotpCode } from './lib/services/totp';
 import { applyTenantSync } from './lib/services/tenant-sync';
 import { assertCode, normalizeText } from './lib/validation';
 import {
@@ -84,6 +97,102 @@ const optionalString = (value: unknown, max = 2048): string => {
   const raw = String(value || '').trim();
   if (!raw) return '';
   return raw.slice(0, max);
+};
+
+const appendAuthContext = (
+  baseUrl: string,
+  {
+    returnTo,
+    clientId,
+    tenantName,
+  }: {
+    returnTo: string;
+    clientId?: string;
+    tenantName?: string;
+  },
+): string => {
+  let location = `${baseUrl}?returnTo=${encodeURIComponent(returnTo)}`;
+  if (clientId) location = appendQuery(location, 'client_id', clientId);
+  if (tenantName) location = appendQuery(location, 'tenant_name', tenantName);
+  return location;
+};
+
+type LoginUiMode = 'signin' | 'signup';
+type LoginUiSignupStep = 'start' | 'verify';
+
+interface LoginUiState {
+  mode?: LoginUiMode;
+  signinMethod?: 'password' | 'otp';
+  signinStep?: 'method' | 'phone' | 'password' | 'otp' | 'twofactor';
+  signupStep?: LoginUiSignupStep;
+  require2fa?: boolean;
+  otpWaitUntilMs?: number;
+  phoneNumber?: string;
+  success?: string;
+  error?: string;
+}
+
+interface LoginTwoFactorPendingState {
+  userRandId: string;
+  returnTo: string;
+  clientId?: string;
+  tenantName?: string;
+  expiresAt: number;
+}
+
+const LOGIN_UI_STATE_COOKIE = 'idp_login_ui_state';
+const LOGIN_2FA_PENDING_COOKIE = 'idp_login_2fa_pending';
+const LOGIN_2FA_PENDING_TTL_MS = 5 * 60 * 1000;
+
+const loginUiCookieOptions = {
+  path: '/',
+  httpOnly: true,
+  signed: true,
+  sameSite: config.cookie.sameSite,
+  secure: config.cookie.secure,
+  domain: config.cookie.domain,
+};
+
+const setLoginUiState = (res: Response, state: LoginUiState): void => {
+  const payload = JSON.stringify(state);
+  res.cookie(LOGIN_UI_STATE_COOKIE, payload, { ...loginUiCookieOptions, maxAge: 5 * 60 * 1000 });
+};
+
+const clearLoginUiState = (res: Response): void => {
+  res.clearCookie(LOGIN_UI_STATE_COOKIE, loginUiCookieOptions);
+};
+
+const setLoginTwoFactorPending = (
+  res: Response,
+  state: Omit<LoginTwoFactorPendingState, 'expiresAt'>,
+): void => {
+  const expiresAt = Date.now() + LOGIN_2FA_PENDING_TTL_MS;
+  const payload = JSON.stringify({
+    ...state,
+    expiresAt,
+  });
+  res.cookie(LOGIN_2FA_PENDING_COOKIE, payload, {
+    ...loginUiCookieOptions,
+    maxAge: LOGIN_2FA_PENDING_TTL_MS,
+  });
+};
+
+const clearLoginTwoFactorPending = (res: Response): void => {
+  res.clearCookie(LOGIN_2FA_PENDING_COOKIE, loginUiCookieOptions);
+};
+
+const readLoginTwoFactorPending = (req: Request): LoginTwoFactorPendingState | null => {
+  const raw = req.signedCookies?.[LOGIN_2FA_PENDING_COOKIE];
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw) as LoginTwoFactorPendingState;
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (!parsed.userRandId || !parsed.returnTo || !Number.isFinite(parsed.expiresAt)) return null;
+    if (Date.now() >= parsed.expiresAt) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
 };
 
 const wantsJson = (req: Request): boolean => {
@@ -138,6 +247,9 @@ const resolveTenantHostForCookie = (req: Request, returnTo?: string): string | n
   const fromReferer = hostFromOriginHeader(req.headers.referer);
   return fromReferer || null;
 };
+
+const requiresAuthenticatorTwoFactor = (security: ReturnType<typeof readUserSecurityState>): boolean =>
+  Boolean(security.twoFactorEnabled && security.twoFactorMethod === 'app' && security.twoFactorSecret);
 
 const isAuthAdmin = (req: Request): boolean => {
   const meta = (req.sessionContext?.user?.meta || {}) as Record<string, unknown>;
@@ -237,6 +349,53 @@ const boot = async (): Promise<void> => {
     }
   });
 
+  app.get('/api/public/login-options', async (req, res, next) => {
+    try {
+      const phoneNumber = optionalString(req.query.phone_number, 32);
+      if (!phoneNumber) {
+        res.status(400).json({ error: 'phone_number is required' });
+        return;
+      }
+
+      const user = await readActiveUserByPhone(phoneNumber);
+      if (!user) {
+        res.status(404).json({ exists: false });
+        return;
+      }
+
+      const capabilities = readUserLoginCapabilities(user);
+      res.status(200).json({
+        exists: true,
+        phoneNumber: user.phoneNumber,
+        methods: {
+          password: capabilities.passwordEnabled,
+          otp: true,
+        },
+        defaultMethod: capabilities.passwordEnabled ? 'password' : 'otp',
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/public/login-ui-state', (req, res) => {
+    const raw = req.signedCookies?.[LOGIN_UI_STATE_COOKIE];
+    clearLoginUiState(res);
+    res.setHeader('Cache-Control', 'no-store');
+
+    if (typeof raw !== 'string' || !raw.trim()) {
+      res.status(200).json({ state: {} });
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as LoginUiState;
+      res.status(200).json({ state: parsed || {} });
+    } catch {
+      res.status(200).json({ state: {} });
+    }
+  });
+
   app.get('/api/session', async (req, res) => {
     if (!req.sessionContext) {
       res.status(200).json({ authenticated: false });
@@ -322,8 +481,8 @@ const boot = async (): Promise<void> => {
       const newPassword = String(req.body.newPassword ?? req.body.new_password ?? '');
       const confirmPassword = String(req.body.confirmPassword ?? req.body.confirm_password ?? '');
 
-      if (!currentPassword || !newPassword || !confirmPassword) {
-        res.status(400).json({ error: 'All password fields are required' });
+      if (!newPassword || !confirmPassword) {
+        res.status(400).json({ error: 'New password and confirmation are required' });
         return;
       }
 
@@ -349,7 +508,7 @@ const boot = async (): Promise<void> => {
     }
   });
 
-  app.post('/api/profile/2fa', requireTrustedOrigin, requireSession, requireCsrf, async (req, res, next) => {
+  app.post('/api/profile/2fa/setup', requireTrustedOrigin, requireSession, requireCsrf, async (req, res, next) => {
     try {
       const userRandId = req.sessionContext?.user.randId;
       if (!userRandId) {
@@ -357,20 +516,39 @@ const boot = async (): Promise<void> => {
         return;
       }
 
-      await updateTwoFactorSettings(
-        userRandId,
-        {
-          enabled: parseBoolean(req.body.enabled ?? req.body.twoFactorEnabled, false),
-          method: optionalString(req.body.method ?? req.body.twoFactorMethod, 16) || undefined,
-          phoneNumber:
-            optionalString(req.body.phoneNumber ?? req.body.phone_number ?? req.body.twoFactorPhone, 32) ||
-            undefined,
-        },
-        userRandId,
-      );
+      const setup = await createTwoFactorSetup(userRandId, userRandId);
 
       await logActivity({
-        eventType: 'auth.profile.2fa.updated',
+        eventType: 'auth.profile.2fa.setup.created',
+        actorUserRandId: userRandId,
+        targetType: 'user',
+        targetRandId: userRandId,
+        ipAddress: requestIp(req),
+        userAgent: requestUserAgent(req),
+      });
+
+      res.status(200).json({ ok: true, setup });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/profile/2fa/enable', requireTrustedOrigin, requireSession, requireCsrf, async (req, res, next) => {
+    try {
+      const userRandId = req.sessionContext?.user.randId;
+      if (!userRandId) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+      }
+
+      const verificationCode = optionalString(
+        req.body.verificationCode ?? req.body.verification_code ?? req.body.code,
+        16,
+      );
+      await enableTwoFactorWithCode(userRandId, verificationCode, userRandId);
+
+      await logActivity({
+        eventType: 'auth.profile.2fa.enabled',
         actorUserRandId: userRandId,
         targetType: 'user',
         targetRandId: userRandId,
@@ -385,36 +563,173 @@ const boot = async (): Promise<void> => {
     }
   });
 
-  app.post('/auth/login', loginLimiter, requireTrustedOrigin, async (req, res) => {
+  app.post('/api/profile/2fa/disable', requireTrustedOrigin, requireSession, requireCsrf, async (req, res, next) => {
+    try {
+      const userRandId = req.sessionContext?.user.randId;
+      if (!userRandId) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+      }
+
+      await disableTwoFactor(userRandId, userRandId);
+
+      await logActivity({
+        eventType: 'auth.profile.2fa.disabled',
+        actorUserRandId: userRandId,
+        targetType: 'user',
+        targetRandId: userRandId,
+        ipAddress: requestIp(req),
+        userAgent: requestUserAgent(req),
+      });
+
+      const profile = await getUserProfileSnapshot(userRandId);
+      res.status(200).json({ ok: true, security: profile.security });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/auth/login/otp/start', loginLimiter, requireTrustedOrigin, async (req, res) => {
     const returnTo = safeReturnTo(req.body.returnTo || req.query.returnTo || '/profile', '/profile');
     const clientId = optionalString(req.body.client_id || req.query.client_id, 120);
     const tenantName = optionalString(req.body.tenant_name || req.query.tenant_name, 255);
+    const phoneNumber = optionalString(req.body.phone_number || req.body.phoneNumber || req.query.phone_number, 32);
+    const requestedSigninStep = optionalString(req.body.signin_step || req.query.signin_step, 24).toLowerCase();
 
     try {
-      const user = await authenticateUser({
-        email: String(req.body.email || ''),
-        password: String(req.body.password || ''),
-      });
-
+      const user = await readActiveUserByPhone(phoneNumber);
       if (!user) {
-        await logActivity({
-          eventType: 'auth.login.failed',
-          ipAddress: requestIp(req),
-          userAgent: requestUserAgent(req),
-          payload: { email: String(req.body.email || '').toLowerCase() },
-        });
-
         if (wantsJson(req)) {
-          res.status(401).json({ error: 'Invalid credentials' });
+          res.status(404).json({ error: 'Account not found' });
           return;
         }
 
-        let location = `/login?error=${encodeErrorParam('Invalid credentials')}&returnTo=${encodeURIComponent(
+        setLoginUiState(res, {
+          mode: 'signin',
+          signinMethod: 'otp',
+          signinStep: requestedSigninStep === 'otp' ? 'otp' : 'phone',
+          phoneNumber,
+          error: 'Account not found',
+        });
+        res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName }));
+        return;
+      }
+
+      const challenge = await issueOtpChallenge({
+        purpose: 'login_otp',
+        destinationPhone: user.phoneNumber,
+        payload: { userRandId: user.randId, phoneNumber: user.phoneNumber },
+      });
+
+      await logActivity({
+        eventType: 'auth.login.otp.challenge.sent',
+        actorUserRandId: user.randId,
+        targetType: 'user',
+        targetRandId: user.randId,
+        ipAddress: requestIp(req),
+        userAgent: requestUserAgent(req),
+        payload: { expiresAt: challenge.expiresAt.toISOString() },
+      });
+
+      if (wantsJson(req)) {
+        res.status(202).json({
+          ok: true,
+          requiresOtp: true,
+          phoneNumber: user.phoneNumber,
+          resendAvailableAt: challenge.resendAvailableAt.toISOString(),
+          ...(config.isDevelopment ? { otpDebugCode: challenge.code } : {}),
+        });
+        return;
+      }
+
+      setLoginUiState(res, {
+        mode: 'signin',
+        signinMethod: 'otp',
+        signinStep: 'otp',
+        phoneNumber: user.phoneNumber,
+        otpWaitUntilMs: challenge.resendAvailableAt.getTime(),
+        success: config.isDevelopment
+          ? `OTP sent. Dev OTP: ${challenge.code}`
+          : 'OTP sent to your phone',
+      });
+      res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName }));
+    } catch (error) {
+      if (wantsJson(req)) {
+        res.status((error as { statusCode?: number }).statusCode || 400).json({
+          error: error instanceof Error ? error.message : 'OTP request failed',
+        });
+        return;
+      }
+
+      setLoginUiState(res, {
+        mode: 'signin',
+        signinMethod: 'otp',
+        signinStep: requestedSigninStep === 'otp' ? 'otp' : 'phone',
+        phoneNumber,
+        otpWaitUntilMs:
+          typeof (error as { retryAfterAt?: unknown }).retryAfterAt === 'number'
+            ? (error as { retryAfterAt: number }).retryAfterAt
+            : undefined,
+        error: toErrorMessage(error, 'OTP request failed'),
+      });
+      res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName }));
+    }
+  });
+
+  app.post('/auth/login/otp/complete', loginLimiter, requireTrustedOrigin, async (req, res) => {
+    const returnTo = safeReturnTo(req.body.returnTo || req.query.returnTo || '/profile', '/profile');
+    const clientId = optionalString(req.body.client_id || req.query.client_id, 120);
+    const tenantName = optionalString(req.body.tenant_name || req.query.tenant_name, 255);
+    const phoneNumber = optionalString(req.body.phone_number || req.body.phoneNumber || req.query.phone_number, 32);
+    const otpCode = optionalString(req.body.otp_code || req.body.otpCode || req.query.otp_code, 12);
+
+    try {
+      const user = await readActiveUserByPhone(phoneNumber);
+      if (!user) {
+        throw new Error('Account not found');
+      }
+
+      const verified = await verifyOtpChallenge({
+        purpose: 'login_otp',
+        destinationPhone: user.phoneNumber,
+        code: otpCode,
+      });
+
+      const payloadUserRandId = optionalString(verified.payload.userRandId, 64);
+      if (payloadUserRandId && payloadUserRandId !== user.randId) {
+        const error = new Error('OTP challenge does not match this account');
+        (error as Error & { statusCode: number }).statusCode = 400;
+        throw error;
+      }
+
+      const security = readUserSecurityState(user);
+      if (requiresAuthenticatorTwoFactor(security)) {
+        setLoginTwoFactorPending(res, {
+          userRandId: user.randId,
           returnTo,
-        )}`;
-        if (clientId) location = appendQuery(location, 'client_id', clientId);
-        if (tenantName) location = appendQuery(location, 'tenant_name', tenantName);
-        res.redirect(location);
+          clientId: clientId || undefined,
+          tenantName: tenantName || undefined,
+        });
+
+        if (wantsJson(req)) {
+          res.status(202).json({
+            ok: false,
+            requiresTwoFactor: true,
+            twoFactorMethod: 'authenticator',
+            message: 'Enter authenticator verification code',
+          });
+          return;
+        }
+
+        setLoginUiState(res, {
+          mode: 'signin',
+          signinMethod: 'otp',
+          signinStep: 'twofactor',
+          require2fa: true,
+          phoneNumber: user.phoneNumber,
+          success: 'Enter authenticator verification code',
+        });
+        res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName }));
         return;
       }
 
@@ -425,6 +740,250 @@ const boot = async (): Promise<void> => {
         userAgent: requestUserAgent(req),
       });
 
+      clearLoginTwoFactorPending(res);
+      issueSessionCookie(req, res, sessionToken, resolveTenantHostForCookie(req, returnTo));
+
+      await logActivity({
+        eventType: 'auth.login.otp.success',
+        actorUserRandId: user.randId,
+        targetType: 'user',
+        targetRandId: user.randId,
+        ipAddress: requestIp(req),
+        userAgent: requestUserAgent(req),
+      });
+
+      if (wantsJson(req)) {
+        res.status(200).json({ ok: true, returnTo, csrfToken: sessionEntity.csrfToken });
+        return;
+      }
+
+      res.redirect(returnTo);
+    } catch (error) {
+      if (wantsJson(req)) {
+        res.status((error as { statusCode?: number }).statusCode || 400).json({
+          error: error instanceof Error ? error.message : 'Login failed',
+        });
+        return;
+      }
+
+      setLoginUiState(res, {
+        mode: 'signin',
+        signinMethod: 'otp',
+        signinStep: 'otp',
+        phoneNumber,
+        otpWaitUntilMs:
+          typeof (error as { retryAfterAt?: unknown }).retryAfterAt === 'number'
+            ? (error as { retryAfterAt: number }).retryAfterAt
+            : undefined,
+        error: toErrorMessage(error, 'Login failed'),
+      });
+      res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName }));
+    }
+  });
+
+  const completeTwoFactorLogin = async (req: Request, res: Response): Promise<void> => {
+    const requestReturnTo = safeReturnTo(req.body.returnTo || req.query.returnTo || '/profile', '/profile');
+    const requestClientId = optionalString(req.body.client_id || req.query.client_id, 120);
+    const requestTenantName = optionalString(req.body.tenant_name || req.query.tenant_name, 255);
+    const verificationCode = normalizeTotpCode(
+      optionalString(
+        req.body.verification_code ??
+          req.body.verificationCode ??
+          req.body.two_factor_code ??
+          req.body.twoFactorCode ??
+          req.body.otp_code ??
+          req.body.otpCode,
+        16,
+      ),
+    );
+
+    try {
+      const pending = readLoginTwoFactorPending(req);
+      if (!pending) {
+        const error = new Error('2FA login session expired. Start login again.');
+        (error as Error & { statusCode: number }).statusCode = 401;
+        throw error;
+      }
+
+      if (verificationCode.length !== config.totp.digits) {
+        const error = new Error(`Verification code must be ${config.totp.digits} digits`);
+        (error as Error & { statusCode: number }).statusCode = 400;
+        throw error;
+      }
+
+      const effectiveUser = await readActiveUserByRandId(pending.userRandId);
+      if (!effectiveUser) {
+        const error = new Error('Account not found');
+        (error as Error & { statusCode: number }).statusCode = 404;
+        throw error;
+      }
+
+      const security = readUserSecurityState(effectiveUser);
+      if (!requiresAuthenticatorTwoFactor(security) || !security.twoFactorSecret) {
+        const error = new Error('2FA is not configured for this account');
+        (error as Error & { statusCode: number }).statusCode = 400;
+        throw error;
+      }
+
+      const valid = verifyTotpCode({
+        secret: security.twoFactorSecret,
+        code: verificationCode,
+      });
+      if (!valid) {
+        const error = new Error('Invalid authenticator verification code');
+        (error as Error & { statusCode: number }).statusCode = 400;
+        throw error;
+      }
+
+      const returnTo = pending.returnTo || requestReturnTo;
+      const clientId = pending.clientId || requestClientId;
+      const tenantName = pending.tenantName || requestTenantName;
+
+      const { sessionToken, sessionEntity } = await createSession({
+        userRandId: effectiveUser.randId,
+        tenantRandId: null,
+        ipAddress: requestIp(req),
+        userAgent: requestUserAgent(req),
+      });
+
+      clearLoginTwoFactorPending(res);
+      issueSessionCookie(req, res, sessionToken, resolveTenantHostForCookie(req, returnTo));
+
+      await logActivity({
+        eventType: 'auth.login.2fa.success',
+        actorUserRandId: effectiveUser.randId,
+        targetType: 'user',
+        targetRandId: effectiveUser.randId,
+        ipAddress: requestIp(req),
+        userAgent: requestUserAgent(req),
+      });
+
+      if (wantsJson(req)) {
+        res.status(200).json({ ok: true, returnTo, csrfToken: sessionEntity.csrfToken });
+        return;
+      }
+
+      res.redirect(returnTo);
+    } catch (error) {
+      const statusCode = (error as { statusCode?: number }).statusCode || 400;
+      if (statusCode >= 401) {
+        clearLoginTwoFactorPending(res);
+      }
+      if (wantsJson(req)) {
+        res.status(statusCode).json({
+          error: error instanceof Error ? error.message : '2FA verification failed',
+        });
+        return;
+      }
+
+      setLoginUiState(res, {
+        mode: 'signin',
+        signinMethod: 'password',
+        signinStep: 'twofactor',
+        require2fa: true,
+        error: toErrorMessage(error, '2FA verification failed'),
+      });
+      res.redirect(appendAuthContext('/login', { returnTo: requestReturnTo, clientId: requestClientId, tenantName: requestTenantName }));
+    }
+  };
+
+  app.post('/auth/login/two-factor/complete', loginLimiter, requireTrustedOrigin, async (req, res) => {
+    await completeTwoFactorLogin(req, res);
+  });
+
+  app.post('/auth/login/password/complete', loginLimiter, requireTrustedOrigin, async (req, res) => {
+    await completeTwoFactorLogin(req, res);
+  });
+
+  app.post('/auth/login', loginLimiter, requireTrustedOrigin, async (req, res) => {
+    const returnTo = safeReturnTo(req.body.returnTo || req.query.returnTo || '/profile', '/profile');
+    const clientId = optionalString(req.body.client_id || req.query.client_id, 120);
+    const tenantName = optionalString(req.body.tenant_name || req.query.tenant_name, 255);
+    const phoneNumber = optionalString(req.body.phone_number || req.body.phoneNumber || req.query.phone_number, 32);
+
+    try {
+      const user = await authenticateUser({
+        phoneNumber,
+        password: String(req.body.password || ''),
+      });
+
+      if (!user) {
+        await logActivity({
+          eventType: 'auth.login.failed',
+          ipAddress: requestIp(req),
+          userAgent: requestUserAgent(req),
+          payload: { phoneNumber },
+        });
+
+        if (wantsJson(req)) {
+          res.status(401).json({ error: 'Invalid credentials' });
+          return;
+        }
+
+        res.redirect(
+          (() => {
+            setLoginUiState(res, {
+              mode: 'signin',
+              signinMethod: 'password',
+              signinStep: 'password',
+              phoneNumber,
+              error: 'Invalid credentials',
+            });
+            return appendAuthContext('/login', { returnTo, clientId, tenantName });
+          })(),
+        );
+        return;
+      }
+
+      const security = readUserSecurityState(user);
+      if (requiresAuthenticatorTwoFactor(security)) {
+        setLoginTwoFactorPending(res, {
+          userRandId: user.randId,
+          returnTo,
+          clientId: clientId || undefined,
+          tenantName: tenantName || undefined,
+        });
+
+        await logActivity({
+          eventType: 'auth.login.2fa.required',
+          actorUserRandId: user.randId,
+          targetType: 'user',
+          targetRandId: user.randId,
+          ipAddress: requestIp(req),
+          userAgent: requestUserAgent(req),
+          payload: { method: 'authenticator' },
+        });
+
+        if (wantsJson(req)) {
+          res.status(202).json({
+            ok: false,
+            requiresTwoFactor: true,
+            twoFactorMethod: 'authenticator',
+            message: 'Enter authenticator verification code',
+          });
+          return;
+        }
+
+        setLoginUiState(res, {
+          mode: 'signin',
+          signinMethod: 'password',
+          signinStep: 'twofactor',
+          require2fa: true,
+          phoneNumber: user.phoneNumber,
+          success: 'Enter authenticator verification code',
+        });
+        res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName }));
+        return;
+      }
+
+      const { sessionToken, sessionEntity } = await createSession({
+        userRandId: user.randId,
+        tenantRandId: null,
+        ipAddress: requestIp(req),
+        userAgent: requestUserAgent(req),
+      });
+
+      clearLoginTwoFactorPending(res);
       issueSessionCookie(req, res, sessionToken, resolveTenantHostForCookie(req, returnTo));
 
       await logActivity({
@@ -450,10 +1009,187 @@ const boot = async (): Promise<void> => {
         return;
       }
 
-      let location = `/login?error=${encodeErrorParam(error)}&returnTo=${encodeURIComponent(returnTo)}`;
-      if (clientId) location = appendQuery(location, 'client_id', clientId);
-      if (tenantName) location = appendQuery(location, 'tenant_name', tenantName);
-      res.redirect(location);
+      const message = toErrorMessage(error, 'Login failed');
+      res.redirect(
+        (() => {
+          const isTwoFactorError = message.toLowerCase().includes('2fa') || message.toLowerCase().includes('verification code');
+          setLoginUiState(res, {
+            mode: 'signin',
+            signinMethod: 'password',
+            signinStep: isTwoFactorError ? 'twofactor' : 'password',
+            require2fa: isTwoFactorError,
+            phoneNumber,
+            error: message,
+          });
+          return appendAuthContext('/login', { returnTo, clientId, tenantName });
+        })(),
+      );
+    }
+  });
+
+  app.post('/auth/register/start', registerLimiter, requireTrustedOrigin, async (req, res) => {
+    const returnTo = safeReturnTo(req.body.returnTo || '/profile', '/profile');
+    const clientId = optionalString(req.body.client_id || req.query.client_id, 120);
+    const tenantName = optionalString(req.body.tenant_name || req.query.tenant_name, 255);
+    const phoneNumber = optionalString(req.body.phone_number || req.body.phoneNumber || req.query.phone_number, 32);
+    const requestedSignupStep = optionalString(req.body.signup_step || req.query.signup_step, 16).toLowerCase();
+
+    try {
+      const normalizedPhone = await assertPhoneRegistrationAllowed({
+        phoneNumber,
+        clientId: clientId || undefined,
+        tenantName: tenantName || undefined,
+      });
+
+      const challenge = await issueOtpChallenge({
+        purpose: 'signup',
+        destinationPhone: normalizedPhone,
+        payload: {
+          clientId: clientId || null,
+          tenantName: tenantName || null,
+        },
+      });
+
+      await logActivity({
+        eventType: 'auth.register.otp.sent',
+        targetType: 'user',
+        ipAddress: requestIp(req),
+        userAgent: requestUserAgent(req),
+        payload: {
+          phoneNumber: normalizedPhone,
+          expiresAt: challenge.expiresAt.toISOString(),
+          clientId: clientId || null,
+          tenantName: tenantName || null,
+        },
+      });
+
+      if (wantsJson(req)) {
+        res.status(202).json({
+          ok: true,
+          requiresOtp: true,
+          phoneNumber: normalizedPhone,
+          resendAvailableAt: challenge.resendAvailableAt.toISOString(),
+          ...(config.isDevelopment ? { otpDebugCode: challenge.code } : {}),
+        });
+        return;
+      }
+
+      res.redirect(
+        (() => {
+          setLoginUiState(res, {
+            mode: 'signup',
+            signupStep: 'verify',
+            otpWaitUntilMs: challenge.resendAvailableAt.getTime(),
+            phoneNumber: normalizedPhone,
+            success: config.isDevelopment
+              ? `OTP sent. Dev OTP: ${challenge.code}`
+              : 'OTP sent. Enter the code to complete signup.',
+          });
+          return appendAuthContext('/login', { returnTo, clientId, tenantName });
+        })(),
+      );
+    } catch (error) {
+      if (wantsJson(req)) {
+        res.status((error as { statusCode?: number }).statusCode || 400).json({
+          error: error instanceof Error ? error.message : 'OTP request failed',
+        });
+        return;
+      }
+
+      res.redirect(
+        (() => {
+          setLoginUiState(res, {
+            mode: 'signup',
+            signupStep: requestedSignupStep === 'verify' ? 'verify' : 'start',
+            otpWaitUntilMs:
+              typeof (error as { retryAfterAt?: unknown }).retryAfterAt === 'number'
+                ? (error as { retryAfterAt: number }).retryAfterAt
+                : undefined,
+            phoneNumber,
+            error: toErrorMessage(error, 'OTP request failed'),
+          });
+          return appendAuthContext('/login', { returnTo, clientId, tenantName });
+        })(),
+      );
+    }
+  });
+
+  app.post('/auth/register/complete', registerLimiter, requireTrustedOrigin, async (req, res) => {
+    const returnTo = safeReturnTo(req.body.returnTo || '/profile', '/profile');
+    const clientId = optionalString(req.body.client_id || req.query.client_id, 120);
+    const tenantName = optionalString(req.body.tenant_name || req.query.tenant_name, 255);
+    const phoneNumber = optionalString(req.body.phone_number || req.body.phoneNumber || req.query.phone_number, 32);
+    const otpCode = optionalString(req.body.otp_code || req.body.otpCode || req.query.otp_code, 12);
+
+    try {
+      await verifyOtpChallenge({
+        purpose: 'signup',
+        destinationPhone: phoneNumber,
+        code: otpCode,
+      });
+
+      const user = await registerUserByPhone({
+        phoneNumber,
+        clientId: clientId || undefined,
+        tenantName: tenantName || undefined,
+      });
+
+      const { sessionToken, sessionEntity } = await createSession({
+        userRandId: user.randId,
+        tenantRandId: null,
+        ipAddress: requestIp(req),
+        userAgent: requestUserAgent(req),
+      });
+
+      issueSessionCookie(req, res, sessionToken, resolveTenantHostForCookie(req, returnTo));
+
+      await logActivity({
+        eventType: 'auth.register.success',
+        actorUserRandId: user.randId,
+        targetType: 'user',
+        targetRandId: user.randId,
+        ipAddress: requestIp(req),
+        userAgent: requestUserAgent(req),
+        payload: { via: 'phone_otp' },
+      });
+
+      if (wantsJson(req)) {
+        res.status(201).json({ ok: true, returnTo, csrfToken: sessionEntity.csrfToken });
+        return;
+      }
+
+      res.redirect(returnTo);
+    } catch (error) {
+      await logActivity({
+        eventType: 'auth.register.failed',
+        ipAddress: requestIp(req),
+        userAgent: requestUserAgent(req),
+        payload: {
+          message: error instanceof Error ? error.message : 'register_failed',
+          phoneNumber,
+          clientId,
+          flow: 'phone_otp',
+        },
+      });
+
+      if (wantsJson(req)) {
+        res.status((error as { statusCode?: number }).statusCode || 400).json({
+          error: error instanceof Error ? error.message : 'Registration failed',
+        });
+        return;
+      }
+
+      res.redirect(
+        (() => {
+          setLoginUiState(res, {
+            mode: 'signup',
+            signupStep: 'verify',
+            phoneNumber,
+            error: toErrorMessage(error, 'Registration failed'),
+          });
+          return appendAuthContext('/login', { returnTo, clientId, tenantName });
+        })(),
+      );
     }
   });
 
@@ -461,6 +1197,7 @@ const boot = async (): Promise<void> => {
     const returnTo = safeReturnTo(req.body.returnTo || '/profile', '/profile');
     const clientId = optionalString(req.body.client_id || req.query.client_id, 120);
     const tenantName = optionalString(req.body.tenant_name || req.query.tenant_name, 255);
+    const authUi = optionalString(req.body.auth_ui, 32).toLowerCase();
 
     try {
       const user = await registerUser({
@@ -514,6 +1251,17 @@ const boot = async (): Promise<void> => {
         res.status((error as { statusCode?: number }).statusCode || 400).json({
           error: error instanceof Error ? error.message : 'Registration failed',
         });
+        return;
+      }
+
+      const useLoginUi = authUi === 'login';
+      if (useLoginUi) {
+        setLoginUiState(res, {
+          mode: 'signup',
+          error: toErrorMessage(error, 'Registration failed'),
+          phoneNumber: optionalString(req.body.phone_number || req.body.phoneNumber || '', 32),
+        });
+        res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName }));
         return;
       }
 
@@ -964,7 +1712,8 @@ const boot = async (): Promise<void> => {
 
   app.get('/profile', (req, res, next) => {
     if (!req.sessionContext) {
-      res.redirect('/login?error=' + encodeURIComponent('Please sign in first'));
+      setLoginUiState(res, { mode: 'signin', error: 'Please sign in first' });
+      res.redirect('/login');
       return;
     }
     next();
@@ -972,7 +1721,8 @@ const boot = async (): Promise<void> => {
 
   app.get('/account', (req, res, next) => {
     if (!req.sessionContext) {
-      res.redirect('/login?error=' + encodeURIComponent('Please sign in first'));
+      setLoginUiState(res, { mode: 'signin', error: 'Please sign in first' });
+      res.redirect('/login');
       return;
     }
     next();
@@ -990,7 +1740,8 @@ const boot = async (): Promise<void> => {
 
   app.get('/admin', (req, res, next) => {
     if (!req.sessionContext || !isAuthAdmin(req)) {
-      res.redirect('/login?error=' + encodeURIComponent('Auth admin access required'));
+      setLoginUiState(res, { mode: 'signin', error: 'Auth admin access required' });
+      res.redirect('/login');
       return;
     }
     next();
@@ -998,7 +1749,8 @@ const boot = async (): Promise<void> => {
 
   app.get('/admin/tenants', (req, res, next) => {
     if (!req.sessionContext || !isAuthAdmin(req)) {
-      res.redirect('/login?error=' + encodeURIComponent('Auth admin access required'));
+      setLoginUiState(res, { mode: 'signin', error: 'Auth admin access required' });
+      res.redirect('/login');
       return;
     }
     next();

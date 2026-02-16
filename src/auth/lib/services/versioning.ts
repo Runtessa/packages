@@ -207,6 +207,12 @@ export const findCurrentUserByEmail = async (email: string): Promise<UserEntity 
   });
 };
 
+export const findCurrentUserByPhone = async (phoneNumber: string): Promise<UserEntity | null> => {
+  return AuthDataSource.getRepository(UserEntity).findOne({
+    where: { phoneNumber, isCurrent: true },
+  });
+};
+
 export const findCurrentUserByRandId = async (randId: string): Promise<UserEntity | null> => {
   return AuthDataSource.getRepository(UserEntity).findOne({
     where: { randId, isCurrent: true },

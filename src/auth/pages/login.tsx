@@ -1,10 +1,8 @@
 import Head from 'next/head';
-import Link from 'next/link';
 import Image from 'next/image';
+import { ClipboardEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, MutableRefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import branding from '../branding.json';
-import { Button } from '../components/ui/Button';
-import { Input } from '../components/ui/Input';
 
 const one = (value: string | string[] | undefined): string =>
   Array.isArray(value) ? value[0] || '' : value || '';
@@ -21,18 +19,867 @@ const tenantFromReturnTo = (returnTo: string): string => {
   }
 };
 
+const inputClass =
+  'w-full rounded-xl border border-[#DADCE0] bg-white px-3 py-2.5 text-sm text-[#202124] outline-none transition-all duration-200 focus:border-[#1A73E8] focus:ring-2 focus:ring-[#1A73E8]/20';
+const primaryBtnClass =
+  'inline-flex min-h-[42px] min-w-[124px] items-center justify-center gap-2 rounded-xl border border-[#1669D9] bg-[#1A73E8] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_-18px_rgba(26,115,232,0.95)] transition-all duration-200 hover:-translate-y-[1px] hover:bg-[#1765CC] hover:shadow-[0_18px_34px_-20px_rgba(26,115,232,0.9)] active:translate-y-0 active:shadow-[0_8px_20px_-16px_rgba(26,115,232,0.85)] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:hover:translate-y-0';
+const secondaryBtnClass =
+  'inline-flex min-h-[42px] min-w-[124px] items-center justify-center gap-2 rounded-xl border border-[#D3DBE8] bg-white px-5 py-2.5 text-sm font-semibold text-[#2D4F86] transition-all duration-200 hover:-translate-y-[1px] hover:border-[#BFCAE0] hover:bg-[#F7FAFF] hover:text-[#1A73E8] active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50';
+const tinyLinkClass =
+  'inline-flex min-h-[38px] items-center justify-center rounded-xl border border-[#D7DDE8] bg-white px-4 text-xs font-semibold text-[#315A9A] transition-all duration-200 hover:border-[#BCD0F5] hover:bg-[#F4F8FF] hover:text-[#1A73E8] active:bg-[#EDF4FF] disabled:cursor-not-allowed disabled:opacity-50';
+const inlineLinkClass =
+  'text-xs font-semibold text-[#1A73E8] transition-colors duration-150 hover:text-[#1765CC] hover:underline disabled:cursor-not-allowed disabled:opacity-50';
+const tabBaseClass = 'inline-flex items-center rounded-full px-4 py-1.5 text-xs font-medium transition-all duration-300';
+
+type Mode = 'signin' | 'signup';
+type SigninStep = 'phone' | 'password' | 'otp' | 'twofactor';
+type SignupStep = 'phone' | 'otp';
+type ToastType = 'success' | 'error';
+type OtpContext = 'signin' | 'signup';
+type CountryCode = 'IR' | 'US' | 'GB' | 'TR' | 'DE' | 'AE' | 'IQ' | 'IN';
+
+interface CountryOption {
+  code: CountryCode;
+  name: string;
+  flag: string;
+  dialCode: string;
+  localLength: number;
+  groups: number[];
+}
+
+interface ToastEntry {
+  id: number;
+  type: ToastType;
+  message: string;
+}
+
+interface OtpProgressState {
+  mode: Mode;
+  step: 'otp' | 'twofactor';
+  phoneNumber: string;
+  otpWaitUntilMs: number;
+  savedAt: number;
+}
+
+const OTP_PROGRESS_STORAGE_KEY = 'idp-auth-login-otp-progress-v1';
+
+const COUNTRY_OPTIONS: CountryOption[] = [
+  { code: 'IR', name: 'Iran', flag: '🇮🇷', dialCode: '+98', localLength: 10, groups: [3, 3, 4] },
+  { code: 'US', name: 'United States', flag: '🇺🇸', dialCode: '+1', localLength: 10, groups: [3, 3, 4] },
+  { code: 'GB', name: 'United Kingdom', flag: '🇬🇧', dialCode: '+44', localLength: 10, groups: [4, 3, 3] },
+  { code: 'TR', name: 'Turkey', flag: '🇹🇷', dialCode: '+90', localLength: 10, groups: [3, 3, 4] },
+  { code: 'DE', name: 'Germany', flag: '🇩🇪', dialCode: '+49', localLength: 11, groups: [3, 4, 4] },
+  { code: 'AE', name: 'UAE', flag: '🇦🇪', dialCode: '+971', localLength: 9, groups: [2, 3, 4] },
+  { code: 'IQ', name: 'Iraq', flag: '🇮🇶', dialCode: '+964', localLength: 10, groups: [3, 3, 4] },
+  { code: 'IN', name: 'India', flag: '🇮🇳', dialCode: '+91', localLength: 10, groups: [5, 5] },
+];
+
+const DEFAULT_COUNTRY_CODE: CountryCode = 'IR';
+
+const digitsOnly = (value: string): string => value.replace(/\D+/g, '');
+
+const countryByCode = (code: string): CountryOption =>
+  COUNTRY_OPTIONS.find((item) => item.code === code) || COUNTRY_OPTIONS[0];
+
+const normalizeNationalDigits = (country: CountryOption, value: string): string => {
+  let digits = digitsOnly(value);
+  const dialDigits = digitsOnly(country.dialCode);
+  if (digits.length > country.localLength && dialDigits && digits.startsWith(dialDigits)) {
+    digits = digits.slice(dialDigits.length);
+  }
+  if (digits.length > country.localLength && digits.startsWith('0')) digits = digits.slice(1);
+  return digits.slice(0, country.localLength);
+};
+
+const formatWithGroups = (digits: string, groups: number[]): string => {
+  let cursor = 0;
+  const chunks: string[] = [];
+  for (const size of groups) {
+    if (cursor >= digits.length) break;
+    chunks.push(digits.slice(cursor, cursor + size));
+    cursor += size;
+  }
+  if (cursor < digits.length) chunks.push(digits.slice(cursor));
+  return chunks.join(' ');
+};
+
+const formatNationalNumber = (country: CountryOption, value: string): string =>
+  formatWithGroups(normalizeNationalDigits(country, value), country.groups);
+
+const countryPlaceholder = (country: CountryOption): string => {
+  const mask = formatWithGroups('0'.repeat(country.localLength), country.groups);
+  return mask || '0000000000';
+};
+
+const parsePhoneNumber = (value: string): { countryCode: CountryCode; nationalDigits: string } => {
+  const compact = String(value || '').trim();
+  if (!compact) return { countryCode: DEFAULT_COUNTRY_CODE, nationalDigits: '' };
+
+  const normalized = compact.startsWith('+') ? compact : `+${digitsOnly(compact)}`;
+  const sorted = [...COUNTRY_OPTIONS].sort((a, b) => b.dialCode.length - a.dialCode.length);
+  for (const item of sorted) {
+    if (normalized.startsWith(item.dialCode)) {
+      const rest = normalized.slice(item.dialCode.length);
+      return { countryCode: item.code, nationalDigits: normalizeNationalDigits(item, rest) };
+    }
+  }
+
+  const fallbackCountry = countryByCode(DEFAULT_COUNTRY_CODE);
+  return {
+    countryCode: fallbackCountry.code,
+    nationalDigits: normalizeNationalDigits(fallbackCountry, compact),
+  };
+};
+
+const formatCountdown = (totalSec: number): string => {
+  const safe = Math.max(0, totalSec);
+  const min = Math.floor(safe / 60)
+    .toString()
+    .padStart(2, '0');
+  const sec = (safe % 60).toString().padStart(2, '0');
+  return `${min}:${sec}`;
+};
+
+const parseJsonSafe = async (response: Response): Promise<Record<string, unknown>> => {
+  try {
+    const data = await response.json();
+    if (data && typeof data === 'object') return data as Record<string, unknown>;
+    return {};
+  } catch {
+    return {};
+  }
+};
+
 export default function LoginPage() {
   const router = useRouter();
+  const [mode, setMode] = useState<Mode>('signin');
+  const [signinStep, setSigninStep] = useState<SigninStep>('phone');
+  const [signupStep, setSignupStep] = useState<SignupStep>('phone');
 
-  const error = one(router.query.error);
-  const success = one(router.query.success);
+  const [allowRegistration, setAllowRegistration] = useState(true);
+
+  const [selectedCountryCode, setSelectedCountryCode] = useState<CountryCode>(DEFAULT_COUNTRY_CODE);
+  const [phoneNationalDigits, setPhoneNationalDigits] = useState('');
+  const [countryPickerOpen, setCountryPickerOpen] = useState(false);
+  const [password, setPassword] = useState('');
+  const [signinOtpDigits, setSigninOtpDigits] = useState<string[]>(Array(6).fill(''));
+  const [signupOtpDigits, setSignupOtpDigits] = useState<string[]>(Array(6).fill(''));
+
+  const [otpWaitUntilMs, setOtpWaitUntilMs] = useState(0);
+  const [resendRemainingSec, setResendRemainingSec] = useState(0);
+
+  const [busyAction, setBusyAction] = useState<string>('');
+  const [toasts, setToasts] = useState<ToastEntry[]>([]);
+  const toastIdRef = useRef(1);
+  const signinOtpRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const signupOtpRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const countryPickerRef = useRef<HTMLDivElement | null>(null);
+
   const returnTo = one(router.query.returnTo) || '/profile';
   const clientId = one(router.query.client_id);
   const tenantName = one(router.query.tenant_name) || tenantFromReturnTo(returnTo);
+  const loginTitle = tenantName ? `Access ${tenantName}` : 'Login to profile';
 
-  const registerHref = `/register?returnTo=${encodeURIComponent(returnTo)}${
-    clientId ? `&client_id=${encodeURIComponent(clientId)}` : ''
-  }${tenantName ? `&tenant_name=${encodeURIComponent(tenantName)}` : ''}`;
+  const selectedCountry = useMemo(() => countryByCode(selectedCountryCode), [selectedCountryCode]);
+  const formattedNationalPhone = useMemo(
+    () => formatNationalNumber(selectedCountry, phoneNationalDigits),
+    [selectedCountry, phoneNationalDigits],
+  );
+  const fullPhoneNumber = useMemo(() => {
+    const normalized = normalizeNationalDigits(selectedCountry, phoneNationalDigits);
+    return normalized ? `${selectedCountry.dialCode}${normalized}` : '';
+  }, [selectedCountry, phoneNationalDigits]);
+  const clearOtpProgress = () => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.removeItem(OTP_PROGRESS_STORAGE_KEY);
+  };
+
+  const persistOtpProgress = (payload: OtpProgressState) => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(OTP_PROGRESS_STORAGE_KEY, JSON.stringify(payload));
+  };
+
+  const pushToast = (type: ToastType, message: string) => {
+    const text = String(message || '').trim();
+    if (!text) return;
+    const id = toastIdRef.current++;
+    setToasts((prev) => [...prev, { id, type, message: text }]);
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((entry) => entry.id !== id));
+    }, 4200);
+  };
+
+  const applyPhoneValue = (value: string) => {
+    const parsed = parsePhoneNumber(value);
+    setSelectedCountryCode(parsed.countryCode);
+    setPhoneNationalDigits(parsed.nationalDigits);
+  };
+
+  const handleCountryChange = (nextCode: string) => {
+    const nextCountry = countryByCode(nextCode);
+    setSelectedCountryCode(nextCountry.code);
+    setPhoneNationalDigits((current) => normalizeNationalDigits(nextCountry, current));
+    setCountryPickerOpen(false);
+  };
+
+  const handlePhoneInputChange = (value: string) => {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('+')) {
+      applyPhoneValue(trimmed);
+      return;
+    }
+    setPhoneNationalDigits(normalizeNationalDigits(selectedCountry, value));
+  };
+
+  useEffect(() => {
+    if (!countryPickerOpen) return;
+
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      if (!countryPickerRef.current) return;
+      const target = event.target as Node | null;
+      if (target && countryPickerRef.current.contains(target)) return;
+      setCountryPickerOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setCountryPickerOpen(false);
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [countryPickerOpen]);
+
+  const clearOtpDigits = (context: OtpContext) => {
+    const empty = Array(6).fill('');
+    if (context === 'signin') setSigninOtpDigits(empty);
+    else setSignupOtpDigits(empty);
+  };
+
+  const otpCodeFor = (context: OtpContext): string =>
+    (context === 'signin' ? signinOtpDigits : signupOtpDigits).join('');
+
+  const refsFor = (context: OtpContext): MutableRefObject<Array<HTMLInputElement | null>> =>
+    context === 'signin' ? signinOtpRefs : signupOtpRefs;
+
+  const setDigitsFor = (context: OtpContext, next: string[]) => {
+    if (context === 'signin') setSigninOtpDigits(next);
+    else setSignupOtpDigits(next);
+  };
+
+  const handleOtpDigitChange = (context: OtpContext, index: number, value: string) => {
+    const digit = value.replace(/\D/g, '').slice(-1);
+    const current = context === 'signin' ? signinOtpDigits : signupOtpDigits;
+    const next = [...current];
+    next[index] = digit;
+    setDigitsFor(context, next);
+    if (digit && index < 5) {
+      refsFor(context).current[index + 1]?.focus();
+    }
+  };
+
+  const handleOtpKeyDown = (context: OtpContext, index: number, event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Backspace') {
+      const current = context === 'signin' ? signinOtpDigits : signupOtpDigits;
+      if (!current[index] && index > 0) {
+        refsFor(context).current[index - 1]?.focus();
+      }
+      return;
+    }
+    if (event.key === 'ArrowLeft' && index > 0) {
+      refsFor(context).current[index - 1]?.focus();
+      return;
+    }
+    if (event.key === 'ArrowRight' && index < 5) {
+      refsFor(context).current[index + 1]?.focus();
+    }
+  };
+
+  const handleOtpPaste = (context: OtpContext, event: ClipboardEvent<HTMLInputElement>) => {
+    const pasted = event.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (!pasted) return;
+    event.preventDefault();
+    const next = Array(6)
+      .fill('')
+      .map((_, idx) => pasted[idx] || '');
+    setDigitsFor(context, next);
+    const targetIndex = Math.min(pasted.length, 5);
+    refsFor(context).current[targetIndex]?.focus();
+  };
+
+  const renderOtpInputs = (context: OtpContext, baseId: string) => {
+    const digits = context === 'signin' ? signinOtpDigits : signupOtpDigits;
+    const refs = refsFor(context);
+    return (
+      <div className="flex items-center justify-center gap-2">
+        {digits.map((digit, index) => (
+          <input
+            key={`${baseId}-${index}`}
+            id={`${baseId}-${index + 1}`}
+            ref={(node) => {
+              refs.current[index] = node;
+            }}
+            className="h-12 w-12 rounded-xl border border-[#DADCE0] bg-white text-center text-lg font-semibold text-[#202124] outline-none transition-all duration-200 focus:border-[#1A73E8] focus:ring-2 focus:ring-[#1A73E8]/20"
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]"
+            autoComplete="one-time-code"
+            maxLength={1}
+            value={digit}
+            onChange={(event) => handleOtpDigitChange(context, index, event.target.value)}
+            onKeyDown={(event) => handleOtpKeyDown(context, index, event)}
+            onPaste={(event) => handleOtpPaste(context, event)}
+          />
+        ))}
+      </div>
+    );
+  };
+
+  const renderPhoneInput = (fieldId: string) => (
+    <div>
+      <label className="mb-1 block text-sm font-normal text-[#202124]" htmlFor={fieldId}>
+        Phone number
+      </label>
+      <div className="relative flex w-full items-center rounded-2xl border border-[#D6DCE8] bg-white shadow-[0_8px_22px_-20px_rgba(26,115,232,0.85)] transition-all duration-200 focus-within:border-[#1A73E8] focus-within:ring-2 focus-within:ring-[#1A73E8]/20">
+        <div
+          ref={countryPickerRef}
+          className="relative h-[48px] w-[76px] shrink-0 rounded-l-2xl border-r border-[#E6EBF2] bg-[#F7FAFF]"
+        >
+          <button
+            type="button"
+            className="flex h-full w-full items-center justify-center gap-1 rounded-l-2xl bg-transparent text-lg text-[#202124] outline-none transition-colors hover:bg-[#EEF3FD]"
+            aria-label="Select country"
+            aria-expanded={countryPickerOpen}
+            onClick={() => setCountryPickerOpen((prev) => !prev)}
+          >
+            <span>{selectedCountry.flag}</span>
+            <svg viewBox="0 0 20 20" fill="currentColor" className="h-3 w-3 text-[#5F6368]" aria-hidden>
+              <path
+                fillRule="evenodd"
+                d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.176l3.71-3.946a.75.75 0 1 1 1.08 1.04l-4.25 4.52a.75.75 0 0 1-1.08 0L5.21 8.27a.75.75 0 0 1 .02-1.06Z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </button>
+          {countryPickerOpen ? (
+            <div className="hide-scrollbar absolute left-0 top-[calc(100%+10px)] z-30 max-h-72 w-72 overflow-y-auto rounded-2xl border border-[#DBE1EC] bg-white/95 p-1.5 shadow-[0_20px_50px_-30px_rgba(32,33,36,0.65)] backdrop-blur">
+              {COUNTRY_OPTIONS.map((country) => (
+                <button
+                  key={country.code}
+                  type="button"
+                  className={`group flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
+                    selectedCountry.code === country.code ? 'bg-[#E8F0FE] text-[#1A73E8]' : 'text-[#202124] hover:bg-[#F3F7FF]'
+                  }`}
+                  onClick={() => handleCountryChange(country.code)}
+                >
+                  <span className="text-lg">{country.flag}</span>
+                  <span className="truncate font-medium">{country.name}</span>
+                  <span className="ml-auto text-xs font-semibold text-[#5F6368] group-hover:text-[#3E506E]">{country.dialCode}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <span className="shrink-0 border-r border-[#E6EBF2] px-3 text-sm font-semibold text-[#4A5A73]">{selectedCountry.dialCode}</span>
+        <input
+          id={fieldId}
+          className="h-[48px] min-w-0 w-full rounded-r-2xl border-0 bg-transparent px-3 text-sm text-[#202124] outline-none placeholder:text-[#9AA0A6]"
+          type="tel"
+          value={formattedNationalPhone}
+          onChange={(event) => handlePhoneInputChange(event.target.value)}
+          placeholder={countryPlaceholder(selectedCountry)}
+          autoComplete="tel-national"
+          required
+        />
+      </div>
+    </div>
+  );
+
+  const authContextBody = useMemo(() => {
+    const payload: Record<string, string> = { returnTo };
+    if (clientId) payload.client_id = clientId;
+    if (tenantName) payload.tenant_name = tenantName;
+    return payload;
+  }, [clientId, returnTo, tenantName]);
+
+  const postJson = async (url: string, body: Record<string, unknown>): Promise<{ ok: boolean; status: number; data: Record<string, unknown> }> => {
+    const res = await fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await parseJsonSafe(res);
+    return { ok: res.ok, status: res.status, data };
+  };
+
+  const enterSigninPhoneStep = () => {
+    setMode('signin');
+    setSigninStep('phone');
+    clearOtpDigits('signin');
+    setPassword('');
+    setOtpWaitUntilMs(0);
+    clearOtpProgress();
+  };
+
+  const startOtpLogin = async (): Promise<boolean> => {
+    const phone = fullPhoneNumber.trim();
+    if (!phone) {
+      pushToast('error', 'Phone number is required');
+      return false;
+    }
+
+    setBusyAction('signin-otp-send');
+    try {
+      const { ok, status, data } = await postJson('/auth/login/otp/start', {
+        ...authContextBody,
+        phone_number: phone,
+        signin_step: 'otp',
+      });
+
+      if (!ok || (status !== 202 && status !== 200)) {
+        pushToast('error', String(data.error || 'Failed to send verification code'));
+        return false;
+      }
+
+      const resendAt = Date.parse(String(data.resendAvailableAt || ''));
+      setOtpWaitUntilMs(Number.isFinite(resendAt) ? resendAt : 0);
+      setSigninStep('otp');
+      clearOtpDigits('signin');
+      persistOtpProgress({
+        mode: 'signin',
+        step: 'otp',
+        phoneNumber: phone,
+        otpWaitUntilMs: Number.isFinite(resendAt) ? resendAt : 0,
+        savedAt: Date.now(),
+      });
+
+      const debugCode = String(data.otpDebugCode || '').trim();
+      pushToast(
+        'success',
+        debugCode ? `Verification code sent. Dev code: ${debugCode}` : 'Verification code sent to your phone',
+      );
+      return true;
+    } catch {
+      pushToast('error', 'Failed to send verification code');
+      return false;
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  const handleSigninPhoneContinue = async (event: FormEvent) => {
+    event.preventDefault();
+    const phone = fullPhoneNumber.trim();
+    if (!phone) {
+      pushToast('error', 'Phone number is required');
+      return;
+    }
+
+    setBusyAction('signin-phone-continue');
+    try {
+      const res = await fetch(`/api/public/login-options?phone_number=${encodeURIComponent(phone)}`, {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      });
+      const data = await parseJsonSafe(res);
+
+      if (!res.ok) {
+        if (res.status === 404) {
+          pushToast('error', 'Account not found');
+          return;
+        }
+        pushToast('error', String(data.error || 'Unable to resolve login options'));
+        return;
+      }
+
+      const passwordEnabled = Boolean((data.methods as { password?: boolean } | undefined)?.password);
+      if (passwordEnabled) {
+        setSigninStep('password');
+        clearOtpProgress();
+        return;
+      }
+
+      await startOtpLogin();
+    } catch {
+      pushToast('error', 'Unable to continue login');
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  const handleSigninPasswordSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    const phone = fullPhoneNumber.trim();
+    const pwd = password;
+    if (!phone) {
+      pushToast('error', 'Phone number is required');
+      return;
+    }
+    if (!pwd) {
+      pushToast('error', 'Password is required');
+      return;
+    }
+
+    setBusyAction('signin-password-submit');
+    try {
+      const { ok, status, data } = await postJson('/auth/login', {
+        ...authContextBody,
+        phone_number: phone,
+        password: pwd,
+      });
+
+      if (ok && status === 200) {
+        clearOtpProgress();
+        window.location.href = String(data.returnTo || returnTo);
+        return;
+      }
+
+      if (status === 202 || data.requiresTwoFactor === true) {
+        setSigninStep('twofactor');
+        clearOtpDigits('signin');
+        persistOtpProgress({
+          mode: 'signin',
+          step: 'twofactor',
+          phoneNumber: phone,
+          otpWaitUntilMs: 0,
+          savedAt: Date.now(),
+        });
+        pushToast('success', String(data.message || 'Enter authenticator verification code'));
+        return;
+      }
+
+      pushToast('error', String(data.error || 'Invalid credentials'));
+    } catch {
+      pushToast('error', 'Login failed');
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  const handleSigninOtpVerify = async (event: FormEvent) => {
+    event.preventDefault();
+    const phone = fullPhoneNumber.trim();
+    const code = otpCodeFor('signin').trim();
+    if (!phone) {
+      pushToast('error', 'Phone number is required');
+      return;
+    }
+    if (!code) {
+      pushToast('error', 'Verification code is required');
+      return;
+    }
+    if (code.length !== 6) {
+      pushToast('error', 'Verification code must be 6 digits');
+      return;
+    }
+
+    const endpoint = '/auth/login/otp/complete';
+
+    setBusyAction('signin-otp-verify');
+    try {
+      const { ok, status, data } = await postJson(endpoint, {
+        ...authContextBody,
+        phone_number: phone,
+        otp_code: code,
+      });
+
+      if (status === 202 || data.requiresTwoFactor === true) {
+        setSigninStep('twofactor');
+        clearOtpDigits('signin');
+        persistOtpProgress({
+          mode: 'signin',
+          step: 'twofactor',
+          phoneNumber: phone,
+          otpWaitUntilMs: 0,
+          savedAt: Date.now(),
+        });
+        pushToast('success', String(data.message || 'Enter authenticator verification code'));
+        return;
+      }
+
+      if (!ok) {
+        pushToast('error', String(data.error || 'Verification code check failed'));
+        return;
+      }
+
+      clearOtpProgress();
+      window.location.href = String(data.returnTo || returnTo);
+    } catch {
+      pushToast('error', 'Verification code check failed');
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  const handleSigninTwoFactorVerify = async (event: FormEvent) => {
+    event.preventDefault();
+    const code = otpCodeFor('signin').trim();
+    if (!code) {
+      pushToast('error', 'Verification code is required');
+      return;
+    }
+    if (code.length !== 6) {
+      pushToast('error', 'Verification code must be 6 digits');
+      return;
+    }
+
+    setBusyAction('signin-2fa-verify');
+    try {
+      const { ok, data } = await postJson('/auth/login/two-factor/complete', {
+        ...authContextBody,
+        verification_code: code,
+      });
+
+      if (!ok) {
+        pushToast('error', String(data.error || 'Two-factor verification failed'));
+        return;
+      }
+
+      clearOtpProgress();
+      window.location.href = String(data.returnTo || returnTo);
+    } catch {
+      pushToast('error', 'Two-factor verification failed');
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  const handleSignupPhoneSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    await requestSignupOtp();
+  };
+
+  const requestSignupOtp = async (): Promise<void> => {
+    const phone = fullPhoneNumber.trim();
+    if (!phone) {
+      pushToast('error', 'Phone number is required');
+      return;
+    }
+    if (!allowRegistration) {
+      pushToast('error', 'Registration is disabled for this tenant');
+      return;
+    }
+
+    setBusyAction('signup-otp-send');
+    try {
+      const { ok, status, data } = await postJson('/auth/register/start', {
+        ...authContextBody,
+        phone_number: phone,
+        signup_step: 'verify',
+      });
+
+      if (!ok || (status !== 202 && status !== 200)) {
+        pushToast('error', String(data.error || 'Failed to send verification code'));
+        return;
+      }
+
+      const resendAt = Date.parse(String(data.resendAvailableAt || ''));
+      setOtpWaitUntilMs(Number.isFinite(resendAt) ? resendAt : 0);
+      setSignupStep('otp');
+      clearOtpDigits('signup');
+      persistOtpProgress({
+        mode: 'signup',
+        step: 'otp',
+        phoneNumber: phone,
+        otpWaitUntilMs: Number.isFinite(resendAt) ? resendAt : 0,
+        savedAt: Date.now(),
+      });
+      const debugCode = String(data.otpDebugCode || '').trim();
+      pushToast(
+        'success',
+        debugCode ? `Verification code sent. Dev code: ${debugCode}` : 'Verification code sent to your phone',
+      );
+    } catch {
+      pushToast('error', 'Failed to send verification code');
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  const handleSignupOtpVerify = async (event: FormEvent) => {
+    event.preventDefault();
+    const phone = fullPhoneNumber.trim();
+    const code = otpCodeFor('signup').trim();
+    if (!phone) {
+      pushToast('error', 'Phone number is required');
+      return;
+    }
+    if (!code) {
+      pushToast('error', 'Verification code is required');
+      return;
+    }
+    if (code.length !== 6) {
+      pushToast('error', 'Verification code must be 6 digits');
+      return;
+    }
+
+    setBusyAction('signup-otp-verify');
+    try {
+      const { ok, data } = await postJson('/auth/register/complete', {
+        ...authContextBody,
+        phone_number: phone,
+        otp_code: code,
+      });
+
+      if (!ok) {
+        pushToast('error', String(data.error || 'Sign up failed'));
+        return;
+      }
+
+      clearOtpProgress();
+      window.location.href = String(data.returnTo || returnTo);
+    } catch {
+      pushToast('error', 'Sign up failed');
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  useEffect(() => {
+    const requestedMode = one(router.query.mode).toLowerCase();
+    if (requestedMode === 'signup') {
+      setMode('signup');
+      setSignupStep('phone');
+      return;
+    }
+    setMode('signin');
+  }, [router.query.mode]);
+
+  useEffect(() => {
+    if (!clientId) {
+      setAllowRegistration(true);
+      return;
+    }
+
+    const loadPolicy = async () => {
+      try {
+        let url = `/api/public/register-policy?client_id=${encodeURIComponent(clientId)}`;
+        if (tenantName) url += `&tenant_name=${encodeURIComponent(tenantName)}`;
+        const res = await fetch(url, { credentials: 'include', headers: { Accept: 'application/json' } });
+        const data = await parseJsonSafe(res);
+        const allowed = Boolean(data.allowRegistration);
+        setAllowRegistration(allowed);
+        if (!allowed) pushToast('error', 'Registration is disabled for this tenant.');
+      } catch {
+        setAllowRegistration(false);
+        pushToast('error', 'Unable to verify tenant registration policy.');
+      }
+    };
+
+    void loadPolicy();
+  }, [clientId, tenantName]);
+
+  useEffect(() => {
+    if (!router.isReady) return;
+    const fallbackPhone = one(router.query.phone_number);
+    if (fallbackPhone) applyPhoneValue(fallbackPhone);
+
+    const loadUiState = async () => {
+      try {
+        const res = await fetch('/api/public/login-ui-state', { credentials: 'include' });
+        if (!res.ok) return;
+        const data = await parseJsonSafe(res);
+        const state = (data.state || {}) as Record<string, unknown>;
+
+        const nextMode = one(state.mode as string | string[] | undefined).toLowerCase();
+        if (nextMode === 'signin' || nextMode === 'signup') setMode(nextMode as Mode);
+
+        const nextSigninStep = one(state.signinStep as string | string[] | undefined).toLowerCase();
+        if (nextSigninStep === 'password' || nextSigninStep === 'otp' || nextSigninStep === 'twofactor') {
+          setSigninStep(nextSigninStep as SigninStep);
+        } else {
+          setSigninStep('phone');
+        }
+
+        const nextSignupStep = one(state.signupStep as string | string[] | undefined).toLowerCase();
+        if (nextSignupStep === 'verify' || nextSignupStep === 'otp') setSignupStep('otp');
+        if (nextSignupStep === 'start' || nextSignupStep === 'phone') setSignupStep('phone');
+
+        const statePhone = one(state.phoneNumber as string | string[] | undefined);
+        if (statePhone) applyPhoneValue(statePhone);
+
+        const require2fa = Boolean(state.require2fa);
+        if (require2fa) {
+          setSigninStep('twofactor');
+        }
+
+        const waitMs = Number(state.otpWaitUntilMs || 0);
+        if (Number.isFinite(waitMs) && waitMs > 0) setOtpWaitUntilMs(waitMs);
+
+        const hasServerOtpState =
+          nextSigninStep === 'otp' ||
+          nextSigninStep === 'twofactor' ||
+          nextSignupStep === 'verify' ||
+          nextSignupStep === 'otp' ||
+          require2fa ||
+          (Number.isFinite(waitMs) && waitMs > 0) ||
+          Boolean(statePhone);
+
+        if (!hasServerOtpState && typeof window !== 'undefined') {
+          const raw = window.localStorage.getItem(OTP_PROGRESS_STORAGE_KEY);
+          if (raw) {
+            try {
+              const persisted = JSON.parse(raw) as Partial<OtpProgressState>;
+              const persistedPhone = String(persisted.phoneNumber || '').trim();
+              const persistedMode = String(persisted.mode || '').toLowerCase();
+              const persistedWait = Number(persisted.otpWaitUntilMs || 0);
+              const persistedSavedAt = Number(persisted.savedAt || 0);
+              const ageMs = persistedSavedAt > 0 ? Date.now() - persistedSavedAt : 0;
+              const isFresh = ageMs <= 30 * 60 * 1000;
+
+              if (persistedPhone && isFresh) {
+                applyPhoneValue(persistedPhone);
+                if (Number.isFinite(persistedWait) && persistedWait > 0) setOtpWaitUntilMs(persistedWait);
+                if (persistedMode === 'signup') {
+                  setMode('signup');
+                  setSignupStep('otp');
+                } else {
+                  setMode('signin');
+                  setSigninStep(persisted.step === 'twofactor' ? 'twofactor' : 'otp');
+                }
+              } else {
+                clearOtpProgress();
+              }
+            } catch {
+              clearOtpProgress();
+            }
+          }
+        }
+
+        const error = one(state.error as string | string[] | undefined);
+        const success = one(state.success as string | string[] | undefined);
+        if (error) pushToast('error', error);
+        if (success) pushToast('success', success);
+      } catch {
+        // ignore
+      }
+    };
+
+    void loadUiState();
+  }, [router.isReady, router.query.phone_number]);
+
+  useEffect(() => {
+    if (!otpWaitUntilMs || otpWaitUntilMs <= 0) {
+      setResendRemainingSec(0);
+      return;
+    }
+    const update = () => {
+      const remainingMs = otpWaitUntilMs - Date.now();
+      setResendRemainingSec(remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0);
+    };
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [otpWaitUntilMs]);
 
   return (
     <>
@@ -40,101 +887,248 @@ export default function LoginPage() {
         <title>Sign In | IDP Auth</title>
       </Head>
 
-      <main
-        className="min-h-screen bg-bgApp text-textPrimary"
-        dir="ltr"
-        style={{
-          backgroundImage:
-            'radial-gradient(circle at 20% 20%, rgba(77, 107, 255, 0.08), transparent 25%), radial-gradient(circle at 80% 80%, rgba(29, 53, 87, 0.16), transparent 30%)',
-        }}
-      >
-        <div className="flex min-h-screen items-center justify-center px-4 py-10">
-          <div className="w-full max-w-4xl overflow-hidden rounded-3xl border border-borderSubtle bg-bgSurface/90 shadow-soft backdrop-blur transition-transform duration-200 hover:-translate-y-0.5">
-            <div className="flex flex-col md:flex-row">
-              <aside className="md:w-1/2 bg-gradient-to-b from-primaryDark/80 to-bgSurface px-8 py-10 md:px-10 flex flex-col gap-6">
-                <div>
-                  <div className="mb-6 flex justify-center md:justify-start">
-                    <Image src={branding.logo_lw} alt={branding.brand_name} width={200} height={50} priority />
-                  </div>
-                  <h1 className="mt-4 text-3xl font-semibold md:text-4xl">{branding.app_title}</h1>
-                  <p className="mt-2 text-textMuted">
-                    Secure SSO authority for tenant sign-in, access control, and auditable identity changes.
-                  </p>
-                </div>
+      <main className="auth-login-page relative min-h-[100dvh] overflow-x-hidden bg-[#F6F8FC] text-[#202124]" dir="ltr">
+        <div className="pointer-events-none absolute bottom-8 left-8 z-0 login-bg-logo opacity-[0.08]">
+          <Image src="/images/lm_dark.png" alt="" width={180} height={180} priority className="h-[130px] w-auto md:h-[160px]" />
+        </div>
 
-                <div className="flex flex-col gap-3">
-                  <div className="flex items-start gap-3">
-                    <span className="mt-1 h-2.5 w-2.5 rounded-full bg-accent/80 animate-pulse" />
-                    <div>
-                      <p className="text-sm font-semibold text-textPrimary">Cookie-based sessions</p>
-                      <p className="text-xs text-textMuted">No browser JWT storage is used.</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <span className="mt-1 h-2.5 w-2.5 rounded-full bg-primary/80" />
-                    <div>
-                      <p className="text-sm font-semibold text-textPrimary">OAuth code flow</p>
-                      <p className="text-xs text-textMuted">Tenant SSO with PKCE and per-tenant token checks.</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <span className="mt-1 h-2.5 w-2.5 rounded-full bg-borderSubtle" />
-                    <div>
-                      <p className="text-sm font-semibold text-textPrimary">Audit-ready history</p>
-                      <p className="text-xs text-textMuted">Versioned identity and access changes.</p>
-                    </div>
-                  </div>
-                </div>
-              </aside>
-
-              <section className="md:w-1/2 px-8 py-10 md:px-10 flex flex-col justify-center gap-6 bg-bgSurface/90">
-                <div className="space-y-2">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-textMuted">Sign in</p>
-                      <h2 className="text-2xl font-semibold">Access {branding.brand_name}</h2>
-                    </div>
-                    <Link className="text-xs text-accent underline-offset-2 hover:underline" href={registerHref}>
-                      Sign up
-                    </Link>
-                  </div>
-                  <p className="text-sm text-textMuted">Enter your credentials to continue.</p>
-                </div>
-
-                {error ? (
-                  <div className="rounded-xl border border-danger/60 bg-danger/10 text-danger text-sm px-3 py-2">{error}</div>
-                ) : null}
-                {success ? (
-                  <div className="rounded-xl border border-success/60 bg-success/10 text-success text-sm px-3 py-2">{success}</div>
-                ) : null}
-
-                <form method="post" action="/auth/login" className="space-y-5">
-                  <input type="hidden" name="returnTo" value={returnTo} />
-                  {clientId ? <input type="hidden" name="client_id" value={clientId} /> : null}
-                  {tenantName ? <input type="hidden" name="tenant_name" value={tenantName} /> : null}
-
-                  <Input label="Email" name="email" type="email" autoComplete="email" placeholder="you@example.com" required />
-
-                  <Input
-                    label="Password"
-                    name="password"
-                    type="password"
-                    autoComplete="current-password"
-                    placeholder="********"
-                    required
-                  />
-
-                  <div className="flex items-center justify-between text-sm text-textMuted"></div>
-
-                  <Button type="submit" variant="primary" className="w-full justify-center rounded-xl px-4 py-2.5 text-sm shadow-soft">
-                    Sign in
-                  </Button>
-
-                  <p className="text-xs text-textMuted text-center">{branding.copyright}</p>
-                </form>
-              </section>
+        <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-[calc(100vw-2rem)] max-w-[380px] flex-col gap-2">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className={`pointer-events-auto rounded-xl border px-4 py-3 text-sm shadow-lg backdrop-blur ${
+                toast.type === 'success'
+                  ? 'border-[#81C995] bg-[#E6F4EA] text-[#137333]'
+                  : 'border-[#F28B82] bg-[#FDECEA] text-[#B3261E]'
+              }`}
+            >
+              {toast.message}
             </div>
-          </div>
+          ))}
+        </div>
+
+        <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-[1400px] items-end justify-center px-4 pb-10 pt-4 sm:px-6 sm:pt-6 md:items-center md:pb-0">
+          <section className="w-full max-w-[520px] login-shell-enter">
+            <div className="text-center">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#5F6368]">{mode === 'signup' ? 'Sign up' : 'Sign in'}</p>
+              <h1 className="mt-1 text-[28px] font-normal text-[#202124]">
+                {mode === 'signup' ? 'Create Account' : loginTitle}
+              </h1>
+              <p className="mt-2 text-sm text-[#5F6368]">
+                {mode === 'signup'
+                  ? 'Lets start with your Phone number'
+                  : 'Welcom back'}
+              </p>
+            </div>
+
+            <div className="mt-6 flex justify-center">
+              <div className="inline-flex items-center gap-1 rounded-full border border-[#DADCE0] bg-white p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearOtpProgress();
+                    setMode('signin');
+                    setSigninStep('phone');
+                    clearOtpDigits('signin');
+                  }}
+                  className={`${tabBaseClass} ${
+                    mode === 'signin'
+                      ? 'bg-[#E8F0FE] text-[#1A73E8]'
+                      : 'text-[#5F6368] hover:bg-[#F1F3F4] hover:text-[#202124]'
+                  }`}
+                >
+                  Sign in
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearOtpProgress();
+                    setMode('signup');
+                    setSignupStep('phone');
+                    clearOtpDigits('signup');
+                  }}
+                  className={`${tabBaseClass} ${
+                    mode === 'signup'
+                      ? 'bg-[#E8F0FE] text-[#1A73E8]'
+                      : 'text-[#5F6368] hover:bg-[#F1F3F4] hover:text-[#202124]'
+                  }`}
+                >
+                  Sign up
+                </button>
+              </div>
+            </div>
+
+            {tenantName ? (
+              <div className="mt-2 flex justify-center">
+                <span className="inline-flex items-center rounded-full bg-[#E8F0FE] px-3 py-1 text-xs font-medium text-[#1A73E8]">
+                  Tenant: {tenantName}
+                </span>
+              </div>
+            ) : null}
+
+            <div className="mt-6 min-h-[340px]">
+              {mode === 'signin' && signinStep === 'phone' ? (
+                <form onSubmit={handleSigninPhoneContinue} className="mx-auto w-full max-w-[360px] space-y-4">
+                  {renderPhoneInput('signin_phone')}
+                  <div className="flex items-center justify-center gap-3 pt-2">
+                    <button type="submit" className={primaryBtnClass} disabled={busyAction === 'signin-phone-continue'}>
+                      {busyAction === 'signin-phone-continue' ? 'Checking...' : 'Continue'}
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              {mode === 'signin' && signinStep === 'password' ? (
+                <form onSubmit={handleSigninPasswordSubmit} className="mx-auto w-full max-w-[360px] space-y-4">
+                  <div>
+                    <div className="mb-1 flex items-center justify-between">
+                      <label className="block text-sm font-normal text-[#202124]" htmlFor="signin_password">
+                        Password
+                      </label>
+                      <button
+                        type="button"
+                        className={inlineLinkClass}
+                        onClick={() => {
+                          void startOtpLogin();
+                        }}
+                        disabled={busyAction === 'signin-otp-send'}
+                      >
+                        {busyAction === 'signin-otp-send' ? 'Sending code...' : 'Login with verification code'}
+                      </button>
+                    </div>
+                    <input
+                      id="signin_password"
+                      className={inputClass}
+                      type="password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      autoComplete="current-password"
+                      required
+                    />
+                  </div>
+                  <div className="flex items-center justify-center gap-3 pt-2">
+                    <button type="submit" className={primaryBtnClass} disabled={busyAction === 'signin-password-submit'}>
+                      {busyAction === 'signin-password-submit' ? 'Signing in...' : 'Sign in'}
+                    </button>
+                    <button type="button" className={secondaryBtnClass} onClick={enterSigninPhoneStep}>
+                      Change phone
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              {mode === 'signin' && signinStep === 'otp' ? (
+                <form onSubmit={handleSigninOtpVerify} className="mx-auto w-full max-w-[360px] space-y-4">
+                  <div>{renderOtpInputs('signin', 'signin-otp')}</div>
+                  <div className="flex items-center justify-center gap-3 pt-2">
+                    <button type="submit" className={primaryBtnClass} disabled={busyAction === 'signin-otp-verify'}>
+                      {busyAction === 'signin-otp-verify' ? 'Verifying...' : 'Verify'}
+                    </button>
+                    <button
+                      type="button"
+                      className={secondaryBtnClass}
+                      onClick={() => {
+                        clearOtpProgress();
+                        setSigninStep('phone');
+                        clearOtpDigits('signin');
+                      }}
+                    >
+                      Back
+                    </button>
+                  </div>
+                  <div className="text-center">
+                    <button
+                      type="button"
+                      className={tinyLinkClass}
+                      disabled={resendRemainingSec > 0 || busyAction === 'signin-otp-send'}
+                      onClick={() => {
+                        void startOtpLogin();
+                      }}
+                    >
+                      {resendRemainingSec > 0
+                        ? `Send code again in ${formatCountdown(resendRemainingSec)}`
+                        : busyAction === 'signin-otp-send'
+                          ? 'Sending...'
+                          : 'Send code again'}
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              {mode === 'signin' && signinStep === 'twofactor' ? (
+                <form onSubmit={handleSigninTwoFactorVerify} className="mx-auto w-full max-w-[360px] space-y-4">
+                  <p className="text-center text-sm text-[#5F6368]">Enter your authenticator verification code</p>
+                  <div>{renderOtpInputs('signin', 'signin-twofactor')}</div>
+                  <div className="flex items-center justify-center gap-3 pt-2">
+                    <button type="submit" className={primaryBtnClass} disabled={busyAction === 'signin-2fa-verify'}>
+                      {busyAction === 'signin-2fa-verify' ? 'Verifying...' : 'Verify'}
+                    </button>
+                    <button
+                      type="button"
+                      className={secondaryBtnClass}
+                      onClick={() => {
+                        clearOtpProgress();
+                        setSigninStep('phone');
+                        clearOtpDigits('signin');
+                      }}
+                    >
+                      Back
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              {mode === 'signup' && signupStep === 'phone' ? (
+                <form onSubmit={handleSignupPhoneSubmit} className="mx-auto w-full max-w-[360px] space-y-4">
+                  <fieldset disabled={!allowRegistration}>{renderPhoneInput('signup_phone')}</fieldset>
+                  <div className="flex items-center justify-center gap-3 pt-2">
+                    <button type="submit" className={primaryBtnClass} disabled={!allowRegistration || busyAction === 'signup-otp-send'}>
+                      {busyAction === 'signup-otp-send' ? 'Sending code...' : 'Send verification code'}
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              {mode === 'signup' && signupStep === 'otp' ? (
+                <form onSubmit={handleSignupOtpVerify} className="mx-auto w-full max-w-[360px] space-y-4">
+                  <div>{renderOtpInputs('signup', 'signup-otp')}</div>
+                  <div className="flex items-center justify-center gap-3 pt-2">
+                    <button type="submit" className={primaryBtnClass} disabled={busyAction === 'signup-otp-verify'}>
+                      {busyAction === 'signup-otp-verify' ? 'Verifying...' : 'Complete sign up'}
+                    </button>
+                    <button
+                      type="button"
+                      className={secondaryBtnClass}
+                      onClick={() => {
+                        clearOtpProgress();
+                        setSignupStep('phone');
+                      }}
+                    >
+                      Back
+                    </button>
+                  </div>
+                  <div className="text-center">
+                    <button
+                      type="button"
+                      className={tinyLinkClass}
+                      disabled={resendRemainingSec > 0 || busyAction === 'signup-otp-send'}
+                      onClick={() => {
+                        void requestSignupOtp();
+                      }}
+                    >
+                      {resendRemainingSec > 0
+                        ? `Send SMS again in ${formatCountdown(resendRemainingSec)}`
+                        : busyAction === 'signup-otp-send'
+                          ? 'Sending...'
+                          : 'Send SMS again'}
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+            </div>
+
+            <p className="mt-6 text-center text-xs text-[#5F6368]">{branding.copyright}</p>
+          </section>
         </div>
       </main>
     </>

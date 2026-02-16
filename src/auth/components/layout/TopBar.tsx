@@ -52,7 +52,7 @@ export const TopBar = ({ onMenuToggle }: TopBarProps) => {
         });
       }
     } finally {
-      router.push('/login?success=' + encodeURIComponent('Signed out successfully'));
+      router.push('/login');
     }
   };
 

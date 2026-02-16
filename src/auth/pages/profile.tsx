@@ -43,9 +43,12 @@ interface ProfilePayload {
       gender: string | null;
     };
     security: {
+      hasPassword: boolean;
       twoFactorEnabled: boolean;
       twoFactorMethod: 'none' | 'app' | 'sms';
       twoFactorPhone: string | null;
+      twoFactorAppConfigured: boolean;
+      twoFactorSetupPending: boolean;
       updatedAt: string | null;
     };
     organizations: Array<{
@@ -145,12 +148,20 @@ const infoRow = (label: string, value: string, onClick?: () => void) => (
   </button>
 );
 
+type ToastType = 'success' | 'error';
+
+interface ToastEntry {
+  id: number;
+  type: ToastType;
+  message: string;
+}
+
 export default function ProfilePage() {
   const [session, setSession] = useState<SessionPayload | null>(null);
   const [profile, setProfile] = useState<ProfilePayload['profile'] | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [toasts, setToasts] = useState<ToastEntry[]>([]);
+  const toastIdRef = useRef(1);
 
   const [detailsSaving, setDetailsSaving] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
@@ -174,16 +185,26 @@ export default function ProfilePage() {
     confirmPassword: '',
   });
 
-  const [twoFaForm, setTwoFaForm] = useState({
-    enabled: false,
-    method: 'app' as 'app' | 'sms',
-    phoneNumber: '',
-  });
+  const [twoFaCode, setTwoFaCode] = useState('');
+  const [twoFaSetup, setTwoFaSetup] = useState<{ secret: string; otpauthUri: string } | null>(null);
+  const [twoFaQrDataUrl, setTwoFaQrDataUrl] = useState('');
+  const [twoFaQrLoading, setTwoFaQrLoading] = useState(false);
+  const [twoFaQrError, setTwoFaQrError] = useState('');
   const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const csrfToken = session?.csrfToken || '';
+
+  const pushToast = (type: ToastType, message: string) => {
+    const text = String(message || '').trim();
+    if (!text) return;
+    const id = toastIdRef.current++;
+    setToasts((prev) => [...prev, { id, type, message: text }]);
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((entry) => entry.id !== id));
+    }, 4200);
+  };
 
   const applyProfileState = (next: ProfilePayload['profile']) => {
     setProfile(next);
@@ -196,23 +217,20 @@ export default function ProfilePage() {
       birthday: next.user.birthday || '',
       gender: next.user.gender || '',
     });
-    setTwoFaForm({
-      enabled: next.security.twoFactorEnabled,
-      method: next.security.twoFactorMethod === 'sms' ? 'sms' : 'app',
-      phoneNumber: next.security.twoFactorPhone || next.user.phoneNumber || '',
-    });
+    if (next.security.twoFactorEnabled) {
+      setTwoFaSetup(null);
+    }
   };
 
   const load = async () => {
     setLoading(true);
-    setError('');
     try {
       const sessionRes = await fetch('/api/session', { credentials: 'include' });
       const sessionData = (await sessionRes.json()) as SessionPayload;
       setSession(sessionData);
 
       if (!sessionData.authenticated) {
-        setError('Session expired. Please sign in again.');
+        pushToast('error', 'Session expired. Please sign in again.');
         setProfile(null);
         return;
       }
@@ -225,7 +243,7 @@ export default function ProfilePage() {
 
       applyProfileState(profileData.profile);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Failed to load profile');
+      pushToast('error', loadError instanceof Error ? loadError.message : 'Failed to load profile');
       setProfile(null);
     } finally {
       setLoading(false);
@@ -235,6 +253,49 @@ export default function ProfilePage() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    if (!twoFaSetup?.otpauthUri) {
+      setTwoFaQrDataUrl('');
+      setTwoFaQrError('');
+      setTwoFaQrLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setTwoFaQrLoading(true);
+    setTwoFaQrError('');
+
+    void import('qrcode')
+      .then((module) =>
+        module.toDataURL(twoFaSetup.otpauthUri, {
+          errorCorrectionLevel: 'M',
+          margin: 1,
+          width: 240,
+          color: {
+            dark: '#202124',
+            light: '#FFFFFF',
+          },
+        }),
+      )
+      .then((url) => {
+        if (cancelled) return;
+        setTwoFaQrDataUrl(url);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTwoFaQrDataUrl('');
+        setTwoFaQrError('QR code is unavailable. Use the manual setup key.');
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setTwoFaQrLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [twoFaSetup?.otpauthUri]);
 
   useEffect(() => {
     if (!mobileMenuOpen) return;
@@ -315,12 +376,12 @@ export default function ProfilePage() {
     if (!file) return;
 
     if (!AVATAR_ALLOWED_TYPES.has(file.type.toLowerCase())) {
-      setError('Avatar file must be PNG, JPG, or WEBP.');
+      pushToast('error', 'Avatar file must be PNG, JPG, or WEBP.');
       return;
     }
 
     if (file.size > AVATAR_MAX_BYTES) {
-      setError('Avatar file is too large. Maximum size is 2 MB.');
+      pushToast('error', 'Avatar file is too large. Maximum size is 2 MB.');
       return;
     }
 
@@ -339,15 +400,14 @@ export default function ProfilePage() {
       });
 
       if (!dataUrl.startsWith('data:image/')) {
-        setError('Avatar file is invalid.');
+        pushToast('error', 'Avatar file is invalid.');
         return;
       }
 
       setDetailsForm((prev) => ({ ...prev, avatarUrl: dataUrl }));
-      setError('');
-      setSuccess('Avatar image selected. Click "Save profile details" to apply.');
+      pushToast('success', 'Avatar image selected. Click "Save profile details" to apply.');
     } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : 'Failed to load avatar image');
+      pushToast('error', uploadError instanceof Error ? uploadError.message : 'Failed to load avatar image');
     }
   };
 
@@ -361,7 +421,7 @@ export default function ProfilePage() {
         'X-CSRF-Token': csrfToken,
       },
     });
-    window.location.href = '/login?success=' + encodeURIComponent('Signed out successfully');
+    window.location.href = '/login';
   };
 
   const handleSaveDetails = async (event: FormEvent) => {
@@ -369,8 +429,6 @@ export default function ProfilePage() {
     if (!csrfToken) return;
 
     setDetailsSaving(true);
-    setError('');
-    setSuccess('');
     try {
       const res = await fetch('/api/profile/details', {
         method: 'POST',
@@ -392,9 +450,9 @@ export default function ProfilePage() {
       const data = (await res.json()) as { ok?: boolean; profile?: ProfilePayload['profile']; error?: string };
       if (!res.ok) throw new Error(data.error || 'Failed to update profile details');
       if (data.profile) applyProfileState(data.profile);
-      setSuccess('Profile details updated successfully.');
+      pushToast('success', 'Profile details updated successfully.');
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Failed to update profile details');
+      pushToast('error', submitError instanceof Error ? submitError.message : 'Failed to update profile details');
     } finally {
       setDetailsSaving(false);
     }
@@ -405,13 +463,11 @@ export default function ProfilePage() {
     if (!csrfToken) return;
 
     if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      setError('New password and confirmation do not match.');
+      pushToast('error', 'New password and confirmation do not match.');
       return;
     }
 
     setPasswordSaving(true);
-    setError('');
-    setSuccess('');
     try {
       const res = await fetch('/api/profile/password', {
         method: 'POST',
@@ -425,43 +481,102 @@ export default function ProfilePage() {
       const data = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok) throw new Error(data.error || 'Failed to change password');
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-      setSuccess('Password updated successfully.');
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              security: {
+                ...prev.security,
+                hasPassword: true,
+              },
+            }
+          : prev,
+      );
+      pushToast('success', 'Password updated successfully.');
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Failed to change password');
+      pushToast('error', submitError instanceof Error ? submitError.message : 'Failed to change password');
     } finally {
       setPasswordSaving(false);
     }
   };
 
-  const handleSaveTwoFactor = async (event: FormEvent) => {
+  const handleGenerateTwoFactorSetup = async () => {
+    if (!csrfToken) return;
+    setTwoFaSaving(true);
+    try {
+      const res = await fetch('/api/profile/2fa/setup', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'X-CSRF-Token': csrfToken,
+        },
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        setup?: { secret: string; otpauthUri: string };
+        error?: string;
+      };
+      if (!res.ok || !data.setup) throw new Error(data.error || 'Failed to prepare authenticator setup');
+      setTwoFaSetup(data.setup);
+      setTwoFaCode('');
+      pushToast('success', 'Authenticator setup generated. Add it to your app and confirm with verification code.');
+    } catch (submitError) {
+      pushToast('error', submitError instanceof Error ? submitError.message : 'Failed to prepare authenticator setup');
+    } finally {
+      setTwoFaSaving(false);
+    }
+  };
+
+  const handleEnableTwoFactor = async (event: FormEvent) => {
     event.preventDefault();
     if (!csrfToken) return;
-
     setTwoFaSaving(true);
-    setError('');
-    setSuccess('');
     try {
-      const res = await fetch('/api/profile/2fa', {
+      const res = await fetch('/api/profile/2fa/enable', {
         method: 'POST',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           'X-CSRF-Token': csrfToken,
         },
-        body: JSON.stringify({
-          enabled: twoFaForm.enabled,
-          method: twoFaForm.method,
-          phoneNumber: twoFaForm.phoneNumber,
-        }),
+        body: JSON.stringify({ verificationCode: twoFaCode }),
       });
       const data = (await res.json()) as { ok?: boolean; security?: ProfilePayload['profile']['security']; error?: string };
-      if (!res.ok) throw new Error(data.error || 'Failed to update 2FA settings');
-      if (profile && data.security) {
+      if (!res.ok || !data.security) throw new Error(data.error || 'Failed to enable 2FA');
+      if (profile) {
         applyProfileState({ ...profile, security: data.security });
       }
-      setSuccess('2FA settings updated successfully.');
+      setTwoFaCode('');
+      setTwoFaSetup(null);
+      pushToast('success', 'Two-factor authentication enabled.');
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Failed to update 2FA settings');
+      pushToast('error', submitError instanceof Error ? submitError.message : 'Failed to enable 2FA');
+    } finally {
+      setTwoFaSaving(false);
+    }
+  };
+
+  const handleDisableTwoFactor = async () => {
+    if (!csrfToken) return;
+    setTwoFaSaving(true);
+    try {
+      const res = await fetch('/api/profile/2fa/disable', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'X-CSRF-Token': csrfToken,
+        },
+      });
+      const data = (await res.json()) as { ok?: boolean; security?: ProfilePayload['profile']['security']; error?: string };
+      if (!res.ok || !data.security) throw new Error(data.error || 'Failed to disable 2FA');
+      if (profile) {
+        applyProfileState({ ...profile, security: data.security });
+      }
+      setTwoFaCode('');
+      setTwoFaSetup(null);
+      pushToast('success', 'Two-factor authentication disabled.');
+    } catch (submitError) {
+      pushToast('error', submitError instanceof Error ? submitError.message : 'Failed to disable 2FA');
     } finally {
       setTwoFaSaving(false);
     }
@@ -474,6 +589,21 @@ export default function ProfilePage() {
       </Head>
 
       <main className="min-h-screen overflow-x-hidden bg-[#F6F8FC] pb-20 pt-6 text-[#202124] md:pb-8">
+        <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-[calc(100vw-2rem)] max-w-[380px] flex-col gap-2">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className={`pointer-events-auto rounded-xl border px-4 py-3 text-sm shadow-lg backdrop-blur ${
+                toast.type === 'success'
+                  ? 'border-[#81C995] bg-[#E6F4EA] text-[#137333]'
+                  : 'border-[#F28B82] bg-[#FDECEA] text-[#B3261E]'
+              }`}
+            >
+              {toast.message}
+            </div>
+          ))}
+        </div>
+
         <div className="mx-auto flex min-h-[calc(100vh-8rem)] w-full max-w-[1400px] items-stretch gap-6 px-3 sm:px-4">
           <aside className="hidden w-[280px] shrink-0 md:block">
             <nav
@@ -520,8 +650,6 @@ export default function ProfilePage() {
 
           <section className="min-w-0 flex w-full max-w-full flex-1 flex-col justify-center gap-6">
             {loading ? <div className={`${cardClass} text-sm text-[#5F6368]`}>Loading profile...</div> : null}
-            {error ? <div className="rounded-xl border border-[#F28B82] bg-[#FDECEA] px-4 py-3 text-sm text-[#B3261E]">{error}</div> : null}
-            {success ? <div className="rounded-xl border border-[#81C995] bg-[#E6F4EA] px-4 py-3 text-sm text-[#137333]">{success}</div> : null}
             <input
               ref={avatarFileInputRef}
               type="file"
@@ -622,19 +750,21 @@ export default function ProfilePage() {
                     <article className={cardClass}>
                       <h2 className="text-xl font-normal text-[#202124]">Password Settings</h2>
                       <form className="mt-4 space-y-4" onSubmit={handleChangePassword}>
-                        <div>
-                          <label className="mb-1 block text-sm font-normal text-[#202124]">Current password</label>
-                          <input
-                            type="password"
-                            className={inputClass}
-                            value={passwordForm.currentPassword}
-                            onChange={(event) =>
-                              setPasswordForm((prev) => ({ ...prev, currentPassword: event.target.value }))
-                            }
-                            autoComplete="current-password"
-                            required
-                          />
-                        </div>
+                        {profile.security.hasPassword ? (
+                          <div>
+                            <label className="mb-1 block text-sm font-normal text-[#202124]">Current password</label>
+                            <input
+                              type="password"
+                              className={inputClass}
+                              value={passwordForm.currentPassword}
+                              onChange={(event) =>
+                                setPasswordForm((prev) => ({ ...prev, currentPassword: event.target.value }))
+                              }
+                              autoComplete="current-password"
+                              required
+                            />
+                          </div>
+                        ) : null}
                         <div>
                           <label className="mb-1 block text-sm font-normal text-[#202124]">New password</label>
                           <input
@@ -663,7 +793,7 @@ export default function ProfilePage() {
                         </div>
 
                         <button type="submit" className={primaryBtnClass} disabled={passwordSaving}>
-                          {passwordSaving ? 'Updating...' : 'Update password'}
+                          {passwordSaving ? 'Updating...' : profile.security.hasPassword ? 'Update password' : 'Set password'}
                         </button>
                       </form>
                     </article>
@@ -852,56 +982,106 @@ export default function ProfilePage() {
                   <section id="section-two-factor" className="grid w-full grid-cols-1 gap-6 sm:w-[75%]">
                     <article className={cardClass}>
                       <h2 className="text-xl font-normal text-[#202124]">2FA Settings</h2>
-                      <form className="mt-4 space-y-4" onSubmit={handleSaveTwoFactor}>
-                        <label className="inline-flex items-center gap-2 text-sm font-normal text-[#5F6368]">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 rounded border-[#DADCE0] text-[#1A73E8]"
-                            checked={twoFaForm.enabled}
-                            onChange={(event) => setTwoFaForm((prev) => ({ ...prev, enabled: event.target.checked }))}
-                          />
-                          Enable two-factor authentication
-                        </label>
-
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                          <div>
-                            <label className="mb-1 block text-sm font-normal text-[#202124]">Method</label>
-                            <select
-                              className={inputClass}
-                              value={twoFaForm.method}
-                              onChange={(event) =>
-                                setTwoFaForm((prev) => ({
-                                  ...prev,
-                                  method: event.target.value === 'sms' ? 'sms' : 'app',
-                                }))
-                              }
-                              disabled={!twoFaForm.enabled}
-                            >
-                              <option value="app">Authenticator app</option>
-                              <option value="sms">SMS code</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-sm font-normal text-[#202124]">SMS phone</label>
-                            <input
-                              className={inputClass}
-                              value={twoFaForm.phoneNumber}
-                              onChange={(event) => setTwoFaForm((prev) => ({ ...prev, phoneNumber: event.target.value }))}
-                              disabled={!twoFaForm.enabled || twoFaForm.method !== 'sms'}
-                              placeholder="+12025550123"
-                            />
-                          </div>
-                        </div>
-
-                        <p className="text-xs font-normal text-[#5F6368]">
-                          Current status: {profile.security.twoFactorEnabled ? 'Enabled' : 'Disabled'} · Method:{' '}
-                          {profile.security.twoFactorMethod} · Updated {formatDateTime(profile.security.updatedAt)}
+                      <div className="mt-4 space-y-4">
+                        <p className="text-sm text-[#5F6368]">
+                          Status:{' '}
+                          <span className="font-medium text-[#202124]">
+                            {profile.security.twoFactorEnabled ? 'Enabled' : 'Disabled'}
+                          </span>{' '}
+                          · Method: <span className="font-medium text-[#202124]">Authenticator app</span> · Updated{' '}
+                          {formatDateTime(profile.security.updatedAt)}
                         </p>
 
-                        <button type="submit" className={primaryBtnClass} disabled={twoFaSaving}>
-                          {twoFaSaving ? 'Saving...' : 'Save 2FA settings'}
-                        </button>
-                      </form>
+                        {!profile.security.twoFactorEnabled ? (
+                          <>
+                            <div className="rounded-2xl border border-[#DADCE0] bg-[#F8FAFF] p-4">
+                              <p className="text-sm text-[#202124]">
+                                1) Generate a setup secret. 2) Add it to Google Authenticator (or any TOTP app). 3)
+                                Enter the 6-digit code to enable.
+                              </p>
+                              <div className="mt-3">
+                                <button
+                                  type="button"
+                                  className={secondaryBtnClass}
+                                  onClick={handleGenerateTwoFactorSetup}
+                                  disabled={twoFaSaving}
+                                >
+                                  {twoFaSaving ? 'Preparing...' : 'Generate setup secret'}
+                                </button>
+                              </div>
+                            </div>
+
+                            {twoFaSetup ? (
+                              <div className="space-y-4 rounded-2xl border border-[#DADCE0] bg-white p-4">
+                                <div className="grid gap-4 md:grid-cols-[240px,1fr] md:items-start">
+                                  <div className="rounded-2xl border border-[#E8EAED] bg-white p-3">
+                                    <div className="grid place-items-center rounded-xl bg-[#F8F9FA] p-2">
+                                      {twoFaQrDataUrl ? (
+                                        <img
+                                          src={twoFaQrDataUrl}
+                                          alt="Scan this QR code with your authenticator app"
+                                          className="h-[220px] w-[220px]"
+                                        />
+                                      ) : (
+                                        <div className="grid h-[220px] w-[220px] place-items-center text-center text-xs text-[#5F6368]">
+                                          {twoFaQrLoading ? 'Generating QR code...' : twoFaQrError || 'QR code not ready'}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="space-y-3">
+                                    <p className="text-sm text-[#202124]">
+                                      Scan this QR code in Google Authenticator, Microsoft Authenticator, or any TOTP app.
+                                    </p>
+                                    <div>
+                                      <p className="text-xs font-medium uppercase tracking-[0.08em] text-[#5F6368]">
+                                        Manual setup key
+                                      </p>
+                                      <p className="mt-1 break-all font-mono text-sm text-[#202124]">{twoFaSetup.secret}</p>
+                                    </div>
+                                  </div>
+                                </div>
+                                <form className="space-y-3 border-t border-[#ECEFF3] pt-4" onSubmit={handleEnableTwoFactor}>
+                                  <div>
+                                    <label className="mb-1 block text-sm font-normal text-[#202124]">
+                                      Authenticator verification code
+                                    </label>
+                                    <input
+                                      className={`${inputClass} text-center font-mono tracking-[0.2em]`}
+                                      value={twoFaCode}
+                                      onChange={(event) => setTwoFaCode(event.target.value.replace(/\D+/g, '').slice(0, 6))}
+                                      inputMode="numeric"
+                                      pattern="[0-9]{6}"
+                                      minLength={6}
+                                      maxLength={6}
+                                      required
+                                    />
+                                  </div>
+                                  <button type="submit" className={primaryBtnClass} disabled={twoFaSaving}>
+                                    {twoFaSaving ? 'Enabling...' : 'Enable 2FA'}
+                                  </button>
+                                </form>
+                              </div>
+                            ) : null}
+                          </>
+                        ) : (
+                          <div className="rounded-2xl border border-[#DADCE0] bg-white p-4">
+                            <p className="text-sm text-[#5F6368]">
+                              Two-factor authentication is active for this account.
+                            </p>
+                            <div className="mt-3">
+                              <button
+                                type="button"
+                                className={secondaryBtnClass}
+                                onClick={handleDisableTwoFactor}
+                                disabled={twoFaSaving}
+                              >
+                                {twoFaSaving ? 'Disabling...' : 'Disable 2FA'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </article>
                   </section>
                 ) : null}
