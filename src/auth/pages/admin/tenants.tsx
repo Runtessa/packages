@@ -232,6 +232,7 @@ export default function AdminTenantsPage() {
             </div>
           }
         />
+        <div className="section-separator" />
 
         {error ? <div className="rounded-xl border border-[#F28B82] bg-[#FDECEA] px-4 py-3 text-sm text-[#B3261E]">{error}</div> : null}
         {success ? <div className="rounded-xl border border-[#81C995] bg-[#E6F4EA] px-4 py-3 text-sm text-[#137333]">{success}</div> : null}
@@ -243,6 +244,7 @@ export default function AdminTenantsPage() {
             </code>
           </div>
         ) : null}
+        <div className="section-separator" />
 
         <section className="grid w-full grid-cols-1 gap-6 xl:grid-cols-3">
           <article className={cardClass}>
@@ -258,6 +260,7 @@ export default function AdminTenantsPage() {
             <p className="mt-2 truncate text-sm text-[#5F6368]">{session?.user?.email || 'n/a'}</p>
           </article>
         </section>
+        <div className="section-separator" />
 
         <article className={cardClass}>
           <h2 className="text-xl font-normal text-[#202124]">Create or update tenant entry</h2>
@@ -345,6 +348,7 @@ export default function AdminTenantsPage() {
             </button>
           </form>
         </article>
+        <div className="section-separator" />
 
         <article className={cardClass}>
           <h2 className="text-xl font-normal text-[#202124]">Current whitelist</h2>

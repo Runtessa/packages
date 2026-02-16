@@ -86,6 +86,7 @@ export default function AuthAdminDashboardPage() {
         />
 
         {error ? <div className="rounded-xl border border-[#F28B82] bg-[#FDECEA] px-4 py-3 text-sm text-[#B3261E]">{error}</div> : null}
+        <div className="section-separator" />
 
         <section className="grid w-full grid-cols-1 gap-6 xl:grid-cols-2">
           <article className={cardClass}>
