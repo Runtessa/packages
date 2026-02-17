@@ -137,6 +137,13 @@ const optionalTenantOrgRandId = (value: unknown): string => {
   return raw;
 };
 
+const readEntityTenantOrgRandId = (value: unknown): string | null => {
+  if (!value || typeof value !== 'object') return null;
+  const raw = (value as { tenantOrgRandId?: unknown }).tenantOrgRandId;
+  const normalized = optionalTenantOrgRandId(raw);
+  return normalized || null;
+};
+
 const readTenantServiceToken = (req: Request): string => {
   const fromHeader = optionalString(req.headers['x-tenant-sso-token'], 512);
   if (fromHeader) return fromHeader;
@@ -1902,10 +1909,11 @@ const boot = async (): Promise<void> => {
         res.status(400).json({ error: 'tenant_name mismatch for authorization code' });
         return;
       }
+      const authorizationCodeTenantOrgRandId = readEntityTenantOrgRandId(authorizationCode);
       if (
         tenantOrgRandIdFromBody &&
-        authorizationCode.tenantOrgRandId &&
-        authorizationCode.tenantOrgRandId !== tenantOrgRandIdFromBody
+        authorizationCodeTenantOrgRandId &&
+        authorizationCodeTenantOrgRandId !== tenantOrgRandIdFromBody
       ) {
         res.status(400).json({ error: 'tenant_org_id mismatch for authorization code' });
         return;
@@ -1915,7 +1923,7 @@ const boot = async (): Promise<void> => {
         clientId,
         tenantRandId: authorizationCode.tenantRandId,
         tenantName: authorizationCode.tenantName,
-        tenantOrgRandId: authorizationCode.tenantOrgRandId || null,
+        tenantOrgRandId: authorizationCodeTenantOrgRandId,
         userRandId: authorizationCode.userRandId,
         scope: authorizationCode.scope,
         grantType,
@@ -1972,6 +1980,8 @@ const boot = async (): Promise<void> => {
       org_name: string;
     }> = [];
 
+    const tokenTenantOrgRandId = readEntityTenantOrgRandId(context.token);
+
     if (context.user?.randId) {
       const profile = await getUserProfileSnapshot(context.user.randId);
       roleDetails = profile.roles
@@ -1992,10 +2002,10 @@ const boot = async (): Promise<void> => {
         }));
 
       const tenantScope = await resolveTenantOrganizationScope(context.token.tenantName);
-      if (context.token.tenantOrgRandId) {
+      if (tokenTenantOrgRandId) {
         const tenantContext = await resolveTenantOrgContext({
           tenantName: context.token.tenantName,
-          tenantOrgRandId: context.token.tenantOrgRandId,
+          tenantOrgRandId: tokenTenantOrgRandId,
         });
         if (tenantContext.effectiveOrgRandId) {
           const orgSubtree = await resolveOrganizationSubtree(tenantContext.effectiveOrgRandId);
@@ -2033,7 +2043,7 @@ const boot = async (): Promise<void> => {
       groups: roleCodes,
       tenant_rand_id: context.token.tenantRandId,
       tenant_name: context.token.tenantName,
-      tenant_org_rand_id: context.token.tenantOrgRandId || null,
+      tenant_org_rand_id: tokenTenantOrgRandId,
       tenant_code: typeof clientMeta.tenantCode === 'string' ? clientMeta.tenantCode : null,
       client_id: context.token.clientId,
       scope: context.token.scope,
