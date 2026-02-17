@@ -7,6 +7,7 @@ import {
   FiLogOut,
   FiMoreHorizontal,
   FiUser,
+  FiUsers,
 } from 'react-icons/fi';
 import { LanguageToggle } from '../ui/LanguageToggle';
 import { localeDir, useUiLocale } from '../../lib/ui/locale';
@@ -22,7 +23,7 @@ type AdminShellProps = {
 };
 
 type NavItem = {
-  key: 'dashboard' | 'tenants' | 'profile';
+  key: 'dashboard' | 'tenants' | 'access' | 'profile';
   href: string;
   icon: React.ComponentType<{ className?: string }>;
 };
@@ -30,6 +31,7 @@ type NavItem = {
 const navItems: NavItem[] = [
   { key: 'dashboard', href: '/admin', icon: FiGrid },
   { key: 'tenants', href: '/admin/tenants', icon: FiLayers },
+  { key: 'access', href: '/admin/access', icon: FiUsers },
   { key: 'profile', href: '/profile', icon: FiUser },
 ];
 

@@ -50,6 +50,7 @@ const dangerBtnClass =
 export default function AdminTenantsPage() {
   const { locale, isRtl } = useUiLocale();
   const copy = getAuthMessages(locale).tenants;
+  const accessCopy = getAuthMessages(locale).access;
   const [session, setSession] = useState<SessionPayload | null>(null);
   const [items, setItems] = useState<TenantItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -233,6 +234,9 @@ export default function AdminTenantsPage() {
             <div className="flex flex-wrap gap-2">
               <a href="/admin" className={secondaryBtnClass}>
                 {copy.backToDashboard}
+              </a>
+              <a href="/admin/access" className={secondaryBtnClass}>
+                {accessCopy.title}
               </a>
             </div>
           }

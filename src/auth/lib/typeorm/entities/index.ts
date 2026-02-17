@@ -10,3 +10,4 @@ export { TenantWhitelistEntity } from './TenantWhitelistEntity';
 export { UserEntity } from './UserEntity';
 export { UserOrganizationEntity } from './UserOrganizationEntity';
 export { UserRoleEntity } from './UserRoleEntity';
+export { UserTenantMembershipEntity } from './UserTenantMembershipEntity';

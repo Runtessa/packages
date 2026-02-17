@@ -14,6 +14,7 @@ import {
   UserEntity,
   UserOrganizationEntity,
   UserRoleEntity,
+  UserTenantMembershipEntity,
 } from './entities';
 
 export const entities = [
@@ -29,6 +30,7 @@ export const entities = [
   UserEntity,
   UserOrganizationEntity,
   UserRoleEntity,
+  UserTenantMembershipEntity,
 ];
 
 export const AuthDataSource = new DataSource({

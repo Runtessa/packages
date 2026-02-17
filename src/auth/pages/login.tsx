@@ -22,6 +22,16 @@ const tenantFromReturnTo = (returnTo: string): string => {
   }
 };
 
+const tenantOrgIdFromReturnTo = (returnTo: string): string => {
+  if (!returnTo || !returnTo.startsWith('/')) return '';
+  try {
+    const parsed = new URL(returnTo, 'http://local.auth');
+    return parsed.searchParams.get('tenant_org_id') || parsed.searchParams.get('org_id') || '';
+  } catch {
+    return '';
+  }
+};
+
 const inputClass =
   'w-full rounded-xl border border-[#DADCE0] bg-white px-3 py-2.5 text-sm text-[#202124] outline-none transition-all duration-200 focus:border-[#1A73E8] focus:ring-2 focus:ring-[#1A73E8]/20';
 const primaryBtnClass =
@@ -183,6 +193,7 @@ export default function LoginPage() {
   const returnTo = one(router.query.returnTo) || '/profile';
   const clientId = one(router.query.client_id);
   const tenantName = one(router.query.tenant_name) || tenantFromReturnTo(returnTo);
+  const tenantOrgRandId = one(router.query.tenant_org_id) || tenantOrgIdFromReturnTo(returnTo);
   const loginTitle = tenantName ? `${copy.access} ${tenantName}` : copy.loginToProfile;
 
   const selectedCountry = useMemo(() => countryByCode(selectedCountryCode), [selectedCountryCode]);
@@ -433,8 +444,9 @@ export default function LoginPage() {
     const payload: Record<string, string> = { returnTo };
     if (clientId) payload.client_id = clientId;
     if (tenantName) payload.tenant_name = tenantName;
+    if (tenantOrgRandId) payload.tenant_org_id = tenantOrgRandId;
     return payload;
-  }, [clientId, returnTo, tenantName]);
+  }, [clientId, returnTo, tenantName, tenantOrgRandId]);
 
   const postJson = async (url: string, body: Record<string, unknown>): Promise<{ ok: boolean; status: number; data: Record<string, unknown> }> => {
     const res = await fetch(url, {

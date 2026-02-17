@@ -6,6 +6,7 @@ import {
   UserEntity,
   UserOrganizationEntity,
   UserRoleEntity,
+  UserTenantMembershipEntity,
 } from '../typeorm/entities';
 
 export interface VersionedRecord {
@@ -169,6 +170,11 @@ export const schemas: Record<string, VersionSchema> = {
     entity: UserOrganizationEntity,
     mutableFields: ['userRandId', 'orgRandId', 'isAssignmentActive', 'meta'],
     requiredOnCreate: ['userRandId', 'orgRandId', 'isAssignmentActive', 'meta'],
+  },
+  user_tenant_memberships: {
+    entity: UserTenantMembershipEntity,
+    mutableFields: ['userRandId', 'tenantName', 'tenantRandId', 'orgRandId', 'source', 'isActive', 'meta'],
+    requiredOnCreate: ['userRandId', 'tenantName', 'source', 'isActive', 'meta'],
   },
 };
 

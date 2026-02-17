@@ -3,6 +3,7 @@ import { Entity, PrimaryGeneratedColumn, Column, Index, CreateDateColumn } from 
 @Entity({ name: 'oauth_authorization_codes' })
 @Index('oauth_code_client_user_idx', ['clientId', 'userRandId', 'expiresAt'])
 @Index('oauth_code_tenant_name_idx', ['tenantName', 'expiresAt'])
+@Index('oauth_code_tenant_org_idx', ['tenantName', 'tenantOrgRandId', 'expiresAt'])
 export class OAuthAuthorizationCodeEntity {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id!: string;
@@ -18,6 +19,9 @@ export class OAuthAuthorizationCodeEntity {
 
   @Column({ name: 'tenant_name', type: 'varchar', length: 255 })
   tenantName!: string;
+
+  @Column({ name: 'tenant_org_rand_id', type: 'varchar', length: 64, nullable: true })
+  tenantOrgRandId!: string | null;
 
   @Column({ name: 'user_rand_id', type: 'varchar', length: 64 })
   userRandId!: string;

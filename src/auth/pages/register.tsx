@@ -20,6 +20,16 @@ const tenantFromReturnTo = (returnTo: string): string => {
   }
 };
 
+const tenantOrgIdFromReturnTo = (returnTo: string): string => {
+  if (!returnTo || !returnTo.startsWith('/')) return '';
+  try {
+    const parsed = new URL(returnTo, 'http://local.auth');
+    return parsed.searchParams.get('tenant_org_id') || parsed.searchParams.get('org_id') || '';
+  } catch {
+    return '';
+  }
+};
+
 export default function RegisterPage() {
   const router = useRouter();
   const { locale } = useUiLocale();
@@ -29,6 +39,7 @@ export default function RegisterPage() {
   const returnTo = one(router.query.returnTo) || '/profile';
   const clientId = one(router.query.client_id);
   const tenantName = one(router.query.tenant_name) || tenantFromReturnTo(returnTo);
+  const tenantOrgRandId = one(router.query.tenant_org_id) || tenantOrgIdFromReturnTo(returnTo);
 
   const [allowRegistration, setAllowRegistration] = useState<boolean>(true);
   const [policyMessage, setPolicyMessage] = useState<string>('');
@@ -66,8 +77,10 @@ export default function RegisterPage() {
     () =>
       `/login?returnTo=${encodeURIComponent(returnTo)}${
         clientId ? `&client_id=${encodeURIComponent(clientId)}` : ''
-      }${tenantName ? `&tenant_name=${encodeURIComponent(tenantName)}` : ''}`,
-    [returnTo, clientId, tenantName],
+      }${tenantName ? `&tenant_name=${encodeURIComponent(tenantName)}` : ''}${
+        tenantOrgRandId ? `&tenant_org_id=${encodeURIComponent(tenantOrgRandId)}` : ''
+      }`,
+    [returnTo, clientId, tenantName, tenantOrgRandId],
   );
 
   return (
@@ -135,6 +148,7 @@ export default function RegisterPage() {
                   <input type="hidden" name="returnTo" value={returnTo} />
                   {clientId ? <input type="hidden" name="client_id" value={clientId} /> : null}
                   {tenantName ? <input type="hidden" name="tenant_name" value={tenantName} /> : null}
+                  {tenantOrgRandId ? <input type="hidden" name="tenant_org_id" value={tenantOrgRandId} /> : null}
 
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div>

@@ -251,6 +251,7 @@ export const createAuthorizationCode = async ({
   clientId,
   tenantRandId,
   tenantName,
+  tenantOrgRandId,
   userRandId,
   redirectUri,
   scope,
@@ -261,6 +262,7 @@ export const createAuthorizationCode = async ({
   clientId: string;
   tenantRandId: string;
   tenantName: string;
+  tenantOrgRandId?: string | null;
   userRandId: string;
   redirectUri: string;
   scope: string;
@@ -276,6 +278,7 @@ export const createAuthorizationCode = async ({
     clientId,
     tenantRandId,
     tenantName,
+    tenantOrgRandId: tenantOrgRandId || null,
     userRandId,
     redirectUri,
     scope,
@@ -385,6 +388,7 @@ export const createAccessToken = async ({
   clientId,
   tenantRandId,
   tenantName,
+  tenantOrgRandId,
   userRandId,
   scope,
   grantType,
@@ -393,6 +397,7 @@ export const createAccessToken = async ({
   clientId: string;
   tenantRandId: string;
   tenantName: string;
+  tenantOrgRandId?: string | null;
   userRandId?: string | null;
   scope: string;
   grantType: string;
@@ -411,6 +416,7 @@ export const createAccessToken = async ({
     clientId,
     tenantRandId,
     tenantName,
+    tenantOrgRandId: tenantOrgRandId || null,
     userRandId: userRandId || null,
     scope,
     grantType,

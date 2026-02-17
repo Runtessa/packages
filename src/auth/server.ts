@@ -67,10 +67,26 @@ import {
   listWhitelist,
   normalizeTenantName,
   rotateWhitelistTenantToken,
+  verifyTenantSsoToken,
 } from './lib/services/tenant-whitelist';
 import { removeManagedAvatarFromDisk, saveAvatarDataUrlToDisk, saveAvatarToDisk } from './lib/services/avatar-storage';
 import { safeEqual } from './lib/crypto';
 import { provisionTenantSso } from './lib/services/tenant-provisioning';
+import {
+  assignTenantOrganization,
+  assignUserOrganization,
+  assignUserRole,
+  listOrganizations,
+  listRoles,
+  listTenantOrganizationMappings,
+  listUsersWithAssignments,
+  resolveOrganizationSubtree,
+  resolveTenantOrganizationScope,
+  upsertOrganization,
+  upsertRole,
+} from './lib/services/access-admin';
+import { resolveTenantOrgContext, upsertUserTenantMembership } from './lib/services/user-tenant-context';
+import { getTenantOrgDirectory, getTenantOu, getTenantUsersByOu } from './lib/services/tenant-directory';
 
 const dev = config.nodeEnv !== 'production';
 const nextApp = next({ dev, dir: __dirname });
@@ -116,6 +132,21 @@ const optionalString = (value: unknown, max = 2048): string => {
   return raw.slice(0, max);
 };
 
+const optionalTenantOrgRandId = (value: unknown): string => {
+  const raw = optionalString(value, 64);
+  return raw;
+};
+
+const readTenantServiceToken = (req: Request): string => {
+  const fromHeader = optionalString(req.headers['x-tenant-sso-token'], 512);
+  if (fromHeader) return fromHeader;
+  const fromBody = optionalString(req.body?.tenant_sso_token || req.body?.tenantSsoToken, 512);
+  if (fromBody) return fromBody;
+  const fromQuery = optionalString(req.query?.tenant_sso_token || req.query?.tenantSsoToken, 512);
+  if (fromQuery) return fromQuery;
+  return parseBearer(req.headers.authorization);
+};
+
 const AVATAR_UPLOAD_MAX_BYTES = 2 * 1024 * 1024;
 
 const readRequestBuffer = async (req: Request, maxBytes: number): Promise<Buffer> => {
@@ -140,15 +171,18 @@ const appendAuthContext = (
     returnTo,
     clientId,
     tenantName,
+    tenantOrgRandId,
   }: {
     returnTo: string;
     clientId?: string;
     tenantName?: string;
+    tenantOrgRandId?: string;
   },
 ): string => {
   let location = `${baseUrl}?returnTo=${encodeURIComponent(returnTo)}`;
   if (clientId) location = appendQuery(location, 'client_id', clientId);
   if (tenantName) location = appendQuery(location, 'tenant_name', tenantName);
+  if (tenantOrgRandId) location = appendQuery(location, 'tenant_org_id', tenantOrgRandId);
   return location;
 };
 
@@ -172,6 +206,7 @@ interface LoginTwoFactorPendingState {
   returnTo: string;
   clientId?: string;
   tenantName?: string;
+  tenantOrgRandId?: string;
   expiresAt: number;
 }
 
@@ -309,6 +344,14 @@ const requiresAuthenticatorTwoFactor = (security: ReturnType<typeof readUserSecu
 const isAuthAdmin = (req: Request): boolean => {
   const meta = (req.sessionContext?.user?.meta || {}) as Record<string, unknown>;
   return meta.authAdmin === true;
+};
+
+const requireAuthAdminApi = (req: Request, res: Response): boolean => {
+  if (!req.sessionContext || !isAuthAdmin(req)) {
+    res.status(403).json({ error: 'Admin access required' });
+    return false;
+  }
+  return true;
 };
 
 const renewSessionHandler = async (req: Request, res: Response, next: express.NextFunction): Promise<void> => {
@@ -484,6 +527,89 @@ const boot = async (): Promise<void> => {
       res.status(200).json({ state: parsed || {} });
     } catch {
       res.status(200).json({ state: {} });
+    }
+  });
+
+  app.get('/api/tenant-directory/org', oauthLimiter, async (req, res, next) => {
+    try {
+      const tenantName = optionalString(req.query.tenant_name || req.headers['x-tenant-name'], 255);
+      if (!tenantName) {
+        res.status(400).json({ error: 'tenant_name is required' });
+        return;
+      }
+
+      const tenantSsoToken = readTenantServiceToken(req);
+      if (!tenantSsoToken) {
+        res.status(401).json({ error: 'tenant_sso_token is required' });
+        return;
+      }
+
+      const tenantEntry = await verifyTenantSsoToken(tenantName, tenantSsoToken);
+      if (!tenantEntry) {
+        res.status(401).json({ error: 'Invalid tenant token' });
+        return;
+      }
+
+      const payload = await getTenantOrgDirectory(tenantEntry.tenantName);
+      res.status(200).json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/tenant-directory/ou', oauthLimiter, async (req, res, next) => {
+    try {
+      const tenantName = optionalString(req.query.tenant_name || req.headers['x-tenant-name'], 255);
+      if (!tenantName) {
+        res.status(400).json({ error: 'tenant_name is required' });
+        return;
+      }
+
+      const tenantSsoToken = readTenantServiceToken(req);
+      if (!tenantSsoToken) {
+        res.status(401).json({ error: 'tenant_sso_token is required' });
+        return;
+      }
+
+      const tenantEntry = await verifyTenantSsoToken(tenantName, tenantSsoToken);
+      if (!tenantEntry) {
+        res.status(401).json({ error: 'Invalid tenant token' });
+        return;
+      }
+
+      const ouPath = optionalString(req.query.ou_path || req.query.ouPath, 512);
+      const payload = await getTenantOu(tenantEntry.tenantName, ouPath);
+      res.status(200).json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/tenant-directory/users', oauthLimiter, async (req, res, next) => {
+    try {
+      const tenantName = optionalString(req.query.tenant_name || req.headers['x-tenant-name'], 255);
+      if (!tenantName) {
+        res.status(400).json({ error: 'tenant_name is required' });
+        return;
+      }
+
+      const tenantSsoToken = readTenantServiceToken(req);
+      if (!tenantSsoToken) {
+        res.status(401).json({ error: 'tenant_sso_token is required' });
+        return;
+      }
+
+      const tenantEntry = await verifyTenantSsoToken(tenantName, tenantSsoToken);
+      if (!tenantEntry) {
+        res.status(401).json({ error: 'Invalid tenant token' });
+        return;
+      }
+
+      const ouPath = optionalString(req.query.ou_path || req.query.ouPath, 512);
+      const payload = await getTenantUsersByOu(tenantEntry.tenantName, ouPath);
+      res.status(200).json(payload);
+    } catch (error) {
+      next(error);
     }
   });
 
@@ -738,6 +864,9 @@ const boot = async (): Promise<void> => {
     const returnTo = safeReturnTo(req.body.returnTo || req.query.returnTo || '/profile', '/profile');
     const clientId = optionalString(req.body.client_id || req.query.client_id, 120);
     const tenantName = optionalString(req.body.tenant_name || req.query.tenant_name, 255);
+    const tenantOrgRandId = optionalTenantOrgRandId(
+      req.body.tenant_org_id || req.body.tenantOrgRandId || req.query.tenant_org_id || req.query.tenantOrgRandId,
+    );
     const phoneNumber = optionalString(req.body.phone_number || req.body.phoneNumber || req.query.phone_number, 32);
     const requestedSigninStep = optionalString(req.body.signin_step || req.query.signin_step, 24).toLowerCase();
 
@@ -756,7 +885,7 @@ const boot = async (): Promise<void> => {
           phoneNumber,
           error: 'Account not found',
         });
-        res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName }));
+        res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName, tenantOrgRandId }));
         return;
       }
 
@@ -797,7 +926,7 @@ const boot = async (): Promise<void> => {
           ? `OTP sent. Dev OTP: ${challenge.code}`
           : 'OTP sent to your phone',
       });
-      res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName }));
+      res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName, tenantOrgRandId }));
     } catch (error) {
       if (wantsJson(req)) {
         res.status((error as { statusCode?: number }).statusCode || 400).json({
@@ -817,7 +946,7 @@ const boot = async (): Promise<void> => {
             : undefined,
         error: toErrorMessage(error, 'OTP request failed'),
       });
-      res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName }));
+      res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName, tenantOrgRandId }));
     }
   });
 
@@ -825,6 +954,9 @@ const boot = async (): Promise<void> => {
     const returnTo = safeReturnTo(req.body.returnTo || req.query.returnTo || '/profile', '/profile');
     const clientId = optionalString(req.body.client_id || req.query.client_id, 120);
     const tenantName = optionalString(req.body.tenant_name || req.query.tenant_name, 255);
+    const tenantOrgRandId = optionalTenantOrgRandId(
+      req.body.tenant_org_id || req.body.tenantOrgRandId || req.query.tenant_org_id || req.query.tenantOrgRandId,
+    );
     const phoneNumber = optionalString(req.body.phone_number || req.body.phoneNumber || req.query.phone_number, 32);
     const otpCode = optionalString(req.body.otp_code || req.body.otpCode || req.query.otp_code, 12);
 
@@ -854,6 +986,7 @@ const boot = async (): Promise<void> => {
           returnTo,
           clientId: clientId || undefined,
           tenantName: tenantName || undefined,
+          tenantOrgRandId: tenantOrgRandId || undefined,
         });
 
         if (wantsJson(req)) {
@@ -874,7 +1007,7 @@ const boot = async (): Promise<void> => {
           phoneNumber: user.phoneNumber,
           success: 'Enter authenticator verification code',
         });
-        res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName }));
+        res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName, tenantOrgRandId }));
         return;
       }
 
@@ -887,6 +1020,22 @@ const boot = async (): Promise<void> => {
 
       clearLoginTwoFactorPending(res);
       issueSessionCookie(req, res, sessionToken, resolveTenantHostForCookie(req, returnTo));
+
+      if (tenantName) {
+        const tenantContext = await resolveTenantOrgContext({
+          tenantName,
+          tenantOrgRandId: tenantOrgRandId || null,
+        });
+        await upsertUserTenantMembership({
+          userRandId: user.randId,
+          tenantName: tenantContext.tenantName || tenantName,
+          tenantRandId: tenantContext.tenantRandId,
+          orgRandId: tenantContext.effectiveOrgRandId,
+          source: 'login',
+          actorUserRandId: user.randId,
+          actorTenantRandId: tenantContext.tenantRandId || null,
+        });
+      }
 
       await logActivity({
         eventType: 'auth.login.otp.success',
@@ -922,7 +1071,7 @@ const boot = async (): Promise<void> => {
             : undefined,
         error: toErrorMessage(error, 'Login failed'),
       });
-      res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName }));
+      res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName, tenantOrgRandId }));
     }
   });
 
@@ -930,6 +1079,9 @@ const boot = async (): Promise<void> => {
     const requestReturnTo = safeReturnTo(req.body.returnTo || req.query.returnTo || '/profile', '/profile');
     const requestClientId = optionalString(req.body.client_id || req.query.client_id, 120);
     const requestTenantName = optionalString(req.body.tenant_name || req.query.tenant_name, 255);
+    const requestTenantOrgRandId = optionalTenantOrgRandId(
+      req.body.tenant_org_id || req.body.tenantOrgRandId || req.query.tenant_org_id || req.query.tenantOrgRandId,
+    );
     const verificationCode = normalizeTotpCode(
       optionalString(
         req.body.verification_code ??
@@ -983,6 +1135,7 @@ const boot = async (): Promise<void> => {
       const returnTo = pending.returnTo || requestReturnTo;
       const clientId = pending.clientId || requestClientId;
       const tenantName = pending.tenantName || requestTenantName;
+      const tenantOrgRandId = pending.tenantOrgRandId || requestTenantOrgRandId;
 
       const { sessionToken, sessionEntity } = await createSession({
         userRandId: effectiveUser.randId,
@@ -993,6 +1146,22 @@ const boot = async (): Promise<void> => {
 
       clearLoginTwoFactorPending(res);
       issueSessionCookie(req, res, sessionToken, resolveTenantHostForCookie(req, returnTo));
+
+      if (tenantName) {
+        const tenantContext = await resolveTenantOrgContext({
+          tenantName,
+          tenantOrgRandId: tenantOrgRandId || null,
+        });
+        await upsertUserTenantMembership({
+          userRandId: effectiveUser.randId,
+          tenantName: tenantContext.tenantName || tenantName,
+          tenantRandId: tenantContext.tenantRandId,
+          orgRandId: tenantContext.effectiveOrgRandId,
+          source: 'login',
+          actorUserRandId: effectiveUser.randId,
+          actorTenantRandId: tenantContext.tenantRandId || null,
+        });
+      }
 
       await logActivity({
         eventType: 'auth.login.2fa.success',
@@ -1028,7 +1197,14 @@ const boot = async (): Promise<void> => {
         require2fa: true,
         error: toErrorMessage(error, '2FA verification failed'),
       });
-      res.redirect(appendAuthContext('/login', { returnTo: requestReturnTo, clientId: requestClientId, tenantName: requestTenantName }));
+      res.redirect(
+        appendAuthContext('/login', {
+          returnTo: requestReturnTo,
+          clientId: requestClientId,
+          tenantName: requestTenantName,
+          tenantOrgRandId: requestTenantOrgRandId || undefined,
+        }),
+      );
     }
   };
 
@@ -1044,6 +1220,9 @@ const boot = async (): Promise<void> => {
     const returnTo = safeReturnTo(req.body.returnTo || req.query.returnTo || '/profile', '/profile');
     const clientId = optionalString(req.body.client_id || req.query.client_id, 120);
     const tenantName = optionalString(req.body.tenant_name || req.query.tenant_name, 255);
+    const tenantOrgRandId = optionalTenantOrgRandId(
+      req.body.tenant_org_id || req.body.tenantOrgRandId || req.query.tenant_org_id || req.query.tenantOrgRandId,
+    );
     const phoneNumber = optionalString(req.body.phone_number || req.body.phoneNumber || req.query.phone_number, 32);
 
     try {
@@ -1074,7 +1253,7 @@ const boot = async (): Promise<void> => {
               phoneNumber,
               error: 'Invalid credentials',
             });
-            return appendAuthContext('/login', { returnTo, clientId, tenantName });
+            return appendAuthContext('/login', { returnTo, clientId, tenantName, tenantOrgRandId });
           })(),
         );
         return;
@@ -1087,6 +1266,7 @@ const boot = async (): Promise<void> => {
           returnTo,
           clientId: clientId || undefined,
           tenantName: tenantName || undefined,
+          tenantOrgRandId: tenantOrgRandId || undefined,
         });
 
         await logActivity({
@@ -1117,7 +1297,7 @@ const boot = async (): Promise<void> => {
           phoneNumber: user.phoneNumber,
           success: 'Enter authenticator verification code',
         });
-        res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName }));
+        res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName, tenantOrgRandId }));
         return;
       }
 
@@ -1130,6 +1310,22 @@ const boot = async (): Promise<void> => {
 
       clearLoginTwoFactorPending(res);
       issueSessionCookie(req, res, sessionToken, resolveTenantHostForCookie(req, returnTo));
+
+      if (tenantName) {
+        const tenantContext = await resolveTenantOrgContext({
+          tenantName,
+          tenantOrgRandId: tenantOrgRandId || null,
+        });
+        await upsertUserTenantMembership({
+          userRandId: user.randId,
+          tenantName: tenantContext.tenantName || tenantName,
+          tenantRandId: tenantContext.tenantRandId,
+          orgRandId: tenantContext.effectiveOrgRandId,
+          source: 'login',
+          actorUserRandId: user.randId,
+          actorTenantRandId: tenantContext.tenantRandId || null,
+        });
+      }
 
       await logActivity({
         eventType: 'auth.login.success',
@@ -1166,7 +1362,7 @@ const boot = async (): Promise<void> => {
             phoneNumber,
             error: message,
           });
-          return appendAuthContext('/login', { returnTo, clientId, tenantName });
+          return appendAuthContext('/login', { returnTo, clientId, tenantName, tenantOrgRandId });
         })(),
       );
     }
@@ -1176,14 +1372,20 @@ const boot = async (): Promise<void> => {
     const returnTo = safeReturnTo(req.body.returnTo || '/profile', '/profile');
     const clientId = optionalString(req.body.client_id || req.query.client_id, 120);
     const tenantName = optionalString(req.body.tenant_name || req.query.tenant_name, 255);
+    const tenantOrgRandId = optionalTenantOrgRandId(
+      req.body.tenant_org_id || req.body.tenantOrgRandId || req.query.tenant_org_id || req.query.tenantOrgRandId,
+    );
     const phoneNumber = optionalString(req.body.phone_number || req.body.phoneNumber || req.query.phone_number, 32);
     const requestedSignupStep = optionalString(req.body.signup_step || req.query.signup_step, 16).toLowerCase();
 
     try {
+      const tenantContext = tenantName
+        ? await resolveTenantOrgContext({ tenantName, tenantOrgRandId: tenantOrgRandId || null })
+        : { tenantName: null, tenantRandId: null, effectiveOrgRandId: null };
       const normalizedPhone = await assertPhoneRegistrationAllowed({
         phoneNumber,
         clientId: clientId || undefined,
-        tenantName: tenantName || undefined,
+        tenantName: tenantContext.tenantName || tenantName || undefined,
       });
 
       const challenge = await issueOtpChallenge({
@@ -1191,7 +1393,9 @@ const boot = async (): Promise<void> => {
         destinationPhone: normalizedPhone,
         payload: {
           clientId: clientId || null,
-          tenantName: tenantName || null,
+          tenantName: tenantContext.tenantName || tenantName || null,
+          tenantRandId: tenantContext.tenantRandId || null,
+          tenantOrgRandId: tenantContext.effectiveOrgRandId || null,
         },
       });
 
@@ -1204,7 +1408,9 @@ const boot = async (): Promise<void> => {
           phoneNumber: normalizedPhone,
           expiresAt: challenge.expiresAt.toISOString(),
           clientId: clientId || null,
-          tenantName: tenantName || null,
+          tenantName: tenantContext.tenantName || tenantName || null,
+          tenantRandId: tenantContext.tenantRandId || null,
+          tenantOrgRandId: tenantContext.effectiveOrgRandId || null,
         },
       });
 
@@ -1230,7 +1436,7 @@ const boot = async (): Promise<void> => {
               ? `OTP sent. Dev OTP: ${challenge.code}`
               : 'OTP sent. Enter the code to complete signup.',
           });
-          return appendAuthContext('/login', { returnTo, clientId, tenantName });
+          return appendAuthContext('/login', { returnTo, clientId, tenantName, tenantOrgRandId });
         })(),
       );
     } catch (error) {
@@ -1253,7 +1459,7 @@ const boot = async (): Promise<void> => {
             phoneNumber,
             error: toErrorMessage(error, 'OTP request failed'),
           });
-          return appendAuthContext('/login', { returnTo, clientId, tenantName });
+          return appendAuthContext('/login', { returnTo, clientId, tenantName, tenantOrgRandId });
         })(),
       );
     }
@@ -1263,21 +1469,57 @@ const boot = async (): Promise<void> => {
     const returnTo = safeReturnTo(req.body.returnTo || '/profile', '/profile');
     const clientId = optionalString(req.body.client_id || req.query.client_id, 120);
     const tenantName = optionalString(req.body.tenant_name || req.query.tenant_name, 255);
+    const tenantOrgRandId = optionalTenantOrgRandId(
+      req.body.tenant_org_id || req.body.tenantOrgRandId || req.query.tenant_org_id || req.query.tenantOrgRandId,
+    );
     const phoneNumber = optionalString(req.body.phone_number || req.body.phoneNumber || req.query.phone_number, 32);
     const otpCode = optionalString(req.body.otp_code || req.body.otpCode || req.query.otp_code, 12);
 
     try {
-      await verifyOtpChallenge({
+      const verified = await verifyOtpChallenge({
         purpose: 'signup',
         destinationPhone: phoneNumber,
         code: otpCode,
       });
 
+      const payloadTenantName = optionalString(verified.payload.tenantName, 255);
+      const payloadTenantRandId = optionalString(verified.payload.tenantRandId, 64) || null;
+      const payloadTenantOrgRandId = optionalTenantOrgRandId(verified.payload.tenantOrgRandId);
+      const effectiveTenantName = payloadTenantName || tenantName || '';
+      const requestedTenantOrgRandId = tenantOrgRandId || payloadTenantOrgRandId;
+      const tenantContext = effectiveTenantName
+        ? await resolveTenantOrgContext({
+            tenantName: effectiveTenantName,
+            tenantOrgRandId: requestedTenantOrgRandId || null,
+          })
+        : { tenantName: null, tenantRandId: payloadTenantRandId || null, effectiveOrgRandId: requestedTenantOrgRandId || null };
+
       const user = await registerUserByPhone({
         phoneNumber,
         clientId: clientId || undefined,
-        tenantName: tenantName || undefined,
+        tenantName: tenantContext.tenantName || effectiveTenantName || undefined,
       });
+
+      if (tenantContext.tenantName) {
+        await upsertUserTenantMembership({
+          userRandId: user.randId,
+          tenantName: tenantContext.tenantName,
+          tenantRandId: tenantContext.tenantRandId || payloadTenantRandId || null,
+          orgRandId: tenantContext.effectiveOrgRandId || null,
+          source: 'signup',
+          actorUserRandId: user.randId,
+          actorTenantRandId: tenantContext.tenantRandId || payloadTenantRandId || null,
+        });
+
+        if (tenantContext.effectiveOrgRandId) {
+          await assignUserOrganization({
+            userRandId: user.randId,
+            orgRandId: tenantContext.effectiveOrgRandId,
+            isAssignmentActive: true,
+            actorUserRandId: user.randId,
+          });
+        }
+      }
 
       const { sessionToken, sessionEntity } = await createSession({
         userRandId: user.randId,
@@ -1332,7 +1574,7 @@ const boot = async (): Promise<void> => {
             phoneNumber,
             error: toErrorMessage(error, 'Registration failed'),
           });
-          return appendAuthContext('/login', { returnTo, clientId, tenantName });
+          return appendAuthContext('/login', { returnTo, clientId, tenantName, tenantOrgRandId });
         })(),
       );
     }
@@ -1342,9 +1584,15 @@ const boot = async (): Promise<void> => {
     const returnTo = safeReturnTo(req.body.returnTo || '/profile', '/profile');
     const clientId = optionalString(req.body.client_id || req.query.client_id, 120);
     const tenantName = optionalString(req.body.tenant_name || req.query.tenant_name, 255);
+    const tenantOrgRandId = optionalTenantOrgRandId(
+      req.body.tenant_org_id || req.body.tenantOrgRandId || req.query.tenant_org_id || req.query.tenantOrgRandId,
+    );
     const authUi = optionalString(req.body.auth_ui, 32).toLowerCase();
 
     try {
+      const tenantContext = tenantName
+        ? await resolveTenantOrgContext({ tenantName, tenantOrgRandId: tenantOrgRandId || null })
+        : { tenantName: null, tenantRandId: null, effectiveOrgRandId: null };
       const user = await registerUser({
         email: String(req.body.email || ''),
         password: String(req.body.password || ''),
@@ -1353,8 +1601,29 @@ const boot = async (): Promise<void> => {
         nationalId: String(req.body.national_id || req.body.nationalId || ''),
         phoneNumber: String(req.body.phone_number || req.body.phoneNumber || ''),
         clientId: clientId || undefined,
-        tenantName: tenantName || undefined,
+        tenantName: tenantContext.tenantName || tenantName || undefined,
       });
+
+      if (tenantContext.tenantName) {
+        await upsertUserTenantMembership({
+          userRandId: user.randId,
+          tenantName: tenantContext.tenantName,
+          tenantRandId: tenantContext.tenantRandId || null,
+          orgRandId: tenantContext.effectiveOrgRandId || null,
+          source: 'signup',
+          actorUserRandId: user.randId,
+          actorTenantRandId: tenantContext.tenantRandId || null,
+        });
+
+        if (tenantContext.effectiveOrgRandId) {
+          await assignUserOrganization({
+            userRandId: user.randId,
+            orgRandId: tenantContext.effectiveOrgRandId,
+            isAssignmentActive: true,
+            actorUserRandId: user.randId,
+          });
+        }
+      }
 
       const { sessionToken, sessionEntity } = await createSession({
         userRandId: user.randId,
@@ -1406,13 +1675,14 @@ const boot = async (): Promise<void> => {
           error: toErrorMessage(error, 'Registration failed'),
           phoneNumber: optionalString(req.body.phone_number || req.body.phoneNumber || '', 32),
         });
-        res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName }));
+        res.redirect(appendAuthContext('/login', { returnTo, clientId, tenantName, tenantOrgRandId }));
         return;
       }
 
       let location = `/register?error=${encodeErrorParam(error)}&returnTo=${encodeURIComponent(returnTo)}`;
       if (clientId) location = appendQuery(location, 'client_id', clientId);
       if (tenantName) location = appendQuery(location, 'tenant_name', tenantName);
+      if (tenantOrgRandId) location = appendQuery(location, 'tenant_org_id', tenantOrgRandId);
       res.redirect(location);
     }
   });
@@ -1453,6 +1723,9 @@ const boot = async (): Promise<void> => {
         optionalString(req.query.tenant_name, 255) ||
         hostFromAbsoluteUrl(optionalString(req.query.redirect_uri, 2048)) ||
         '';
+      const tenantOrgRandIdHint = optionalTenantOrgRandId(
+        req.query.tenant_org_id || req.query.tenantOrgRandId,
+      );
 
       setLoginUiState(res, {
         mode: 'signin',
@@ -1463,6 +1736,7 @@ const boot = async (): Promise<void> => {
           returnTo: '/profile',
           clientId: clientIdHint || undefined,
           tenantName: tenantNameHint || undefined,
+          tenantOrgRandId: tenantOrgRandIdHint || undefined,
         }),
       );
     };
@@ -1473,6 +1747,7 @@ const boot = async (): Promise<void> => {
       const redirectUri = optionalString(req.query.redirect_uri, 2048);
       const tenantNameHintRaw = optionalString(req.query.tenant_name, 255);
       const tenantNameHint = tenantNameHintRaw ? normalizeTenantName(tenantNameHintRaw) : '';
+      const tenantOrgRandIdHint = optionalTenantOrgRandId(req.query.tenant_org_id || req.query.tenantOrgRandId);
       const scopeRaw = optionalString(req.query.scope, 2000);
       const state = optionalString(req.query.state, 4096);
       const codeChallenge = optionalString(req.query.code_challenge, 256);
@@ -1494,6 +1769,10 @@ const boot = async (): Promise<void> => {
         respondAuthorizeError(400, 'tenant_name must match redirect_uri host tenant');
         return;
       }
+      const tenantContext = await resolveTenantOrgContext({
+        tenantName: redirectContext.tenantName,
+        tenantOrgRandId: tenantOrgRandIdHint || null,
+      });
       const scope = assertScopeAllowed(client, scopeRaw);
 
       if (client.requirePkce && !codeChallenge) {
@@ -1505,7 +1784,11 @@ const boot = async (): Promise<void> => {
         const returnTo = safeReturnTo(req.originalUrl, '/login');
         const loginUrl = `/login?returnTo=${encodeURIComponent(returnTo)}&client_id=${encodeURIComponent(
           clientId,
-        )}&tenant_name=${encodeURIComponent(redirectContext.tenantName)}`;
+        )}&tenant_name=${encodeURIComponent(redirectContext.tenantName)}${
+          tenantContext.effectiveOrgRandId
+            ? `&tenant_org_id=${encodeURIComponent(tenantContext.effectiveOrgRandId)}`
+            : ''
+        }`;
         res.redirect(loginUrl);
         return;
       }
@@ -1514,6 +1797,7 @@ const boot = async (): Promise<void> => {
         clientId,
         tenantRandId: client.tenantRandId,
         tenantName: redirectContext.tenantName,
+        tenantOrgRandId: tenantContext.effectiveOrgRandId || null,
         userRandId: req.sessionContext.user.randId,
         redirectUri,
         scope,
@@ -1582,6 +1866,9 @@ const boot = async (): Promise<void> => {
       const tenantNameFromBody = tenantNameFromBodyRaw
         ? normalizeTenantName(tenantNameFromBodyRaw)
         : '';
+      const tenantOrgRandIdFromBody = optionalTenantOrgRandId(
+        req.body.tenant_org_id || req.body.tenantOrgRandId || req.headers['x-tenant-org-id'],
+      );
       const tenantNameFromRedirect = redirectUri ? extractTenantNameFromRedirectUri(redirectUri) : '';
       if (tenantNameFromBody && tenantNameFromRedirect && tenantNameFromBody !== tenantNameFromRedirect) {
         res.status(400).json({ error: 'tenant_name must match redirect_uri host tenant' });
@@ -1615,11 +1902,20 @@ const boot = async (): Promise<void> => {
         res.status(400).json({ error: 'tenant_name mismatch for authorization code' });
         return;
       }
+      if (
+        tenantOrgRandIdFromBody &&
+        authorizationCode.tenantOrgRandId &&
+        authorizationCode.tenantOrgRandId !== tenantOrgRandIdFromBody
+      ) {
+        res.status(400).json({ error: 'tenant_org_id mismatch for authorization code' });
+        return;
+      }
 
       const token = await createAccessToken({
         clientId,
         tenantRandId: authorizationCode.tenantRandId,
         tenantName: authorizationCode.tenantName,
+        tenantOrgRandId: authorizationCode.tenantOrgRandId || null,
         userRandId: authorizationCode.userRandId,
         scope: authorizationCode.scope,
         grantType,
@@ -1687,13 +1983,6 @@ const boot = async (): Promise<void> => {
           org_rand_id: role.orgRandId,
           org_name: role.orgName,
         }));
-      roleCodes = Array.from(
-        new Set(
-          roleDetails
-            .map((role) => role.role_code.trim())
-            .filter(Boolean),
-        ),
-      );
       organizations = profile.organizations
         .filter((org) => org.isAssignmentActive)
         .map((org) => ({
@@ -1701,6 +1990,34 @@ const boot = async (): Promise<void> => {
           org_code: org.orgCode,
           org_name: org.orgName,
         }));
+
+      const tenantScope = await resolveTenantOrganizationScope(context.token.tenantName);
+      if (context.token.tenantOrgRandId) {
+        const tenantContext = await resolveTenantOrgContext({
+          tenantName: context.token.tenantName,
+          tenantOrgRandId: context.token.tenantOrgRandId,
+        });
+        if (tenantContext.effectiveOrgRandId) {
+          const orgSubtree = await resolveOrganizationSubtree(tenantContext.effectiveOrgRandId);
+          const allowedOrgIds =
+            tenantScope.rootOrgRandId
+              ? new Set(Array.from(orgSubtree).filter((orgId) => tenantScope.orgIds.has(orgId)))
+              : orgSubtree;
+          organizations = organizations.filter((org) => allowedOrgIds.has(org.org_rand_id));
+          roleDetails = roleDetails.filter((role) => allowedOrgIds.has(role.org_rand_id));
+        }
+      } else if (tenantScope.rootOrgRandId) {
+        organizations = organizations.filter((org) => tenantScope.orgIds.has(org.org_rand_id));
+        roleDetails = roleDetails.filter((role) => tenantScope.orgIds.has(role.org_rand_id));
+      }
+
+      roleCodes = Array.from(
+        new Set(
+          roleDetails
+            .map((role) => role.role_code.trim())
+            .filter(Boolean),
+        ),
+      );
     }
 
     res.status(200).json({
@@ -1716,6 +2033,7 @@ const boot = async (): Promise<void> => {
       groups: roleCodes,
       tenant_rand_id: context.token.tenantRandId,
       tenant_name: context.token.tenantName,
+      tenant_org_rand_id: context.token.tenantOrgRandId || null,
       tenant_code: typeof clientMeta.tenantCode === 'string' ? clientMeta.tenantCode : null,
       client_id: context.token.clientId,
       scope: context.token.scope,
@@ -1945,6 +2263,243 @@ const boot = async (): Promise<void> => {
     },
   );
 
+  app.get('/api/admin/access/organizations', requireSession, async (req, res, next) => {
+    try {
+      if (!requireAuthAdminApi(req, res)) return;
+      const items = await listOrganizations();
+      res.status(200).json({ items });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/admin/access/roles', requireSession, async (req, res, next) => {
+    try {
+      if (!requireAuthAdminApi(req, res)) return;
+      const items = await listRoles();
+      res.status(200).json({ items });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/admin/access/tenant-mappings', requireSession, async (req, res, next) => {
+    try {
+      if (!requireAuthAdminApi(req, res)) return;
+      const items = await listTenantOrganizationMappings();
+      res.status(200).json({ items });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/admin/access/users', requireSession, async (req, res, next) => {
+    try {
+      if (!requireAuthAdminApi(req, res)) return;
+      const page = Number(req.query.page);
+      const limit = Number(req.query.limit);
+      const search = optionalString(req.query.search, 200) || undefined;
+      const tenantName = optionalString(req.query.tenant_name || req.query.tenantName, 255) || undefined;
+      const tenantOrgRandId =
+        optionalString(req.query.tenant_org_rand_id || req.query.tenantOrgRandId, 64) || undefined;
+      const result = await listUsersWithAssignments({
+        page: Number.isFinite(page) ? page : undefined,
+        limit: Number.isFinite(limit) ? limit : undefined,
+        search,
+        tenantName,
+        tenantOrgRandId,
+      });
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post(
+    '/api/admin/access/organizations',
+    requireTrustedOrigin,
+    requireSession,
+    requireCsrf,
+    async (req, res, next) => {
+      try {
+        if (!requireAuthAdminApi(req, res)) return;
+        const actorUserRandId = req.sessionContext!.user.randId;
+        const item = await upsertOrganization({
+          randId: optionalString(req.body.rand_id || req.body.randId, 64) || undefined,
+          name: optionalString(req.body.name, 180),
+          code: optionalString(req.body.code, 96),
+          parentOrgRandId:
+            optionalString(req.body.parent_org_rand_id || req.body.parentOrgRandId, 64) || null,
+          isActive:
+            typeof req.body.is_active === 'boolean'
+              ? req.body.is_active
+              : typeof req.body.isActive === 'boolean'
+                ? req.body.isActive
+                : undefined,
+          actorUserRandId,
+        });
+
+        await logActivity({
+          eventType: 'admin.access.org.upsert',
+          actorUserRandId,
+          targetType: 'organization',
+          targetRandId: item.randId,
+          ipAddress: requestIp(req),
+          userAgent: requestUserAgent(req),
+        });
+
+        res.status(200).json({ item });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.post(
+    '/api/admin/access/roles',
+    requireTrustedOrigin,
+    requireSession,
+    requireCsrf,
+    async (req, res, next) => {
+      try {
+        if (!requireAuthAdminApi(req, res)) return;
+        const actorUserRandId = req.sessionContext!.user.randId;
+        const item = await upsertRole({
+          randId: optionalString(req.body.rand_id || req.body.randId, 64) || undefined,
+          roleName: optionalString(req.body.role_name || req.body.roleName, 160),
+          roleCode: optionalString(req.body.role_code || req.body.roleCode, 96),
+          orgRandId: optionalString(req.body.org_rand_id || req.body.orgRandId, 64),
+          isActive:
+            typeof req.body.is_active === 'boolean'
+              ? req.body.is_active
+              : typeof req.body.isActive === 'boolean'
+                ? req.body.isActive
+                : undefined,
+          actorUserRandId,
+        });
+
+        await logActivity({
+          eventType: 'admin.access.role.upsert',
+          actorUserRandId,
+          targetType: 'role',
+          targetRandId: item.randId,
+          ipAddress: requestIp(req),
+          userAgent: requestUserAgent(req),
+        });
+
+        res.status(200).json({ item });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.post(
+    '/api/admin/access/tenant-mappings',
+    requireTrustedOrigin,
+    requireSession,
+    requireCsrf,
+    async (req, res, next) => {
+      try {
+        if (!requireAuthAdminApi(req, res)) return;
+        const actorUserRandId = req.sessionContext!.user.randId;
+        const item = await assignTenantOrganization({
+          tenantName: optionalString(req.body.tenant_name || req.body.tenantName, 255),
+          organizationRandId:
+            optionalString(req.body.organization_rand_id || req.body.organizationRandId, 64) || null,
+        });
+
+        await logActivity({
+          eventType: 'admin.access.tenant_mapping.upsert',
+          actorUserRandId,
+          targetType: 'tenant_whitelist',
+          targetRandId: item.tenantName,
+          ipAddress: requestIp(req),
+          userAgent: requestUserAgent(req),
+        });
+
+        res.status(200).json({ item });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.post(
+    '/api/admin/access/users/assign-org',
+    requireTrustedOrigin,
+    requireSession,
+    requireCsrf,
+    async (req, res, next) => {
+      try {
+        if (!requireAuthAdminApi(req, res)) return;
+        const actorUserRandId = req.sessionContext!.user.randId;
+        const item = await assignUserOrganization({
+          userRandId: optionalString(req.body.user_rand_id || req.body.userRandId, 64),
+          orgRandId: optionalString(req.body.org_rand_id || req.body.orgRandId, 64),
+          isAssignmentActive:
+            typeof req.body.is_assignment_active === 'boolean'
+              ? req.body.is_assignment_active
+              : typeof req.body.isAssignmentActive === 'boolean'
+                ? req.body.isAssignmentActive
+                : undefined,
+          actorUserRandId,
+        });
+
+        await logActivity({
+          eventType: 'admin.access.user_org.upsert',
+          actorUserRandId,
+          targetType: 'user_orgs',
+          targetRandId: item.randId,
+          ipAddress: requestIp(req),
+          userAgent: requestUserAgent(req),
+        });
+
+        res.status(200).json({ item });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.post(
+    '/api/admin/access/users/assign-role',
+    requireTrustedOrigin,
+    requireSession,
+    requireCsrf,
+    async (req, res, next) => {
+      try {
+        if (!requireAuthAdminApi(req, res)) return;
+        const actorUserRandId = req.sessionContext!.user.randId;
+        const item = await assignUserRole({
+          userRandId: optionalString(req.body.user_rand_id || req.body.userRandId, 64),
+          roleRandId: optionalString(req.body.role_rand_id || req.body.roleRandId, 64),
+          orgRandId: optionalString(req.body.org_rand_id || req.body.orgRandId, 64),
+          isAssignmentActive:
+            typeof req.body.is_assignment_active === 'boolean'
+              ? req.body.is_assignment_active
+              : typeof req.body.isAssignmentActive === 'boolean'
+                ? req.body.isAssignmentActive
+                : undefined,
+          actorUserRandId,
+        });
+
+        await logActivity({
+          eventType: 'admin.access.user_role.upsert',
+          actorUserRandId,
+          targetType: 'user_roles',
+          targetRandId: item.randId,
+          ipAddress: requestIp(req),
+          userAgent: requestUserAgent(req),
+        });
+
+        res.status(200).json({ item });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
   app.get('/profile', (req, res, next) => {
     if (!req.sessionContext) {
       setLoginUiState(res, { mode: 'signin', error: 'Please sign in first' });
@@ -1973,6 +2528,11 @@ const boot = async (): Promise<void> => {
     res.redirect(`/admin/tenants${query}`);
   });
 
+  app.get('/auth/admin/access', (req, res) => {
+    const query = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+    res.redirect(`/admin/access${query}`);
+  });
+
   app.get('/admin', (req, res, next) => {
     if (!req.sessionContext || !isAuthAdmin(req)) {
       setLoginUiState(res, { mode: 'signin', error: 'Auth admin access required' });
@@ -1983,6 +2543,15 @@ const boot = async (): Promise<void> => {
   });
 
   app.get('/admin/tenants', (req, res, next) => {
+    if (!req.sessionContext || !isAuthAdmin(req)) {
+      setLoginUiState(res, { mode: 'signin', error: 'Auth admin access required' });
+      res.redirect('/login');
+      return;
+    }
+    next();
+  });
+
+  app.get('/admin/access', (req, res, next) => {
     if (!req.sessionContext || !isAuthAdmin(req)) {
       setLoginUiState(res, { mode: 'signin', error: 'Auth admin access required' });
       res.redirect('/login');

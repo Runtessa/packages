@@ -3,6 +3,7 @@ import { Entity, PrimaryGeneratedColumn, Column, Index, CreateDateColumn } from 
 @Entity({ name: 'oauth_access_tokens' })
 @Index('oauth_access_tokens_lookup_idx', ['clientId', 'userRandId', 'expiresAt', 'revokedAt'])
 @Index('oauth_access_tokens_tenant_name_idx', ['tenantName', 'expiresAt', 'revokedAt'])
+@Index('oauth_access_tokens_tenant_org_idx', ['tenantName', 'tenantOrgRandId', 'expiresAt', 'revokedAt'])
 export class OAuthAccessTokenEntity {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id!: string;
@@ -18,6 +19,9 @@ export class OAuthAccessTokenEntity {
 
   @Column({ name: 'tenant_name', type: 'varchar', length: 255 })
   tenantName!: string;
+
+  @Column({ name: 'tenant_org_rand_id', type: 'varchar', length: 64, nullable: true })
+  tenantOrgRandId!: string | null;
 
   @Column({ name: 'user_rand_id', type: 'varchar', length: 64, nullable: true })
   userRandId!: string | null;

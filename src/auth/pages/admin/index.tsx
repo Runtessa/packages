@@ -27,6 +27,7 @@ const secondaryBtnClass =
 export default function AuthAdminDashboardPage() {
   const { locale, isRtl } = useUiLocale();
   const copy = getAuthMessages(locale).dashboard;
+  const accessCopy = getAuthMessages(locale).access;
   const [session, setSession] = useState<SessionPayload | null>(null);
   const [totalTenants, setTotalTenants] = useState(0);
   const [activeTenants, setActiveTenants] = useState(0);
@@ -86,6 +87,9 @@ export default function AuthAdminDashboardPage() {
               <a href="/admin/tenants" className={primaryBtnClass}>
                 {copy.openTenantPanel}
               </a>
+              <a href="/admin/access" className={secondaryBtnClass}>
+                {accessCopy.title}
+              </a>
             </div>
           }
         />
@@ -117,6 +121,9 @@ export default function AuthAdminDashboardPage() {
             <div className="mt-4 flex flex-wrap gap-3">
               <a href="/admin/tenants" className={primaryBtnClass}>
                 {copy.manageTenantWhitelist}
+              </a>
+              <a href="/admin/access" className={secondaryBtnClass}>
+                {accessCopy.title}
               </a>
               <a href="/profile" className={secondaryBtnClass}>
                 {copy.openProfile}
