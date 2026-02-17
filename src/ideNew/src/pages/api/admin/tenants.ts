@@ -6,8 +6,7 @@ import { Tenant } from '@idp/shared';
 import { Secret } from '@idp/shared';
 import { In } from 'typeorm';
 import { encryptSecret } from '@/lib/crypto';
-import { maskPasswordFields, resolveMaskedPasswords } from '@/lib/adapter-config-passwords';
-import { parseAdapterConfig } from '@/lib/tenant-adapter-config';
+import { canonicalizeAdapterConfig, parseAdapterConfig } from '@/lib/tenant-adapter-config';
 import { canWriteTenantForUser, getTenantScopeForUser } from '@/lib/team-tenant-access';
 
 const DEFAULT_RESOURCE_CONFIG = { memory: 512, timeout: 5000 };
@@ -192,10 +191,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     const resourceConfig = normalizeResourceConfig(req.body?.resourceConfig, DEFAULT_RESOURCE_CONFIG);
     const authDbConfig = normalizeAuthDbConfig(req.body?.authDbConfig, DEFAULT_AUTH_DB_CONFIG);
     const configObject = parseAdapterConfigObject(req.body?.adapterConfig);
-    const resolvedConfig = configObject
-      ? await resolveMaskedPasswords(configObject, CoreDataSource)
-      : null;
-    const adapterConfig = parseAdapterConfig(resolvedConfig);
+    const adapterConfig = parseAdapterConfig(configObject);
+    const normalizedAdapterConfig = canonicalizeAdapterConfig(configObject);
     const adapterAccess = adapterConfig.adapterAccess;
 
     const repo = CoreDataSource.getRepository(Tenant);
@@ -212,7 +209,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       resourceConfig,
       authDbConfig,
       adapterAccess,
-      adapterConfig: resolvedConfig ? maskPasswordFields(resolvedConfig) : {},
+      adapterConfig: normalizedAdapterConfig,
     });
     await repo.save(tenant);
     if (adapterConfig.secrets) {

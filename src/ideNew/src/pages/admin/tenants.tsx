@@ -223,6 +223,11 @@ export default function AdminTenantsPage() {
                       Edit
                     </Button>
                   ) : null}
+                  {tenant.canWrite ? (
+                    <Button variant="secondary" size="sm" href={`/admin/tenants/${tenant.id}/secrets`}>
+                      Secrets
+                    </Button>
+                  ) : null}
                   {canCreateTenants ? (
                     <Button variant="danger" size="sm" onClick={() => openDeleteModal(tenant)}>
                       Delete

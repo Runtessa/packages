@@ -5,8 +5,7 @@ import { CoreDataSource, ensureCoreSchema } from '@/lib/core-db';
 import { AppDataSource, ensureSchema } from '@/lib/db';
 import { Secret } from '@idp/shared';
 import { encryptSecret } from '@/lib/crypto';
-import { maskPasswordFields, resolveMaskedPasswords } from '@/lib/adapter-config-passwords';
-import { parseAdapterConfig } from '@/lib/tenant-adapter-config';
+import { canonicalizeAdapterConfig, parseAdapterConfig } from '@/lib/tenant-adapter-config';
 import { Tenant } from '@idp/shared';
 import { TeamTenant } from '@idp/shared';
 import {
@@ -151,9 +150,11 @@ const mergeTenantSsoConfig = (
     ...auth,
     sso: mergedSso,
   };
+  const nextRoot: Record<string, unknown> = { ...root };
+  // Keep a single canonical SSO location under auth.sso and drop legacy root-level duplication.
+  delete nextRoot.sso;
   return {
-    ...root,
-    sso: mergedSso,
+    ...nextRoot,
     auth: nextAuth,
   };
 };
@@ -400,11 +401,8 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
       tenant.resourceConfig ?? DEFAULT_RESOURCE_CONFIG
     );
     const configObject = parseAdapterConfigObject(req.body?.adapterConfig);
-    const resolvedConfig = configObject
-      ? await resolveMaskedPasswords(configObject, CoreDataSource, tenant)
-      : null;
     const baseAdapterConfig = deepClone<Record<string, unknown>>(
-      resolvedConfig ? asObject(resolvedConfig) : currentAdapterConfig
+      configObject ? asObject(configObject) : currentAdapterConfig
     );
     const baseSsoSecretKeys = readTenantSsoSecretKeys(baseAdapterConfig);
 
@@ -475,6 +473,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
         : baseAdapterConfig;
 
     const parsedAdapterConfig = parseAdapterConfig(nextAdapterConfig);
+    const normalizedAdapterConfig = canonicalizeAdapterConfig(nextAdapterConfig);
     const nextAdapterAccess =
       Object.keys(parsedAdapterConfig.adapterAccess).length > 0
         ? parsedAdapterConfig.adapterAccess
@@ -517,7 +516,7 @@ export default withApiHandler(async (req: NextApiRequest, res: NextApiResponse) 
     tenant.resourceConfig = nextResourceConfig;
     tenant.authDbConfig = nextAuthDbConfig;
     tenant.adapterAccess = nextAdapterAccess;
-    tenant.adapterConfig = maskPasswordFields(nextAdapterConfig);
+    tenant.adapterConfig = normalizedAdapterConfig;
     await repo.save(tenant);
 
     for (const [keyName, value] of Object.entries(secretsToPersist)) {

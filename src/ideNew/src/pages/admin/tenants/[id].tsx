@@ -11,7 +11,7 @@ import { fetchJson } from '@/lib/client/api';
 import { useSessionToken } from '@/lib/client/session';
 import { hasPermissionFromUser } from '@/lib/client/access';
 import { getSelectedTenantHost, setSelectedTenantHost } from '@/lib/client/tenant';
-import { buildAdapterConfigTemplate } from '@/lib/tenant-adapter-config';
+import { buildAdapterConfigTemplate, DEFAULT_ADAPTER_CONFIG_TEMPLATE } from '@/lib/tenant-adapter-config';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
@@ -67,39 +67,7 @@ const DEFAULT_FORM: TenantEditState = {
   authDbSecretKey: '',
 };
 
-const DEFAULT_CONFIG_TEXT = JSON.stringify(
-  {
-    adapters: {
-      postgres: {
-        pga1: {
-          read: [
-            {
-              host: '',
-              port: '',
-              username: '',
-              password: '',
-              database: '',
-            },
-          ],
-          write: {
-            host: '',
-            port: '',
-            username: '',
-            password: '',
-            database: '',
-          },
-        },
-      },
-      mysql: {},
-      mssql: {},
-      redis: {},
-      kafka: {},
-      s3: {},
-    },
-  },
-  null,
-  2
-);
+const DEFAULT_CONFIG_TEXT = DEFAULT_ADAPTER_CONFIG_TEMPLATE;
 
 const EMPTY_CONFIG_TEXT = JSON.stringify({ adapters: {} }, null, 2);
 
@@ -296,9 +264,16 @@ export default function AdminTenantEditPage() {
         title="Edit tenant"
         subtitle={form.hostname ? `Update ${form.hostname}` : 'Update tenant settings.'}
         actions={
-          <Button variant="secondary" size="sm" href="/admin/tenants">
-            Back to tenants
-          </Button>
+          <div className="flex gap-2">
+            {tenantId ? (
+              <Button variant="secondary" size="sm" href={`/admin/tenants/${tenantId}/secrets`}>
+                Manage secrets
+              </Button>
+            ) : null}
+            <Button variant="secondary" size="sm" href="/admin/tenants">
+              Back to tenants
+            </Button>
+          </div>
         }
       />
 
@@ -308,7 +283,7 @@ export default function AdminTenantEditPage() {
         </div>
       )}
 
-      <DataCard title="Tenant configuration" subtitle="Update core settings and adapter JSON.">
+      <DataCard title="Tenant configuration" subtitle="Update core settings and adapter JSON secret references.">
         {loading ? (
           <div className="text-sm text-textMuted">Loading tenant data…</div>
         ) : (
@@ -440,7 +415,7 @@ export default function AdminTenantEditPage() {
                 {tenantSecrets.length
                   ? tenantSecrets.map((s) => s.keyName).join(', ')
                   : 'none'}
-                . Values you enter are encrypted on save.
+                . Use secret refs such as <code>adapter:redis:cache:default</code> and manage secret values in the tenant secrets page.
               </p>
             </div>
           </FormLayout>

@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/Toast';
 import { fetchJson } from '@/lib/client/api';
 import { useSessionToken } from '@/lib/client/session';
 import { hasPermissionFromUser } from '@/lib/client/access';
+import { DEFAULT_ADAPTER_CONFIG_TEMPLATE } from '@/lib/tenant-adapter-config';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
@@ -40,39 +41,7 @@ const DEFAULT_FORM: TenantFormState = {
   authDbSecretKey: '',
 };
 
-const DEFAULT_CONFIG_TEXT = JSON.stringify(
-  {
-    adapters: {
-      postgres: {
-        pga1: {
-          read: [
-            {
-              host: '',
-              port: '',
-              username: '',
-              password: '',
-              database: '',
-            },
-          ],
-          write: {
-            host: '',
-            port: '',
-            username: '',
-            password: '',
-            database: '',
-          },
-        },
-      },
-      mysql: {},
-      mssql: {},
-      redis: {},
-      kafka: {},
-      s3: {},
-    },
-  },
-  null,
-  2
-);
+const DEFAULT_CONFIG_TEXT = DEFAULT_ADAPTER_CONFIG_TEMPLATE;
 
 const parseConfigJson = (value: string) => {
   if (!value.trim()) return {};
@@ -343,7 +312,7 @@ export default function AdminTenantCreatePage() {
               />
             </div>
             <p className="text-xs text-textMuted">
-              Connection strings are encrypted on save. Keep values empty to avoid overwriting existing secrets.
+              Use secret references such as <code>adapter:redis:cache:default</code>. Manage secret values from the tenant secrets page.
             </p>
           </div>
         </FormLayout>
