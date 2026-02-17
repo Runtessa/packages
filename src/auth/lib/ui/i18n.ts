@@ -191,6 +191,7 @@ const AUTH_MESSAGES = {
       signUpFailed: 'Sign up failed',
       registrationDisabledTenant: 'Registration is disabled for this tenant',
       registrationPolicyFailed: 'Unable to verify tenant registration policy.',
+      tenantMismatch: 'Tenant configuration mismatch. Start sign in again from the same tenant URL.',
     },
     profile: {
       title: 'Profile & Settings',
@@ -515,6 +516,7 @@ const AUTH_MESSAGES = {
       signUpFailed: 'ثبت نام ناموفق بود',
       registrationDisabledTenant: 'ثبت نام برای این تننت غیرفعال است',
       registrationPolicyFailed: 'بررسی سیاست ثبت نام تننت ناموفق بود.',
+      tenantMismatch: 'ناهماهنگی در پیکربندی تننت وجود دارد. ورود را از همان آدرس تننت دوباره شروع کنید.',
     },
     profile: {
       title: 'پروفایل و تنظیمات',
@@ -839,6 +841,7 @@ const AUTH_MESSAGES = {
       signUpFailed: 'Registrierung fehlgeschlagen',
       registrationDisabledTenant: 'Registrierung ist für diesen Mandanten deaktiviert',
       registrationPolicyFailed: 'Mandanten-Registrierungsrichtlinie konnte nicht geprüft werden.',
+      tenantMismatch: 'Mandantenkonfiguration stimmt nicht überein. Starten Sie die Anmeldung erneut über dieselbe Mandanten-URL.',
     },
     profile: {
       title: 'Profil & Einstellungen',
@@ -1164,6 +1167,7 @@ const AUTH_MESSAGES = {
       signUpFailed: 'فشل إنشاء الحساب',
       registrationDisabledTenant: 'التسجيل معطل لهذا المستأجر',
       registrationPolicyFailed: 'تعذر التحقق من سياسة التسجيل للمستأجر.',
+      tenantMismatch: 'عدم تطابق في إعدادات المستأجر. ابدأ تسجيل الدخول مجددًا من نفس رابط المستأجر.',
     },
     profile: {
       title: 'الملف الشخصي والإعدادات',

@@ -69,6 +69,8 @@ import {
   rotateWhitelistTenantToken,
 } from './lib/services/tenant-whitelist';
 import { removeManagedAvatarFromDisk, saveAvatarDataUrlToDisk, saveAvatarToDisk } from './lib/services/avatar-storage';
+import { safeEqual } from './lib/crypto';
+import { provisionTenantSso } from './lib/services/tenant-provisioning';
 
 const dev = config.nodeEnv !== 'production';
 const nextApp = next({ dev, dir: __dirname });
@@ -90,6 +92,20 @@ const toErrorMessage = (error: unknown, fallback: string): string => {
     }
   }
   return fallback;
+};
+
+const toLoginFriendlyError = (message: string): string => {
+  const normalized = String(message || '').trim().toLowerCase();
+  if (
+    normalized.includes('tenant_name must match redirect_uri host tenant') ||
+    normalized.includes('tenant callback is not mapped to this oauth client') ||
+    normalized.includes('tenant callback host is not whitelisted') ||
+    normalized.includes('tenant is not mapped to this oauth client') ||
+    normalized.includes('tenant is not whitelisted for sso')
+  ) {
+    return 'Tenant configuration mismatch. Start sign in again from the same tenant URL.';
+  }
+  return message;
 };
 
 const encodeErrorParam = (error: unknown): string => encodeURIComponent(toErrorMessage(error, 'Unexpected error'));
@@ -221,6 +237,26 @@ const wantsJson = (req: Request): boolean => {
   return accept.includes('application/json');
 };
 
+const requireInternalApiToken = (
+  req: Request,
+  res: Response,
+  next: express.NextFunction,
+): void => {
+  const configuredToken = config.internalApi.token;
+  if (!configuredToken) {
+    res.status(503).json({ error: 'Internal provisioning API is not configured' });
+    return;
+  }
+
+  const bearer = parseBearer(req.headers.authorization);
+  if (!bearer || !safeEqual(bearer, configuredToken)) {
+    res.status(401).json({ error: 'Invalid internal API token' });
+    return;
+  }
+
+  next();
+};
+
 const hostFromAbsoluteUrl = (value: string): string | null => {
   if (!value) return null;
   try {
@@ -333,6 +369,42 @@ const boot = async (): Promise<void> => {
 
   app.get('/health', (_req, res) => {
     res.status(200).json({ ok: true, service: 'auth', env: config.nodeEnv });
+  });
+
+  app.post('/api/internal/tenant-sso/register', requireInternalApiToken, async (req, res, next) => {
+    try {
+      const tenantName = normalizeTenantName(optionalString(req.body?.tenant_name || req.body?.tenantName, 255));
+      const tenantRandId = optionalString(req.body?.tenant_rand_id || req.body?.tenantRandId, 64);
+      if (!tenantRandId) {
+        res.status(400).json({ error: 'tenant_rand_id is required' });
+        return;
+      }
+
+      const allowRegistrationRaw = req.body?.allow_registration ?? req.body?.allowRegistration;
+      const allowRegistration =
+        typeof allowRegistrationRaw === 'boolean'
+          ? allowRegistrationRaw
+          : String(allowRegistrationRaw ?? 'true').trim().toLowerCase() !== 'false';
+
+      const rotateCredentialsRaw = req.body?.rotate_credentials ?? req.body?.rotateCredentials;
+      const rotateCredentials =
+        typeof rotateCredentialsRaw === 'boolean'
+          ? rotateCredentialsRaw
+          : String(rotateCredentialsRaw ?? 'false').trim().toLowerCase() === 'true';
+
+      const result = await provisionTenantSso({
+        tenantName,
+        tenantRandId,
+        allowRegistration,
+        tenantDisplayName: optionalString(req.body?.tenant_display_name || req.body?.tenantDisplayName, 180) || null,
+        callbackUrl: optionalString(req.body?.callback_url || req.body?.callbackUrl, 2048) || null,
+        rotateCredentials,
+      });
+
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get('/api/public/register-policy', async (req, res, next) => {
@@ -1370,31 +1442,62 @@ const boot = async (): Promise<void> => {
   app.post('/api/session/renew', requireTrustedOrigin, requireSession, requireCsrf, renewSessionHandler);
 
   app.get('/oauth/authorize', oauthLimiter, async (req, res) => {
+    const respondAuthorizeError = (statusCode: number, errorMessage: string): void => {
+      if (wantsJson(req)) {
+        res.status(statusCode).json({ error: errorMessage });
+        return;
+      }
+
+      const clientIdHint = optionalString(req.query.client_id, 120);
+      const tenantNameHint =
+        optionalString(req.query.tenant_name, 255) ||
+        hostFromAbsoluteUrl(optionalString(req.query.redirect_uri, 2048)) ||
+        '';
+
+      setLoginUiState(res, {
+        mode: 'signin',
+        error: toLoginFriendlyError(errorMessage),
+      });
+      res.redirect(
+        appendAuthContext('/login', {
+          returnTo: '/profile',
+          clientId: clientIdHint || undefined,
+          tenantName: tenantNameHint || undefined,
+        }),
+      );
+    };
+
     try {
       const responseType = optionalString(req.query.response_type, 16);
       const clientId = assertCode(req.query.client_id, 'client_id');
       const redirectUri = optionalString(req.query.redirect_uri, 2048);
+      const tenantNameHintRaw = optionalString(req.query.tenant_name, 255);
+      const tenantNameHint = tenantNameHintRaw ? normalizeTenantName(tenantNameHintRaw) : '';
       const scopeRaw = optionalString(req.query.scope, 2000);
       const state = optionalString(req.query.state, 4096);
       const codeChallenge = optionalString(req.query.code_challenge, 256);
       const codeChallengeMethod = optionalString(req.query.code_challenge_method, 16);
 
       if (responseType !== 'code') {
-        res.status(400).json({ error: 'Only authorization code flow is supported' });
+        respondAuthorizeError(400, 'Only authorization code flow is supported');
         return;
       }
 
       const client = await readClientById(clientId);
       if (!client || !client.isActive) {
-        res.status(400).json({ error: 'Unknown client_id' });
+        respondAuthorizeError(400, 'Unknown client_id');
         return;
       }
 
       const redirectContext = await validateAuthorizeRedirect(client, redirectUri);
+      if (tenantNameHint && tenantNameHint !== redirectContext.tenantName) {
+        respondAuthorizeError(400, 'tenant_name must match redirect_uri host tenant');
+        return;
+      }
       const scope = assertScopeAllowed(client, scopeRaw);
 
       if (client.requirePkce && !codeChallenge) {
-        res.status(400).json({ error: 'PKCE is required for this client' });
+        respondAuthorizeError(400, 'PKCE is required for this client');
         return;
       }
 
@@ -1435,9 +1538,9 @@ const boot = async (): Promise<void> => {
       callback = appendQuery(callback, 'state', state || null);
       res.redirect(callback);
     } catch (error) {
-      res.status((error as { statusCode?: number }).statusCode || 400).json({
-        error: error instanceof Error ? error.message : 'authorize_failed',
-      });
+      const statusCode = (error as { statusCode?: number }).statusCode || 400;
+      const message = error instanceof Error ? error.message : 'authorize_failed';
+      respondAuthorizeError(statusCode, message);
     }
   });
 
@@ -1480,6 +1583,10 @@ const boot = async (): Promise<void> => {
         ? normalizeTenantName(tenantNameFromBodyRaw)
         : '';
       const tenantNameFromRedirect = redirectUri ? extractTenantNameFromRedirectUri(redirectUri) : '';
+      if (tenantNameFromBody && tenantNameFromRedirect && tenantNameFromBody !== tenantNameFromRedirect) {
+        res.status(400).json({ error: 'tenant_name must match redirect_uri host tenant' });
+        return;
+      }
       const tenantName = tenantNameFromBody || tenantNameFromRedirect;
       const tenantSsoToken = optionalString(
         req.body.tenant_sso_token || req.headers['x-tenant-sso-token'],
@@ -1529,7 +1636,16 @@ const boot = async (): Promise<void> => {
         payload: { scope: authorizationCode.scope },
       });
 
-      res.status(200).json(token);
+      // OAuth responses should use snake_case fields. Keep camelCase aliases for backward compatibility.
+      res.status(200).json({
+        access_token: token.accessToken,
+        token_type: token.tokenType,
+        expires_in: token.expiresIn,
+        scope: token.scope,
+        accessToken: token.accessToken,
+        tokenType: token.tokenType,
+        expiresIn: token.expiresIn,
+      });
     } catch (error) {
       res.status((error as { statusCode?: number }).statusCode || 400).json({
         error: error instanceof Error ? error.message : 'token_failed',
@@ -1546,12 +1662,58 @@ const boot = async (): Promise<void> => {
     }
 
     const clientMeta = (context.client.meta || {}) as Record<string, unknown>;
+    let roleCodes: string[] = [];
+    let roleDetails: Array<{
+      role_rand_id: string;
+      role_code: string;
+      role_name: string;
+      org_rand_id: string;
+      org_name: string | null;
+    }> = [];
+    let organizations: Array<{
+      org_rand_id: string;
+      org_code: string;
+      org_name: string;
+    }> = [];
+
+    if (context.user?.randId) {
+      const profile = await getUserProfileSnapshot(context.user.randId);
+      roleDetails = profile.roles
+        .filter((role) => role.isAssignmentActive)
+        .map((role) => ({
+          role_rand_id: role.roleRandId,
+          role_code: role.roleCode,
+          role_name: role.roleName,
+          org_rand_id: role.orgRandId,
+          org_name: role.orgName,
+        }));
+      roleCodes = Array.from(
+        new Set(
+          roleDetails
+            .map((role) => role.role_code.trim())
+            .filter(Boolean),
+        ),
+      );
+      organizations = profile.organizations
+        .filter((org) => org.isAssignmentActive)
+        .map((org) => ({
+          org_rand_id: org.orgRandId,
+          org_code: org.orgCode,
+          org_name: org.orgName,
+        }));
+    }
 
     res.status(200).json({
       sub: context.user?.randId || null,
       email: context.user?.email || null,
       given_name: context.user?.firstName || null,
       family_name: context.user?.lastName || null,
+      role: roleCodes[0] || null,
+      role_code: roleCodes[0] || null,
+      roles: roleCodes,
+      role_details: roleDetails,
+      organizations,
+      groups: roleCodes,
       tenant_rand_id: context.token.tenantRandId,
       tenant_name: context.token.tenantName,
       tenant_code: typeof clientMeta.tenantCode === 'string' ? clientMeta.tenantCode : null,

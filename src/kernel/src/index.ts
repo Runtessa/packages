@@ -15,6 +15,7 @@ type ApiRequestOptions = {
   body?: unknown;
   rawBody?: BodyInit | null;
   json?: boolean;
+  redirectOnUnauthorized?: boolean;
 };
 
 type ApiClient = {
@@ -54,6 +55,10 @@ export class Kernel {
   api: ApiClient;
   private appliedStyles: Map<string, HTMLStyleElement>;
   private dataContextExports: any | null;
+  private authRedirectInFlight: boolean;
+  private renewIntervalId: number | null;
+  private renewPending: boolean;
+  private lastRenewAtMs: number;
 
   constructor(options: Options = {}) {
     this.registryUrl = (options && options.registryUrl) || "/api/registry";
@@ -63,8 +68,13 @@ export class Kernel {
     this.cache = new Map(); // key: name@version -> exports or Promise<exports>
     this.appliedStyles = new Map();
     this.dataContextExports = null;
+    this.authRedirectInFlight = false;
+    this.renewIntervalId = null;
+    this.renewPending = false;
+    this.lastRenewAtMs = 0;
     this.api = this.createApiClient();
     this.initGlobalContext();
+    this.initSessionRenewal();
   }
 
   async load(name: string, version: string = "latest") {
@@ -88,7 +98,8 @@ export class Kernel {
       name,
     )}/${encodeURIComponent(version || "latest")}`;
     const headers = this.buildAuthHeaders();
-    const res = await fetch(url, { headers });
+    const res = await fetch(url, { headers, credentials: "include" });
+    this.maybeHandleUnauthorized(res, { requestUrl: url });
     if (!res.ok) {
       throw new Error(
         `Failed to fetch package ${name}@${version || "latest"} (${res.status})`,
@@ -186,12 +197,101 @@ export class Kernel {
     return (window as any).__IDP_TENANT_HOST__ || null;
   }
 
+  private buildReturnTo() {
+    if (typeof window === "undefined") return "/";
+    const { pathname, search, hash } = window.location;
+    return `${pathname || "/"}${search || ""}${hash || ""}`;
+  }
+
+  private redirectToLogin() {
+    if (typeof window === "undefined") return;
+    if (this.authRedirectInFlight) return;
+    this.authRedirectInFlight = true;
+    const returnTo = this.buildReturnTo();
+    const next = `/login?returnTo=${encodeURIComponent(returnTo)}`;
+    window.location.assign(next);
+  }
+
+  private shouldSkipUnauthorizedRedirect(requestUrl?: string) {
+    if (!requestUrl) return false;
+    const toPath = (value: string) => {
+      try {
+        if (typeof window !== "undefined") {
+          return new URL(value, window.location.origin).pathname;
+        }
+        return new URL(value).pathname;
+      } catch {
+        return value.split("?")[0].split("#")[0];
+      }
+    };
+    const pathname = toPath(requestUrl);
+    return pathname === "/api/auth/session" || pathname === "/api/auth/session/renew";
+  }
+
+  private maybeHandleUnauthorized(
+    res: Response,
+    options: {
+      requestUrl?: string;
+      redirectOnUnauthorized?: boolean;
+    } = {},
+  ) {
+    if (res.status !== 401) return;
+    if (this.previewMode) return;
+    if (options.redirectOnUnauthorized === false) return;
+    if (this.shouldSkipUnauthorizedRedirect(options.requestUrl || res.url || "")) return;
+    this.redirectToLogin();
+  }
+
+  private async renewTenantSession(force = false) {
+    if (typeof window === "undefined") return;
+    if (this.previewMode) return;
+    if (this.renewPending) return;
+    const now = Date.now();
+    if (!force && now - this.lastRenewAtMs < 45_000) return;
+
+    this.renewPending = true;
+    try {
+      await fetch(this.resolveApiUrl("/api/auth/session/renew"), {
+        method: "POST",
+        credentials: "include",
+        headers: this.buildAuthHeaders(),
+      });
+      this.lastRenewAtMs = Date.now();
+    } catch {
+      // ignore keepalive errors; next request can recover session state
+    } finally {
+      this.renewPending = false;
+    }
+  }
+
+  private initSessionRenewal() {
+    if (typeof window === "undefined") return;
+    if (this.previewMode) return;
+
+    const onUserActivity = () => {
+      void this.renewTenantSession(false);
+    };
+
+    this.renewIntervalId = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void this.renewTenantSession(false);
+    }, 120_000);
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        void this.renewTenantSession(true);
+      }
+    });
+    window.addEventListener("focus", () => {
+      void this.renewTenantSession(true);
+    });
+    window.addEventListener("pointerdown", onUserActivity, { passive: true });
+    window.addEventListener("keydown", onUserActivity);
+    window.addEventListener("scroll", onUserActivity, { passive: true });
+  }
+
   private buildAuthHeaders(extra?: HeadersInit) {
     const headers = new Headers(extra || {});
-    const token = this.getToken();
-    if (token && !headers.has("Authorization")) {
-      headers.set("Authorization", `Session ${token}`);
-    }
     const tenantHost = this.getTenantHost();
     if (tenantHost && !headers.has("X-Tenant-Host")) {
       headers.set("X-Tenant-Host", tenantHost);
@@ -225,9 +325,16 @@ export class Kernel {
         }
       }
       return fetch(url, {
+        credentials: "include",
         method: options.method ?? "GET",
         headers,
         body: body ?? undefined,
+      }).then((res) => {
+        this.maybeHandleUnauthorized(res, {
+          requestUrl: url,
+          redirectOnUnauthorized: options.redirectOnUnauthorized,
+        });
+        return res;
       });
     };
     return {

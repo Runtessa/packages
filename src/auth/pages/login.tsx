@@ -214,6 +214,23 @@ export default function LoginPage() {
     }, 4200);
   };
 
+  const mapServerError = (value: unknown, fallback: string): string => {
+    const raw = String(value || '').trim();
+    if (!raw) return fallback;
+    const normalized = raw.toLowerCase();
+    if (
+      normalized.includes('tenant_name must match redirect_uri host tenant') ||
+      normalized.includes('tenant callback is not mapped to this oauth client') ||
+      normalized.includes('tenant callback host is not whitelisted') ||
+      normalized.includes('tenant is not mapped to this oauth client') ||
+      normalized.includes('tenant is not whitelisted for sso') ||
+      normalized.includes('tenant configuration mismatch')
+    ) {
+      return copy.tenantMismatch;
+    }
+    return raw;
+  };
+
   const applyPhoneValue = (value: string) => {
     const parsed = parsePhoneNumber(value);
     setSelectedCountryCode(parsed.countryCode);
@@ -458,7 +475,7 @@ export default function LoginPage() {
       });
 
       if (!ok || (status !== 202 && status !== 200)) {
-        pushToast('error', String(data.error || copy.failedSendCode));
+        pushToast('error', mapServerError(data.error, copy.failedSendCode));
         return false;
       }
 
@@ -509,7 +526,7 @@ export default function LoginPage() {
           pushToast('error', copy.accountNotFound);
           return;
         }
-        pushToast('error', String(data.error || copy.unableResolveLoginOptions));
+        pushToast('error', mapServerError(data.error, copy.unableResolveLoginOptions));
         return;
       }
 
@@ -569,7 +586,7 @@ export default function LoginPage() {
         return;
       }
 
-      pushToast('error', String(data.error || copy.invalidCredentials));
+      pushToast('error', mapServerError(data.error, copy.invalidCredentials));
     } catch {
       pushToast('error', copy.loginFailed);
     } finally {
@@ -619,7 +636,7 @@ export default function LoginPage() {
       }
 
       if (!ok) {
-        pushToast('error', String(data.error || copy.codeCheckFailed));
+        pushToast('error', mapServerError(data.error, copy.codeCheckFailed));
         return;
       }
 
@@ -652,7 +669,7 @@ export default function LoginPage() {
       });
 
       if (!ok) {
-        pushToast('error', String(data.error || copy.twoFactorFailed));
+        pushToast('error', mapServerError(data.error, copy.twoFactorFailed));
         return;
       }
 
@@ -690,7 +707,7 @@ export default function LoginPage() {
       });
 
       if (!ok || (status !== 202 && status !== 200)) {
-        pushToast('error', String(data.error || copy.failedSendCode));
+        pushToast('error', mapServerError(data.error, copy.failedSendCode));
         return;
       }
 
@@ -743,7 +760,7 @@ export default function LoginPage() {
       });
 
       if (!ok) {
-        pushToast('error', String(data.error || copy.signUpFailed));
+        pushToast('error', mapServerError(data.error, copy.signUpFailed));
         return;
       }
 
@@ -869,7 +886,7 @@ export default function LoginPage() {
 
         const error = one(state.error as string | string[] | undefined);
         const success = one(state.success as string | string[] | undefined);
-        if (error) pushToast('error', error);
+        if (error) pushToast('error', mapServerError(error, error));
         if (success) pushToast('success', success);
       } catch {
         // ignore

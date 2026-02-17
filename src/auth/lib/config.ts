@@ -115,6 +115,9 @@ export interface AuthConfig {
     timeoutMs: number;
     requireRemote: boolean;
   };
+  internalApi: {
+    token?: string;
+  };
   bootstrap: {
     onStart: boolean;
   };
@@ -177,6 +180,9 @@ export const config: AuthConfig = {
     token: (process.env.AUTH_TENANT_POLICY_TOKEN || '').trim() || undefined,
     timeoutMs: asInt(process.env.AUTH_TENANT_POLICY_TIMEOUT_MS, 3000, 500, 10000),
     requireRemote: asBool(process.env.AUTH_TENANT_POLICY_REQUIRE_REMOTE, false),
+  },
+  internalApi: {
+    token: (process.env.AUTH_INTERNAL_API_TOKEN || '').trim() || undefined,
   },
   bootstrap: {
     onStart: asBool(process.env.AUTH_BOOTSTRAP_ON_START, !isProduction),

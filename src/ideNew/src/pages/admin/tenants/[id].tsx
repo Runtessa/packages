@@ -20,6 +20,7 @@ type TenantSummary = {
   hostname: string;
   isSuspended: boolean;
   allowRegistration?: boolean;
+  ssoEnabled?: boolean;
   resourceConfig?: { memory: number; timeout: number };
   adapterAccess?: Record<string, { allow: string[] }>;
   adapterConfig?: Record<string, unknown>;
@@ -39,6 +40,7 @@ type TenantEditState = {
   hostname: string;
   isSuspended: boolean;
   allowRegistration: boolean;
+  ssoEnabled: boolean;
   memory: string;
   timeout: string;
   authDbMode: 'shared' | 'dedicated';
@@ -58,6 +60,7 @@ const DEFAULT_FORM: TenantEditState = {
   hostname: '',
   isSuspended: false,
   allowRegistration: true,
+  ssoEnabled: false,
   memory: '512',
   timeout: '5000',
   authDbMode: 'shared',
@@ -186,6 +189,7 @@ export default function AdminTenantEditPage() {
           hostname: tenant.hostname,
           isSuspended: tenant.isSuspended,
           allowRegistration: tenant.allowRegistration ?? true,
+          ssoEnabled: tenant.ssoEnabled ?? false,
           memory: String(tenant.resourceConfig?.memory ?? Number(DEFAULT_FORM.memory)),
           timeout: String(tenant.resourceConfig?.timeout ?? Number(DEFAULT_FORM.timeout)),
           authDbMode:
@@ -223,6 +227,7 @@ export default function AdminTenantEditPage() {
     hostname: values.hostname.trim(),
     isSuspended: values.isSuspended,
     allowRegistration: values.allowRegistration,
+    ssoEnabled: values.ssoEnabled,
     resourceConfig: {
       memory: Number(values.memory),
       timeout: Number(values.timeout),
@@ -347,6 +352,15 @@ export default function AdminTenantEditPage() {
                 className="h-4 w-4 rounded border-borderSubtle text-accent focus:ring-accent/30"
               />
               Allow registration
+            </label>
+            <label className="flex items-center gap-2 pt-6 text-sm text-textPrimary">
+              <input
+                type="checkbox"
+                checked={form.ssoEnabled}
+                onChange={(e) => setForm({ ...form, ssoEnabled: e.target.checked })}
+                className="h-4 w-4 rounded border-borderSubtle text-accent focus:ring-accent/30"
+              />
+              Enable SSO
             </label>
             <Input
               label="Memory (MB)"
