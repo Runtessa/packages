@@ -1,6 +1,15 @@
-# AGENTS.md (optional)
-- Prefer small, single-responsibility modules.
-- When splitting files, keep public APIs stable (use re-export shims if needed).
-- Extract duplicate logic into shared modules with clear names and tests.
-- Avoid circular dependencies; keep dependency direction: shared/core -> domain -> adapters.
-- Always run lint/tests/build after refactors and fix regressions.
+# Codex Instructions (AGENTS.md)
+
+## Goals
+- Split multi-module/god files into small single-responsibility modules.
+- Reduce duplication by extracting reusable shared modules.
+- Preserve behavior and public APIs (use re-export shims when needed).
+
+## Boundaries
+- Don’t edit generated/build/vendor/deps directories.
+- Avoid circular dependencies; prefer shared/core -> domain -> adapters direction.
+
+## Quality bar
+- Run lint/tests/build after each refactor batch.
+- Keep files small (<=200 lines target).
+- Add/extend tests when extracting shared logic.

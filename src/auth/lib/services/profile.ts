@@ -1,9 +1,7 @@
 import { AuthDataSource } from '../db';
 import { hashPassword, verifyPassword } from '../crypto';
-import { assertPassword, assertPhone, normalizeText, requireString } from '../validation';
-import { findCurrentUserByRandId, schemas, upsertVersionedRecord } from './versioning';
-import { buildTotpUri, generateTotpSecret, normalizeTotpCode, verifyTotpCode } from './totp';
-import { isManagedAvatarUrl } from './avatar-storage';
+import { assertPassword, assertPhone, requireString } from '../validation';
+import { schemas, upsertVersionedRecord } from './versioning';
 import {
   ActivityEntity,
   AuthSessionEntity,
@@ -12,10 +10,25 @@ import {
   UserOrganizationEntity,
   UserRoleEntity,
 } from '../typeorm/entities';
+import {
+  asObject,
+  credentialsFromMeta,
+  normalizeAvatarUrl,
+  normalizeBirthday,
+  normalizeGender,
+  parseStoredTwoFactorMethod,
+  toIso,
+  type TwoFactorMethod,
+} from './profile-normalizers';
+import { readCurrentUser } from './profile-user';
 
-type JsonMap = Record<string, unknown>;
-
-export type TwoFactorMethod = 'none' | 'app' | 'sms';
+export type { TwoFactorMethod } from './profile-normalizers';
+export {
+  createTwoFactorSetup,
+  disableTwoFactor,
+  enableTwoFactorWithCode,
+  updateTwoFactorSettings,
+} from './profile-twofactor';
 
 export interface UserProfileSnapshot {
   user: {
@@ -87,84 +100,6 @@ export interface TwoFactorSetupPayload {
   secret: string;
   otpauthUri: string;
 }
-
-const asObject = (value: unknown): JsonMap => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return value as JsonMap;
-};
-
-const credentialsFromMeta = (value: unknown): JsonMap => {
-  const meta = asObject(value);
-  return asObject(meta.credentials);
-};
-
-const toIso = (value: Date | string | null | undefined): string | null => {
-  if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.valueOf())) return null;
-  return date.toISOString();
-};
-
-const normalizeAvatarUrl = (value: unknown): string | null => {
-  const raw = normalizeText(value ?? '', 1024);
-  if (!raw) return null;
-
-  if (raw.startsWith('http://') || raw.startsWith('https://') || isManagedAvatarUrl(raw)) {
-    return raw;
-  }
-
-  const error = new Error('Avatar URL must be an http(s) URL or a managed upload path');
-  (error as Error & { statusCode: number }).statusCode = 400;
-  throw error;
-};
-
-const normalizeBirthday = (value: unknown): string | null => {
-  const raw = normalizeText(value ?? '', 32);
-  if (!raw) return null;
-
-  const simpleIso = /^\d{4}-\d{2}-\d{2}$/;
-  if (simpleIso.test(raw)) return raw;
-
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.valueOf())) {
-    const error = new Error('Birthday must be a valid date');
-    (error as Error & { statusCode: number }).statusCode = 400;
-    throw error;
-  }
-
-  return parsed.toISOString().slice(0, 10);
-};
-
-const normalizeGender = (value: unknown): string | null => {
-  const raw = normalizeText(value ?? '', 40);
-  if (!raw) return null;
-  return raw;
-};
-
-const normalizeTwoFactorMethod = (value: string | undefined): TwoFactorMethod => {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (!normalized || normalized === 'none') return 'none';
-  if (normalized === 'app') return 'app';
-  if (normalized === 'sms') return 'sms';
-  const error = new Error('Invalid 2FA method');
-  (error as Error & { statusCode: number }).statusCode = 400;
-  throw error;
-};
-
-const parseStoredTwoFactorMethod = (value: unknown): TwoFactorMethod => {
-  if (value === 'app' || value === 'sms' || value === 'none') return value;
-  return 'none';
-};
-
-const readCurrentUser = async (userRandId: string) => {
-  const user = await findCurrentUserByRandId(userRandId);
-  if (!user) {
-    const error = new Error('User not found');
-    (error as Error & { statusCode: number }).statusCode = 404;
-    throw error;
-  }
-  return user;
-};
 
 export const getUserProfileSnapshot = async (userRandId: string): Promise<UserProfileSnapshot> => {
   const user = await readCurrentUser(userRandId);
@@ -382,181 +317,6 @@ export const updateProfilePassword = async (
     {
       actorUserRandId,
       changeReason: 'profile-password-updated',
-    },
-  );
-};
-
-export const updateTwoFactorSettings = async (
-  userRandId: string,
-  input: UpdateTwoFactorInput,
-  actorUserRandId: string,
-): Promise<void> => {
-  const user = await readCurrentUser(userRandId);
-  const enabled = Boolean(input.enabled);
-  const method = enabled ? normalizeTwoFactorMethod(input.method) : 'none';
-
-  const meta = asObject(user.meta);
-  const securityMeta = asObject(meta.security);
-
-  let twoFactorPhone: string | null = null;
-  if (enabled && method === 'sms') {
-    const candidate = normalizeText(input.phoneNumber ?? user.phoneNumber, 32);
-    twoFactorPhone = assertPhone(candidate);
-  }
-
-  const nextSecurity = {
-    ...securityMeta,
-    twoFactorEnabled: enabled,
-    twoFactorMethod: method,
-    twoFactorPhone,
-    updatedAt: new Date().toISOString(),
-  };
-
-  await upsertVersionedRecord(
-    schemas.users,
-    user.randId,
-    {
-      meta: {
-        ...meta,
-        security: nextSecurity,
-      },
-    },
-    {
-      actorUserRandId,
-      changeReason: 'profile-2fa-updated',
-    },
-  );
-};
-
-export const createTwoFactorSetup = async (
-  userRandId: string,
-  actorUserRandId: string,
-): Promise<TwoFactorSetupPayload> => {
-  const user = await readCurrentUser(userRandId);
-  const secret = generateTotpSecret();
-  const otpauthUri = buildTotpUri({ secret, accountName: user.email });
-
-  const meta = asObject(user.meta);
-  const securityMeta = asObject(meta.security);
-  const nextSecurity = {
-    ...securityMeta,
-    twoFactorPendingSecret: secret,
-    twoFactorPendingIssuedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  await upsertVersionedRecord(
-    schemas.users,
-    user.randId,
-    {
-      meta: {
-        ...meta,
-        security: nextSecurity,
-      },
-    },
-    {
-      actorUserRandId,
-      changeReason: 'profile-2fa-setup-created',
-    },
-  );
-
-  return { secret, otpauthUri };
-};
-
-export const enableTwoFactorWithCode = async (
-  userRandId: string,
-  verificationCode: string,
-  actorUserRandId: string,
-): Promise<void> => {
-  const user = await readCurrentUser(userRandId);
-  const code = normalizeTotpCode(verificationCode);
-  if (code.length !== 6) {
-    const error = new Error('Verification code must be 6 digits');
-    (error as Error & { statusCode: number }).statusCode = 400;
-    throw error;
-  }
-
-  const meta = asObject(user.meta);
-  const securityMeta = asObject(meta.security);
-  const pendingSecret =
-    typeof securityMeta.twoFactorPendingSecret === 'string' && securityMeta.twoFactorPendingSecret.trim()
-      ? securityMeta.twoFactorPendingSecret.trim()
-      : null;
-  const activeSecret =
-    typeof securityMeta.twoFactorSecret === 'string' && securityMeta.twoFactorSecret.trim()
-      ? securityMeta.twoFactorSecret.trim()
-      : null;
-  const secret = pendingSecret || activeSecret;
-  if (!secret) {
-    const error = new Error('Setup is required before enabling 2FA');
-    (error as Error & { statusCode: number }).statusCode = 400;
-    throw error;
-  }
-
-  const valid = verifyTotpCode({ secret, code });
-  if (!valid) {
-    const error = new Error('Verification code is invalid');
-    (error as Error & { statusCode: number }).statusCode = 400;
-    throw error;
-  }
-
-  const nextSecurity = {
-    ...securityMeta,
-    twoFactorEnabled: true,
-    twoFactorMethod: 'app',
-    twoFactorPhone: null,
-    twoFactorSecret: secret,
-    twoFactorPendingSecret: null,
-    twoFactorPendingIssuedAt: null,
-    updatedAt: new Date().toISOString(),
-  };
-
-  await upsertVersionedRecord(
-    schemas.users,
-    user.randId,
-    {
-      meta: {
-        ...meta,
-        security: nextSecurity,
-      },
-    },
-    {
-      actorUserRandId,
-      changeReason: 'profile-2fa-enabled',
-    },
-  );
-};
-
-export const disableTwoFactor = async (
-  userRandId: string,
-  actorUserRandId: string,
-): Promise<void> => {
-  const user = await readCurrentUser(userRandId);
-  const meta = asObject(user.meta);
-  const securityMeta = asObject(meta.security);
-  const nextSecurity = {
-    ...securityMeta,
-    twoFactorEnabled: false,
-    twoFactorMethod: 'none',
-    twoFactorPhone: null,
-    twoFactorSecret: null,
-    twoFactorPendingSecret: null,
-    twoFactorPendingIssuedAt: null,
-    updatedAt: new Date().toISOString(),
-  };
-
-  await upsertVersionedRecord(
-    schemas.users,
-    user.randId,
-    {
-      meta: {
-        ...meta,
-        security: nextSecurity,
-      },
-    },
-    {
-      actorUserRandId,
-      changeReason: 'profile-2fa-disabled',
     },
   );
 };

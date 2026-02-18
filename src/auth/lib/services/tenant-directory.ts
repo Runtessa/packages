@@ -10,53 +10,20 @@ import {
 } from '../typeorm/entities';
 import { findWhitelistTenant, normalizeTenantName } from './tenant-whitelist';
 import { resolveTenantOrganizationScope } from './access-admin';
+import {
+  DIRECTORY_CACHE_TTL_MS,
+  type TenantDirectoryOrganization,
+  type TenantDirectoryRole,
+  type TenantDirectorySnapshot,
+  type TenantDirectoryUser,
+} from './tenant-directory-types';
 
-export interface TenantDirectoryOrganization {
-  randId: string;
-  code: string;
-  name: string;
-  parentOrgRandId: string | null;
-  path: string;
-  depth: number;
-}
-
-export interface TenantDirectoryRole {
-  roleRandId: string;
-  roleCode: string;
-  roleName: string;
-  orgRandId: string;
-  orgPath: string | null;
-}
-
-export interface TenantDirectoryUser {
-  randId: string;
-  email: string;
-  phoneNumber: string;
-  firstName: string;
-  lastName: string;
-  organizations: Array<{
-    orgRandId: string;
-    orgCode: string | null;
-    orgName: string | null;
-    orgPath: string | null;
-  }>;
-  roles: TenantDirectoryRole[];
-  signupContext: {
-    orgRandId: string | null;
-    source: string;
-    changedAt: string;
-  } | null;
-}
-
-interface TenantDirectorySnapshot {
-  tenantName: string;
-  rootOrgRandId: string | null;
-  organizations: TenantDirectoryOrganization[];
-  users: TenantDirectoryUser[];
-  builtAt: string;
-}
-
-const DIRECTORY_CACHE_TTL_MS = 30 * 60 * 1000;
+export type {
+  TenantDirectoryOrganization,
+  TenantDirectoryRole,
+  TenantDirectorySnapshot,
+  TenantDirectoryUser,
+} from './tenant-directory-types';
 
 const cache = new Map<string, { expiresAt: number; snapshot: TenantDirectorySnapshot }>();
 const inFlight = new Map<string, Promise<TenantDirectorySnapshot>>();
@@ -431,4 +398,3 @@ export const getTenantUsersByOu = async (tenantName: string, ouPath: string) => 
     cacheTtlSec: Math.floor(DIRECTORY_CACHE_TTL_MS / 1000),
   };
 };
-

@@ -18,6 +18,8 @@
     "container-agent:dev": "npm --prefix src/container-agent run dev",
     "container-manager:start": "npm --prefix src/container-agent run start",
     "container-manager:dev": "npm --prefix src/container-agent run dev",
+    "dev:apps": "concurrently -k -n core,ide,auth -c blue,green,magenta \"npm --prefix src/core run dev\" \"npm --prefix src/ideNew run dev\" \"npm --prefix src/auth run dev\"",
+    "start:apps": "npm run dev:apps",
     "seed": "ts-node src/core/seed.ts",
     "seed-packages": "ts-node src/core/seed-packages.ts",
     "dump": "node dump-project.js"
