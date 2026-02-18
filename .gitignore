@@ -28,3 +28,5 @@ codex-gateway/data
 container-agent/data
 project_dumps
 *.dump.md
+docs/site/.docusaurus/
+docs/site/build/

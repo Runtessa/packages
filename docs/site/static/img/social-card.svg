@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="IdpCore Docs">
+  <rect width="1200" height="630" fill="#0b1220"/>
+  <rect x="64" y="64" width="1072" height="502" rx="24" fill="#111827" stroke="#1f2937"/>
+  <text x="120" y="260" fill="#60a5fa" font-size="88" font-family="Arial, sans-serif">IdpCore Docs</text>
+  <text x="120" y="340" fill="#94a3b8" font-size="38" font-family="Arial, sans-serif">Architecture • APIs • Operations</text>
+</svg>

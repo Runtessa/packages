@@ -1,0 +1,19 @@
+{
+  "name": "idpcore-docs-site",
+  "private": true,
+  "scripts": {
+    "start": "docusaurus start --port 4010 --host 0.0.0.0",
+    "build": "docusaurus build",
+    "serve": "docusaurus serve --port 4010",
+    "clear": "docusaurus clear"
+  },
+  "dependencies": {
+    "@docusaurus/core": "^3.6.3",
+    "@docusaurus/preset-classic": "^3.6.3",
+    "@docusaurus/theme-mermaid": "^3.6.3",
+    "prism-react-renderer": "^2.4.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

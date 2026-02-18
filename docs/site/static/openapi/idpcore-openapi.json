@@ -1,0 +1,3107 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "IdpCore API",
+    "version": "1.0.0",
+    "description": "Generated API catalog for IdpCore services"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Local core"
+    },
+    {
+      "url": "http://localhost:3015",
+      "description": "Local auth"
+    },
+    {
+      "url": "http://localhost:3002",
+      "description": "Local IDE"
+    }
+  ],
+  "tags": [
+    {
+      "name": "core",
+      "description": "Core Runtime"
+    },
+    {
+      "name": "ide",
+      "description": "IDE"
+    },
+    {
+      "name": "auth",
+      "description": "Auth Service"
+    },
+    {
+      "name": "kernel",
+      "description": "Kernel"
+    },
+    {
+      "name": "container-agent",
+      "description": "Container Agent"
+    },
+    {
+      "name": "codex-gateway",
+      "description": "Codex Gateway"
+    },
+    {
+      "name": "monitoring",
+      "description": "Monitoring"
+    },
+    {
+      "name": "shared",
+      "description": "Shared Package"
+    }
+  ],
+  "paths": {
+    "/*": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth ALL *",
+        "operationId": "auth_post___",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/server.ts"
+      },
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET *",
+        "operationId": "core_get___",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/server.ts"
+      }
+    },
+    "/account": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /account",
+        "operationId": "auth_get__account",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/server.ts"
+      }
+    },
+    "/acl/config": {
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET /acl/config",
+        "operationId": "core_get__acl_config",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      },
+      "put": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core PUT /acl/config",
+        "operationId": "core_put__acl_config",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      }
+    },
+    "/admin": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /admin",
+        "operationId": "auth_get__admin",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/pages.ts"
+      }
+    },
+    "/admin/access": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /admin/access",
+        "operationId": "auth_get__admin_access",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/pages.ts"
+      }
+    },
+    "/admin/tenants": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /admin/tenants",
+        "operationId": "auth_get__admin_tenants",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/pages.ts"
+      },
+      "post": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core POST /admin/tenants",
+        "operationId": "core_post__admin_tenants",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/server.ts"
+      }
+    },
+    "/api/admin/access/organizations": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /api/admin/access/organizations",
+        "operationId": "auth_get__api_admin_access_organizations",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/access-read.ts"
+      },
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/admin/access/organizations",
+        "operationId": "auth_post__api_admin_access_organizations",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/access-write.ts"
+      }
+    },
+    "/api/admin/access/roles": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /api/admin/access/roles",
+        "operationId": "auth_get__api_admin_access_roles",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/access-read.ts"
+      },
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/admin/access/roles",
+        "operationId": "auth_post__api_admin_access_roles",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/access-write.ts"
+      }
+    },
+    "/api/admin/access/tenant-mappings": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /api/admin/access/tenant-mappings",
+        "operationId": "auth_get__api_admin_access_tenant_mappings",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/access-read.ts"
+      },
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/admin/access/tenant-mappings",
+        "operationId": "auth_post__api_admin_access_tenant_mappings",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/access-write.ts"
+      }
+    },
+    "/api/admin/access/users": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /api/admin/access/users",
+        "operationId": "auth_get__api_admin_access_users",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/access-read.ts"
+      }
+    },
+    "/api/admin/access/users/assign-org": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/admin/access/users/assign-org",
+        "operationId": "auth_post__api_admin_access_users_assign_org",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/access-write.ts"
+      }
+    },
+    "/api/admin/access/users/assign-role": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/admin/access/users/assign-role",
+        "operationId": "auth_post__api_admin_access_users_assign_role",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/access-write.ts"
+      }
+    },
+    "/api/admin/monitoring/events": {
+      "get": {
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "monitoring GET /api/admin/monitoring/events",
+        "operationId": "monitoring_get__api_admin_monitoring_events",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/monitoring/lib/routes.js"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/monitoring/events",
+        "operationId": "ide_post__api_admin_monitoring_events",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/monitoring/events.ts"
+      }
+    },
+    "/api/admin/monitoring/ingest": {
+      "post": {
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "monitoring POST /api/admin/monitoring/ingest",
+        "operationId": "monitoring_post__api_admin_monitoring_ingest",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/monitoring/lib/routes.js"
+      }
+    },
+    "/api/admin/monitoring/rules": {
+      "get": {
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "monitoring GET /api/admin/monitoring/rules",
+        "operationId": "monitoring_get__api_admin_monitoring_rules",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/monitoring/lib/routes.js"
+      },
+      "post": {
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "monitoring POST /api/admin/monitoring/rules",
+        "operationId": "monitoring_post__api_admin_monitoring_rules",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/monitoring/lib/routes.js"
+      }
+    },
+    "/api/admin/monitoring/rules/{id}": {
+      "delete": {
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "monitoring DELETE /api/admin/monitoring/rules/:id",
+        "operationId": "monitoring_delete__api_admin_monitoring_rules__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/monitoring/lib/routes.js"
+      },
+      "put": {
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "monitoring PUT /api/admin/monitoring/rules/:id",
+        "operationId": "monitoring_put__api_admin_monitoring_rules__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/monitoring/lib/routes.js"
+      }
+    },
+    "/api/admin/monitoring/summary": {
+      "get": {
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "monitoring GET /api/admin/monitoring/summary",
+        "operationId": "monitoring_get__api_admin_monitoring_summary",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/monitoring/lib/routes.js"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/monitoring/summary",
+        "operationId": "ide_post__api_admin_monitoring_summary",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/monitoring/summary.ts"
+      }
+    },
+    "/api/admin/tenant-whitelist": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /api/admin/tenant-whitelist",
+        "operationId": "auth_get__api_admin_tenant_whitelist",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/whitelist.ts"
+      },
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/admin/tenant-whitelist",
+        "operationId": "auth_post__api_admin_tenant_whitelist",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/whitelist.ts"
+      }
+    },
+    "/api/admin/tenant-whitelist/{tenantName}": {
+      "delete": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth DELETE /api/admin/tenant-whitelist/:tenantName",
+        "operationId": "auth_delete__api_admin_tenant_whitelist__tenantName_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/whitelist.ts"
+      }
+    },
+    "/api/admin/tenant-whitelist/{tenantName}/rotate-token": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/admin/tenant-whitelist/:tenantName/rotate-token",
+        "operationId": "auth_post__api_admin_tenant_whitelist__tenantName__rotate_token",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/whitelist.ts"
+      }
+    },
+    "/api/auth/orgs": {
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET /api/auth/orgs",
+        "operationId": "core_get__api_auth_orgs",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routes/authSsoSessionRoutes.ts"
+      }
+    },
+    "/api/auth/session": {
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET /api/auth/session",
+        "operationId": "core_get__api_auth_session",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routes/authSsoSessionRoutes.ts"
+      }
+    },
+    "/api/auth/session/renew": {
+      "post": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core POST /api/auth/session/renew",
+        "operationId": "core_post__api_auth_session_renew",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routes/authSsoSessionRoutes.ts"
+      }
+    },
+    "/api/internal/tenant-sso/register": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/internal/tenant-sso/register",
+        "operationId": "auth_post__api_internal_tenant_sso_register",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/public.ts"
+      }
+    },
+    "/api/profile": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /api/profile",
+        "operationId": "auth_get__api_profile",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/profile/account.ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/profile",
+        "operationId": "ide_put__api_profile",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/profile.ts"
+      }
+    },
+    "/api/profile/2fa/disable": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/profile/2fa/disable",
+        "operationId": "auth_post__api_profile_2fa_disable",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/profile/two-factor.ts"
+      }
+    },
+    "/api/profile/2fa/enable": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/profile/2fa/enable",
+        "operationId": "auth_post__api_profile_2fa_enable",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/profile/two-factor.ts"
+      }
+    },
+    "/api/profile/2fa/setup": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/profile/2fa/setup",
+        "operationId": "auth_post__api_profile_2fa_setup",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/profile/two-factor.ts"
+      }
+    },
+    "/api/profile/avatar/upload": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/profile/avatar/upload",
+        "operationId": "auth_post__api_profile_avatar_upload",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/profile/account.ts"
+      }
+    },
+    "/api/profile/details": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/profile/details",
+        "operationId": "auth_post__api_profile_details",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/profile/account.ts"
+      }
+    },
+    "/api/profile/password": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/profile/password",
+        "operationId": "auth_post__api_profile_password",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/profile/account.ts"
+      }
+    },
+    "/api/public/login-options": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /api/public/login-options",
+        "operationId": "auth_get__api_public_login_options",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/public.ts"
+      }
+    },
+    "/api/public/login-ui-state": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /api/public/login-ui-state",
+        "operationId": "auth_get__api_public_login_ui_state",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/public.ts"
+      }
+    },
+    "/api/public/register-policy": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /api/public/register-policy",
+        "operationId": "auth_get__api_public_register_policy",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/public.ts"
+      }
+    },
+    "/api/session": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /api/session",
+        "operationId": "auth_get__api_session",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/session.ts"
+      }
+    },
+    "/api/session/renew": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/session/renew",
+        "operationId": "auth_post__api_session_renew",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/auth/session.ts"
+      }
+    },
+    "/api/tenant-directory/org": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /api/tenant-directory/org",
+        "operationId": "auth_get__api_tenant_directory_org",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/tenant-directory.ts"
+      }
+    },
+    "/api/tenant-directory/ou": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /api/tenant-directory/ou",
+        "operationId": "auth_get__api_tenant_directory_ou",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/tenant-directory.ts"
+      }
+    },
+    "/api/tenant-directory/users": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /api/tenant-directory/users",
+        "operationId": "auth_get__api_tenant_directory_users",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/tenant-directory.ts"
+      }
+    },
+    "/api/tenant-sync/upsert": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /api/tenant-sync/upsert",
+        "operationId": "auth_post__api_tenant_sync_upsert",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/oauth/tenant-sync.ts"
+      }
+    },
+    "/api/version": {
+      "get": {
+        "tags": [
+          "container-agent"
+        ],
+        "summary": "container-agent GET /api/version",
+        "operationId": "container-agent_get__api_version",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/container-agent/lib/routes.js"
+      }
+    },
+    "/auth": {
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET /auth",
+        "operationId": "core_get__auth",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routes/authSsoRoutes.ts"
+      }
+    },
+    "/auth/admin": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /auth/admin",
+        "operationId": "auth_get__auth_admin",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/pages.ts"
+      }
+    },
+    "/auth/admin/access": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /auth/admin/access",
+        "operationId": "auth_get__auth_admin_access",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/pages.ts"
+      }
+    },
+    "/auth/admin/tenants": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /auth/admin/tenants",
+        "operationId": "auth_get__auth_admin_tenants",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/admin/pages.ts"
+      }
+    },
+    "/auth/config": {
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET /auth/config",
+        "operationId": "core_get__auth_config",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routes/authSsoRoutes.ts"
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /auth/login",
+        "operationId": "auth_post__auth_login",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/auth/login.ts"
+      }
+    },
+    "/auth/login/otp/complete": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /auth/login/otp/complete",
+        "operationId": "auth_post__auth_login_otp_complete",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/auth/login.ts"
+      }
+    },
+    "/auth/login/otp/start": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /auth/login/otp/start",
+        "operationId": "auth_post__auth_login_otp_start",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/auth/login.ts"
+      }
+    },
+    "/auth/login/password/complete": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /auth/login/password/complete",
+        "operationId": "auth_post__auth_login_password_complete",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/auth/login.ts"
+      }
+    },
+    "/auth/login/two-factor/complete": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /auth/login/two-factor/complete",
+        "operationId": "auth_post__auth_login_two_factor_complete",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/auth/login.ts"
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /auth/logout",
+        "operationId": "auth_post__auth_logout",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/auth/session.ts"
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /auth/register",
+        "operationId": "auth_post__auth_register",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/auth/register.ts"
+      }
+    },
+    "/auth/register/complete": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /auth/register/complete",
+        "operationId": "auth_post__auth_register_complete",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/auth/register.ts"
+      }
+    },
+    "/auth/register/start": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /auth/register/start",
+        "operationId": "auth_post__auth_register_start",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/auth/register.ts"
+      }
+    },
+    "/auth/renew": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /auth/renew",
+        "operationId": "auth_post__auth_renew",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/auth/session.ts"
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "monitoring GET /health",
+        "operationId": "monitoring_get__health",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/monitoring/lib/routes.js"
+      }
+    },
+    "/ingest": {
+      "post": {
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "monitoring POST /ingest",
+        "operationId": "monitoring_post__ingest",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/monitoring/lib/routes.js"
+      }
+    },
+    "/login": {
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET /login",
+        "operationId": "core_get__login",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routes/authSsoRoutes.ts"
+      }
+    },
+    "/modules": {
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET /modules",
+        "operationId": "core_get__modules",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      },
+      "post": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core POST /modules",
+        "operationId": "core_post__modules",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      }
+    },
+    "/modules/{id}": {
+      "delete": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core DELETE /modules/:id",
+        "operationId": "core_delete__modules__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      },
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET /modules/:id",
+        "operationId": "core_get__modules__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      },
+      "put": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core PUT /modules/:id",
+        "operationId": "core_put__modules__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      }
+    },
+    "/modules/{id}/publish": {
+      "post": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core POST /modules/:id/publish",
+        "operationId": "core_post__modules__id__publish",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      }
+    },
+    "/modules/{id}/rollback/{revisionId}": {
+      "post": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core POST /modules/:id/rollback/:revisionId",
+        "operationId": "core_post__modules__id__rollback__revisionId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      }
+    },
+    "/modules/{id}/versions": {
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET /modules/:id/versions",
+        "operationId": "core_get__modules__id__versions",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      }
+    },
+    "/oauth/authorize": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /oauth/authorize",
+        "operationId": "auth_get__oauth_authorize",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/oauth/authorize.ts"
+      }
+    },
+    "/oauth/token": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth POST /oauth/token",
+        "operationId": "auth_post__oauth_token",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/oauth/token.ts"
+      }
+    },
+    "/oauth/userinfo": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /oauth/userinfo",
+        "operationId": "auth_get__oauth_userinfo",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/routes/oauth/userinfo.ts"
+      }
+    },
+    "/profile": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "auth GET /profile",
+        "operationId": "auth_get__profile",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/auth/server.ts"
+      }
+    },
+    "/registry-tenant/*": {
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET /registry-tenant/*",
+        "operationId": "core_get__registry_tenant__",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      }
+    },
+    "/registry/*": {
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET /registry/*",
+        "operationId": "core_get__registry__",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      }
+    },
+    "/ui-entities": {
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET /ui-entities",
+        "operationId": "core_get__ui_entities",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      },
+      "post": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core POST /ui-entities",
+        "operationId": "core_post__ui_entities",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      }
+    },
+    "/ui-entities/{id}": {
+      "delete": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core DELETE /ui-entities/:id",
+        "operationId": "core_delete__ui_entities__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      },
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET /ui-entities/:id",
+        "operationId": "core_get__ui_entities__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      },
+      "put": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core PUT /ui-entities/:id",
+        "operationId": "core_put__ui_entities__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      }
+    },
+    "/ui-entities/{id}/publish": {
+      "post": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core POST /ui-entities/:id/publish",
+        "operationId": "core_post__ui_entities__id__publish",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      }
+    },
+    "/ui-entities/{id}/rollback/{revisionId}": {
+      "post": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core POST /ui-entities/:id/rollback/:revisionId",
+        "operationId": "core_post__ui_entities__id__rollback__revisionId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      }
+    },
+    "/ui-entities/{id}/versions": {
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "core GET /ui-entities/:id/versions",
+        "operationId": "core_get__ui_entities__id__versions",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/core/app/routers/api.ts"
+      }
+    },
+    "/v1/containers/{containerName}/inspect": {
+      "get": {
+        "tags": [
+          "container-agent"
+        ],
+        "summary": "container-agent GET /v1/containers/:containerName/inspect",
+        "operationId": "container-agent_get__v1_containers__containerName__inspect",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/container-agent/lib/routes-containers-read.js"
+      }
+    },
+    "/v1/containers/{containerName}/logs": {
+      "get": {
+        "tags": [
+          "container-agent"
+        ],
+        "summary": "container-agent GET /v1/containers/:containerName/logs",
+        "operationId": "container-agent_get__v1_containers__containerName__logs",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/container-agent/lib/routes-containers-read.js"
+      }
+    },
+    "/v1/containers/action": {
+      "post": {
+        "tags": [
+          "container-agent"
+        ],
+        "summary": "container-agent POST /v1/containers/action",
+        "operationId": "container-agent_post__v1_containers_action",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/container-agent/lib/routes-containers-write.js"
+      }
+    },
+    "/v1/containers/create": {
+      "post": {
+        "tags": [
+          "container-agent"
+        ],
+        "summary": "container-agent POST /v1/containers/create",
+        "operationId": "container-agent_post__v1_containers_create",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/container-agent/lib/routes-containers-write.js"
+      }
+    },
+    "/v1/containers/list": {
+      "get": {
+        "tags": [
+          "container-agent"
+        ],
+        "summary": "container-agent GET /v1/containers/list",
+        "operationId": "container-agent_get__v1_containers_list",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/container-agent/lib/routes-containers-read.js"
+      }
+    },
+    "/v1/services": {
+      "get": {
+        "tags": [
+          "container-agent"
+        ],
+        "summary": "container-agent GET /v1/services",
+        "operationId": "container-agent_get__v1_services",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/container-agent/lib/routes-services.js"
+      }
+    },
+    "/v1/services/{service}/action": {
+      "post": {
+        "tags": [
+          "container-agent"
+        ],
+        "summary": "container-agent POST /v1/services/:service/action",
+        "operationId": "container-agent_post__v1_services__service__action",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/container-agent/lib/routes-services.js"
+      }
+    },
+    "/v1/services/{service}/ensure": {
+      "post": {
+        "tags": [
+          "container-agent"
+        ],
+        "summary": "container-agent POST /v1/services/:service/ensure",
+        "operationId": "container-agent_post__v1_services__service__ensure",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/container-agent/lib/routes-services.js"
+      }
+    },
+    "/v1/services/{service}/state": {
+      "get": {
+        "tags": [
+          "container-agent"
+        ],
+        "summary": "container-agent GET /v1/services/:service/state",
+        "operationId": "container-agent_get__v1_services__service__state",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/container-agent/lib/routes-services.js"
+      }
+    },
+    "/api/acl/config": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/acl/config",
+        "operationId": "ide_get__api_acl_config",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/acl/config.ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/acl/config",
+        "operationId": "ide_put__api_acl_config",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/acl/config.ts"
+      }
+    },
+    "/api/admin/containers/container-action": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/containers/container-action",
+        "operationId": "ide_post__api_admin_containers_container_action",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/containers/container-action.ts"
+      }
+    },
+    "/api/admin/containers/create": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/containers/create",
+        "operationId": "ide_post__api_admin_containers_create",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/containers/create.ts"
+      }
+    },
+    "/api/admin/containers/inspect": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/containers/inspect",
+        "operationId": "ide_post__api_admin_containers_inspect",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/containers/inspect.ts"
+      }
+    },
+    "/api/admin/containers/list": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/containers/list",
+        "operationId": "ide_post__api_admin_containers_list",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/containers/list.ts"
+      }
+    },
+    "/api/admin/containers/logs": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/containers/logs",
+        "operationId": "ide_post__api_admin_containers_logs",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/containers/logs.ts"
+      }
+    },
+    "/api/admin/containers/runtime": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/containers/runtime",
+        "operationId": "ide_post__api_admin_containers_runtime",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/containers/runtime.ts"
+      }
+    },
+    "/api/admin/containers/service-action": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/containers/service-action",
+        "operationId": "ide_post__api_admin_containers_service_action",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/containers/service-action.ts"
+      }
+    },
+    "/api/admin/logs": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/logs",
+        "operationId": "ide_post__api_admin_logs",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/logs.ts"
+      }
+    },
+    "/api/admin/logs/[id]": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/logs/[id]",
+        "operationId": "ide_post__api_admin_logs__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/logs/[id].ts"
+      }
+    },
+    "/api/admin/monitoring/rules/[id]": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/monitoring/rules/[id]",
+        "operationId": "ide_post__api_admin_monitoring_rules__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/monitoring/rules/[id].ts"
+      }
+    },
+    "/api/admin/monitoring/runtime": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/monitoring/runtime",
+        "operationId": "ide_get__api_admin_monitoring_runtime",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/monitoring/runtime.ts"
+      }
+    },
+    "/api/admin/shared-modules": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/shared-modules",
+        "operationId": "ide_get__api_admin_shared_modules",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/index.ts"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide POST /api/admin/shared-modules",
+        "operationId": "ide_post__api_admin_shared_modules",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/index.ts"
+      }
+    },
+    "/api/admin/shared-modules/[id]": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/shared-modules/[id]",
+        "operationId": "ide_get__api_admin_shared_modules__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/[id].ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/admin/shared-modules/[id]",
+        "operationId": "ide_put__api_admin_shared_modules__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/[id].ts"
+      },
+      "delete": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide DELETE /api/admin/shared-modules/[id]",
+        "operationId": "ide_delete__api_admin_shared_modules__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/[id].ts"
+      }
+    },
+    "/api/admin/shared-modules/[id]/access": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/shared-modules/[id]/access",
+        "operationId": "ide_get__api_admin_shared_modules__id__access",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/[id]/access.ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/admin/shared-modules/[id]/access",
+        "operationId": "ide_put__api_admin_shared_modules__id__access",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/[id]/access.ts"
+      }
+    },
+    "/api/admin/shared-modules/[id]/files": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/shared-modules/[id]/files",
+        "operationId": "ide_get__api_admin_shared_modules__id__files",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/[id]/files/index.ts"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide POST /api/admin/shared-modules/[id]/files",
+        "operationId": "ide_post__api_admin_shared_modules__id__files",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/[id]/files/index.ts"
+      }
+    },
+    "/api/admin/shared-modules/[id]/files/[fileId]": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/shared-modules/[id]/files/[fileId]",
+        "operationId": "ide_get__api_admin_shared_modules__id__files__fileId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/[id]/files/[fileId].ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/admin/shared-modules/[id]/files/[fileId]",
+        "operationId": "ide_put__api_admin_shared_modules__id__files__fileId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/[id]/files/[fileId].ts"
+      },
+      "delete": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide DELETE /api/admin/shared-modules/[id]/files/[fileId]",
+        "operationId": "ide_delete__api_admin_shared_modules__id__files__fileId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/[id]/files/[fileId].ts"
+      }
+    },
+    "/api/admin/shared-modules/[id]/publish": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/shared-modules/[id]/publish",
+        "operationId": "ide_post__api_admin_shared_modules__id__publish",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/[id]/publish.ts"
+      }
+    },
+    "/api/admin/shared-modules/endpoints": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/shared-modules/endpoints",
+        "operationId": "ide_get__api_admin_shared_modules_endpoints",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/endpoints/index.ts"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide POST /api/admin/shared-modules/endpoints",
+        "operationId": "ide_post__api_admin_shared_modules_endpoints",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/endpoints/index.ts"
+      }
+    },
+    "/api/admin/shared-modules/endpoints/[id]": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/shared-modules/endpoints/[id]",
+        "operationId": "ide_get__api_admin_shared_modules_endpoints__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/endpoints/[id].ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/admin/shared-modules/endpoints/[id]",
+        "operationId": "ide_put__api_admin_shared_modules_endpoints__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/endpoints/[id].ts"
+      },
+      "delete": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide DELETE /api/admin/shared-modules/endpoints/[id]",
+        "operationId": "ide_delete__api_admin_shared_modules_endpoints__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-modules/endpoints/[id].ts"
+      }
+    },
+    "/api/admin/shared-packages": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/shared-packages",
+        "operationId": "ide_get__api_admin_shared_packages",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-packages/index.ts"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide POST /api/admin/shared-packages",
+        "operationId": "ide_post__api_admin_shared_packages",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-packages/index.ts"
+      }
+    },
+    "/api/admin/shared-packages/[id]": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/shared-packages/[id]",
+        "operationId": "ide_get__api_admin_shared_packages__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-packages/[id].ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/admin/shared-packages/[id]",
+        "operationId": "ide_put__api_admin_shared_packages__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-packages/[id].ts"
+      },
+      "delete": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide DELETE /api/admin/shared-packages/[id]",
+        "operationId": "ide_delete__api_admin_shared_packages__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-packages/[id].ts"
+      }
+    },
+    "/api/admin/shared-packages/[id]/access": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/shared-packages/[id]/access",
+        "operationId": "ide_get__api_admin_shared_packages__id__access",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-packages/[id]/access.ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/admin/shared-packages/[id]/access",
+        "operationId": "ide_put__api_admin_shared_packages__id__access",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-packages/[id]/access.ts"
+      }
+    },
+    "/api/admin/shared-packages/[id]/files": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/shared-packages/[id]/files",
+        "operationId": "ide_get__api_admin_shared_packages__id__files",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-packages/[id]/files/index.ts"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide POST /api/admin/shared-packages/[id]/files",
+        "operationId": "ide_post__api_admin_shared_packages__id__files",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-packages/[id]/files/index.ts"
+      }
+    },
+    "/api/admin/shared-packages/[id]/files/[fileId]": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/shared-packages/[id]/files/[fileId]",
+        "operationId": "ide_get__api_admin_shared_packages__id__files__fileId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-packages/[id]/files/[fileId].ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/admin/shared-packages/[id]/files/[fileId]",
+        "operationId": "ide_put__api_admin_shared_packages__id__files__fileId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-packages/[id]/files/[fileId].ts"
+      },
+      "delete": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide DELETE /api/admin/shared-packages/[id]/files/[fileId]",
+        "operationId": "ide_delete__api_admin_shared_packages__id__files__fileId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-packages/[id]/files/[fileId].ts"
+      }
+    },
+    "/api/admin/shared-packages/[id]/publish": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/shared-packages/[id]/publish",
+        "operationId": "ide_post__api_admin_shared_packages__id__publish",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/shared-packages/[id]/publish.ts"
+      }
+    },
+    "/api/admin/teams": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/teams",
+        "operationId": "ide_get__api_admin_teams",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/teams/index.ts"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide POST /api/admin/teams",
+        "operationId": "ide_post__api_admin_teams",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/teams/index.ts"
+      }
+    },
+    "/api/admin/teams/[id]": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/teams/[id]",
+        "operationId": "ide_get__api_admin_teams__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/teams/[id].ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/admin/teams/[id]",
+        "operationId": "ide_put__api_admin_teams__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/teams/[id].ts"
+      },
+      "delete": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide DELETE /api/admin/teams/[id]",
+        "operationId": "ide_delete__api_admin_teams__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/teams/[id].ts"
+      }
+    },
+    "/api/admin/teams/[id]/members": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/teams/[id]/members",
+        "operationId": "ide_get__api_admin_teams__id__members",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/teams/[id]/members/index.ts"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide POST /api/admin/teams/[id]/members",
+        "operationId": "ide_post__api_admin_teams__id__members",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/teams/[id]/members/index.ts"
+      }
+    },
+    "/api/admin/teams/[id]/members/[memberId]": {
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/admin/teams/[id]/members/[memberId]",
+        "operationId": "ide_put__api_admin_teams__id__members__memberId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/teams/[id]/members/[memberId].ts"
+      },
+      "delete": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide DELETE /api/admin/teams/[id]/members/[memberId]",
+        "operationId": "ide_delete__api_admin_teams__id__members__memberId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/teams/[id]/members/[memberId].ts"
+      }
+    },
+    "/api/admin/teams/[id]/tenants": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/teams/[id]/tenants",
+        "operationId": "ide_get__api_admin_teams__id__tenants",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/teams/[id]/tenants/index.ts"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide POST /api/admin/teams/[id]/tenants",
+        "operationId": "ide_post__api_admin_teams__id__tenants",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/teams/[id]/tenants/index.ts"
+      }
+    },
+    "/api/admin/teams/[id]/tenants/[tenantId]": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/teams/[id]/tenants/[tenantId]",
+        "operationId": "ide_post__api_admin_teams__id__tenants__tenantId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/teams/[id]/tenants/[tenantId].ts"
+      }
+    },
+    "/api/admin/tenants": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/tenants",
+        "operationId": "ide_get__api_admin_tenants",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/tenants.ts"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide POST /api/admin/tenants",
+        "operationId": "ide_post__api_admin_tenants",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/tenants.ts"
+      }
+    },
+    "/api/admin/tenants/[id]": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/tenants/[id]",
+        "operationId": "ide_get__api_admin_tenants__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/tenants/[id].ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/admin/tenants/[id]",
+        "operationId": "ide_put__api_admin_tenants__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/tenants/[id].ts"
+      },
+      "delete": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide DELETE /api/admin/tenants/[id]",
+        "operationId": "ide_delete__api_admin_tenants__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/tenants/[id].ts"
+      }
+    },
+    "/api/admin/tenants/[id]/secrets": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/admin/tenants/[id]/secrets",
+        "operationId": "ide_get__api_admin_tenants__id__secrets",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/tenants/[id]/secrets/index.ts"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide POST /api/admin/tenants/[id]/secrets",
+        "operationId": "ide_post__api_admin_tenants__id__secrets",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/tenants/[id]/secrets/index.ts"
+      }
+    },
+    "/api/admin/tenants/[id]/secrets/[keyName]": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/admin/tenants/[id]/secrets/[keyName]",
+        "operationId": "ide_post__api_admin_tenants__id__secrets__keyName_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/admin/tenants/[id]/secrets/[keyName].ts"
+      }
+    },
+    "/api/assistant/auth/callback": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/assistant/auth/callback",
+        "operationId": "ide_post__api_assistant_auth_callback",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/auth/callback.ts"
+      }
+    },
+    "/api/assistant/auth/login": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/assistant/auth/login",
+        "operationId": "ide_post__api_assistant_auth_login",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/auth/login.ts"
+      }
+    },
+    "/api/assistant/auth/logout": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/assistant/auth/logout",
+        "operationId": "ide_post__api_assistant_auth_logout",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/auth/logout.ts"
+      }
+    },
+    "/api/assistant/auth/session/[sessionId]": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/assistant/auth/session/[sessionId]",
+        "operationId": "ide_post__api_assistant_auth_session__sessionId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/auth/session/[sessionId].ts"
+      }
+    },
+    "/api/assistant/auth/start": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/assistant/auth/start",
+        "operationId": "ide_post__api_assistant_auth_start",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/auth/start.ts"
+      }
+    },
+    "/api/assistant/auth/status": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/assistant/auth/status",
+        "operationId": "ide_post__api_assistant_auth_status",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/auth/status.ts"
+      }
+    },
+    "/api/assistant/config": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/assistant/config",
+        "operationId": "ide_post__api_assistant_config",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/config.ts"
+      }
+    },
+    "/api/assistant/gateway/runtime": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/assistant/gateway/runtime",
+        "operationId": "ide_get__api_assistant_gateway_runtime",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/gateway/runtime.ts"
+      }
+    },
+    "/api/assistant/models": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/assistant/models",
+        "operationId": "ide_post__api_assistant_models",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/models.ts"
+      }
+    },
+    "/api/assistant/preview/exceptions": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/assistant/preview/exceptions",
+        "operationId": "ide_get__api_assistant_preview_exceptions",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/preview/exceptions.ts"
+      },
+      "delete": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide DELETE /api/assistant/preview/exceptions",
+        "operationId": "ide_delete__api_assistant_preview_exceptions",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/preview/exceptions.ts"
+      }
+    },
+    "/api/assistant/respond": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/assistant/respond",
+        "operationId": "ide_post__api_assistant_respond",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/respond.ts"
+      }
+    },
+    "/api/assistant/rollback": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/assistant/rollback",
+        "operationId": "ide_post__api_assistant_rollback",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/rollback.ts"
+      }
+    },
+    "/api/assistant/runs": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/assistant/runs",
+        "operationId": "ide_post__api_assistant_runs",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/runs.ts"
+      }
+    },
+    "/api/assistant/runs/[runId]": {
+      "delete": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide DELETE /api/assistant/runs/[runId]",
+        "operationId": "ide_delete__api_assistant_runs__runId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/runs/[runId].ts"
+      }
+    },
+    "/api/assistant/tenant-dump": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/assistant/tenant-dump",
+        "operationId": "ide_post__api_assistant_tenant_dump",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/assistant/tenant-dump.ts"
+      }
+    },
+    "/api/authentication/login": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/authentication/login",
+        "operationId": "ide_post__api_authentication_login",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/authentication/login.ts"
+      }
+    },
+    "/api/authentication/logout": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/authentication/logout",
+        "operationId": "ide_post__api_authentication_logout",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/authentication/logout.ts"
+      }
+    },
+    "/api/me": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/me",
+        "operationId": "ide_post__api_me",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/me.ts"
+      }
+    },
+    "/api/me/team": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/me/team",
+        "operationId": "ide_post__api_me_team",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/me/team.ts"
+      }
+    },
+    "/api/models": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/models",
+        "operationId": "ide_get__api_models",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/models/index.ts"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide POST /api/models",
+        "operationId": "ide_post__api_models",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/models/index.ts"
+      }
+    },
+    "/api/models/[id]": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/models/[id]",
+        "operationId": "ide_get__api_models__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/models/[id].ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/models/[id]",
+        "operationId": "ide_put__api_models__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/models/[id].ts"
+      },
+      "delete": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide DELETE /api/models/[id]",
+        "operationId": "ide_delete__api_models__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/models/[id].ts"
+      }
+    },
+    "/api/models/migrate": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/models/migrate",
+        "operationId": "ide_post__api_models_migrate",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/models/migrate.ts"
+      }
+    },
+    "/api/modules": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/modules",
+        "operationId": "ide_get__api_modules",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/modules/index.ts"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide POST /api/modules",
+        "operationId": "ide_post__api_modules",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/modules/index.ts"
+      }
+    },
+    "/api/modules/[id]": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/modules/[id]",
+        "operationId": "ide_get__api_modules__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/modules/[id].ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/modules/[id]",
+        "operationId": "ide_put__api_modules__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/modules/[id].ts"
+      },
+      "delete": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide DELETE /api/modules/[id]",
+        "operationId": "ide_delete__api_modules__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/modules/[id].ts"
+      }
+    },
+    "/api/modules/[id]/publish": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/modules/[id]/publish",
+        "operationId": "ide_post__api_modules__id__publish",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/modules/[id]/publish.ts"
+      }
+    },
+    "/api/modules/[id]/rollback/[revisionId]": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/modules/[id]/rollback/[revisionId]",
+        "operationId": "ide_post__api_modules__id__rollback__revisionId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/modules/[id]/rollback/[revisionId].ts"
+      }
+    },
+    "/api/modules/[id]/versions": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/modules/[id]/versions",
+        "operationId": "ide_post__api_modules__id__versions",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/modules/[id]/versions.ts"
+      }
+    },
+    "/api/ui-entities": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/ui-entities",
+        "operationId": "ide_get__api_ui_entities",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/ui-entities/index.ts"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide POST /api/ui-entities",
+        "operationId": "ide_post__api_ui_entities",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/ui-entities/index.ts"
+      }
+    },
+    "/api/ui-entities/[id]": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/ui-entities/[id]",
+        "operationId": "ide_get__api_ui_entities__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/ui-entities/[id].ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/ui-entities/[id]",
+        "operationId": "ide_put__api_ui_entities__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/ui-entities/[id].ts"
+      },
+      "delete": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide DELETE /api/ui-entities/[id]",
+        "operationId": "ide_delete__api_ui_entities__id_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/ui-entities/[id].ts"
+      }
+    },
+    "/api/ui-entities/[id]/publish": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/ui-entities/[id]/publish",
+        "operationId": "ide_post__api_ui_entities__id__publish",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/ui-entities/[id]/publish.ts"
+      }
+    },
+    "/api/ui-entities/[id]/rollback/[revisionId]": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/ui-entities/[id]/rollback/[revisionId]",
+        "operationId": "ide_post__api_ui_entities__id__rollback__revisionId_",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/ui-entities/[id]/rollback/[revisionId].ts"
+      }
+    },
+    "/api/ui-entities/[id]/versions": {
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide ANY /api/ui-entities/[id]/versions",
+        "operationId": "ide_post__api_ui_entities__id__versions",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/ui-entities/[id]/versions.ts"
+      }
+    },
+    "/api/users": {
+      "get": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide GET /api/users",
+        "operationId": "ide_get__api_users",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/users.ts"
+      },
+      "post": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide POST /api/users",
+        "operationId": "ide_post__api_users",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/users.ts"
+      },
+      "put": {
+        "tags": [
+          "ide"
+        ],
+        "summary": "ide PUT /api/users",
+        "operationId": "ide_put__api_users",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "x-source-file": "src/ideNew/src/pages/api/users.ts"
+      }
+    }
+  }
+}
