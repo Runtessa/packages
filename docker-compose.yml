@@ -107,15 +107,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/srv/idp
 
-  kernel:
-    profiles: ["kernel"]
-    build:
-      context: .
-      dockerfile: src/kernel/Dockerfile
-    restart: unless-stopped
-    ports:
-      - "3003:80"
-
 volumes:
   postgres_data:
   redis_data:

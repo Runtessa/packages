@@ -1,6 +1,7 @@
 services:
   nginx:
     image: nginx:latest
+    container_name: docker_nginx_1
     restart: unless-stopped
     depends_on:
       - auth
@@ -13,6 +14,7 @@ services:
 
   postgres:
     image: postgres:latest
+    container_name: docker_postgres_1
     restart: unless-stopped
     env_file:
       - ./env/postgres.env
@@ -24,6 +26,7 @@ services:
 
   redis:
     image: redis:latest
+    container_name: docker_redis_1
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6379}:6379"
@@ -32,6 +35,7 @@ services:
 
   auth:
     image: ${AUTH_IMAGE}
+    container_name: docker_auth_1
     restart: unless-stopped
     env_file:
       - ./env/auth.env
@@ -42,6 +46,7 @@ services:
 
   core:
     image: ${CORE_IMAGE}
+    container_name: docker_core_1
     restart: unless-stopped
     env_file:
       - ./env/core.env
@@ -49,15 +54,13 @@ services:
       - postgres
       - redis
       - auth
-      - monitoring
       - container-agent
     ports:
       - "${PORT_CORE}:3005"
-    extra_hosts:
-      - "auth.localtest.me:host-gateway"
 
   ide:
     image: ${IDE_IMAGE}
+    container_name: docker_ide_1
     restart: unless-stopped
     env_file:
       - ./env/ide.env
@@ -68,20 +71,13 @@ services:
       - redis
       - core
       - auth
-      - monitoring
       - container-agent
-      - codex-gateway
     ports:
       - "${PORT_IDE}:3000"
 
-  kernel:
-    image: ${KERNEL_IMAGE}
-    restart: unless-stopped
-    ports:
-      - "${PORT_KERNEL}:80"
-
   container-agent:
     image: ${CONTAINER_AGENT_IMAGE}
+    container_name: docker_container-agent_1
     restart: unless-stopped
     env_file:
       - ./env/container-agent.env
@@ -90,8 +86,6 @@ services:
       CONTAINER_MANAGER_MONITORING_IMAGE: ${MONITORING_IMAGE}
     depends_on:
       - redis
-      - monitoring
-      - codex-gateway
     ports:
       - "${PORT_CONTAINER_AGENT}:4070"
     volumes:

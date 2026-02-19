@@ -6,6 +6,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 # Build this image from repository root:
 # docker build -f src/ideNew/Dockerfile .
+COPY src/packages/shared /app/src/packages/shared
 COPY src/ideNew/package*.json ./
 
 RUN npm install
@@ -24,9 +25,13 @@ WORKDIR /app/src/ideNew
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-COPY src/ideNew/package*.json ./
-RUN npm install --omit=dev --ignore-scripts \
+COPY --from=builder /app/src/ideNew/package*.json ./
+COPY --from=builder /app/src/ideNew/node_modules ./node_modules
+COPY --from=builder /app/src/packages/shared /app/src/packages/shared
+RUN npm prune --omit=dev --ignore-scripts \
     && npm cache clean --force
+RUN mkdir -p /app/src \
+    && ln -s /app/src/ideNew/node_modules /app/src/node_modules
 
 COPY --from=builder /app/src/ideNew/.next ./.next
 COPY --from=builder /app/src/ideNew/public ./public

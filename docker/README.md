@@ -6,12 +6,13 @@ This folder contains a full image-based runtime stack for:
 - core
 - auth
 - ide
-- kernel
 - monitoring
 - container-agent
 - codex-gateway
 - postgres (latest)
 - redis (latest)
+
+Kernel is built inside the core image (not a standalone container).
 
 ## Run everything
 

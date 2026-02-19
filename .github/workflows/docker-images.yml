@@ -27,9 +27,6 @@ jobs:
           - name: ide
             context: .
             dockerfile: src/ideNew/Dockerfile
-          - name: kernel
-            context: .
-            dockerfile: src/kernel/Dockerfile
           - name: monitoring
             context: src/monitoring
             dockerfile: src/monitoring/Dockerfile
