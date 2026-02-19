@@ -9,6 +9,6 @@ create_db() {
 EOSQL
 }
 
-create_db "idpcore2"
+create_db "idpcore"
 create_db "idp_auth"
 create_db "idpnext"

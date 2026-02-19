@@ -80,27 +80,6 @@ services:
     ports:
       - "${PORT_KERNEL}:80"
 
-  monitoring:
-    image: ${MONITORING_IMAGE}
-    restart: unless-stopped
-    env_file:
-      - ./env/monitoring.env
-    depends_on:
-      - redis
-    ports:
-      - "${PORT_MONITORING}:3011"
-
-  codex-gateway:
-    image: ${CODEX_GATEWAY_IMAGE}
-    restart: unless-stopped
-    env_file:
-      - ./env/codex-gateway.env
-    ports:
-      - "${PORT_CODEX_GATEWAY}:4040"
-    volumes:
-      - codex_data:/data
-      - ..:/workspace
-
   container-agent:
     image: ${CONTAINER_AGENT_IMAGE}
     restart: unless-stopped
@@ -122,4 +101,3 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  codex_data:
