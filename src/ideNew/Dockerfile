@@ -9,6 +9,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 COPY src/ideNew/package*.json ./
 
 RUN npm install
+RUN mkdir -p /app/src \
+    && ln -s /app/src/ideNew/node_modules /app/src/node_modules
 
 COPY src/packages /app/src/packages
 COPY src/ideNew /app/src/ideNew
