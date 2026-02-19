@@ -25,7 +25,7 @@ jobs:
             context: src/auth
             dockerfile: src/auth/Dockerfile
           - name: ide
-            context: src/ideNew
+            context: .
             dockerfile: src/ideNew/Dockerfile
           - name: kernel
             context: .

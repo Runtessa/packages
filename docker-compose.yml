@@ -57,8 +57,8 @@ services:
 
   ide:
     build:
-      context: src/ideNew
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: src/ideNew/Dockerfile
     restart: unless-stopped
     env_file:
       - src/ideNew/.env

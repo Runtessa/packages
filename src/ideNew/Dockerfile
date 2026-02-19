@@ -1,33 +1,36 @@
 FROM node:22-bullseye-slim AS builder
 
-WORKDIR /app
+WORKDIR /app/src/ideNew
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
-COPY package*.json ./
+# Build this image from repository root:
+# docker build -f src/ideNew/Dockerfile .
+COPY src/ideNew/package*.json ./
 
 RUN npm install
 
-COPY . .
+COPY src/packages /app/src/packages
+COPY src/ideNew /app/src/ideNew
 
 RUN npm run build
 
 FROM node:22-bullseye-slim AS runner
 
-WORKDIR /app
+WORKDIR /app/src/ideNew
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-COPY package*.json ./
+COPY src/ideNew/package*.json ./
 RUN npm install --omit=dev --ignore-scripts \
     && npm cache clean --force
 
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/next.config.mjs ./next.config.mjs
-COPY --from=builder /app/postcss.config.js ./postcss.config.js
-COPY --from=builder /app/tailwind.config.js ./tailwind.config.js
+COPY --from=builder /app/src/ideNew/.next ./.next
+COPY --from=builder /app/src/ideNew/public ./public
+COPY --from=builder /app/src/ideNew/next.config.mjs ./next.config.mjs
+COPY --from=builder /app/src/ideNew/postcss.config.js ./postcss.config.js
+COPY --from=builder /app/src/ideNew/tailwind.config.js ./tailwind.config.js
 
 ENV PORT=3000
 
