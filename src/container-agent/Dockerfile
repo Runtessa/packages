@@ -2,10 +2,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install --omit=dev
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
 COPY index.js ./
+COPY lib ./lib
 
 RUN mkdir -p /app/certs
 RUN chown -R node:node /app

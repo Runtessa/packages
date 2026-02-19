@@ -1,0 +1,121 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  core:
+    build:
+      context: .
+      dockerfile: src/core/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - src/core/.env
+    environment:
+      PORT: 3005
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/idpcore2
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "3005:3005"
+
+  auth:
+    build:
+      context: src/auth
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - src/auth/.env
+    environment:
+      AUTH_HOST: 0.0.0.0
+      AUTH_PORT: 3015
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/idp_auth
+      AUTH_ALLOWED_ORIGINS: http://localhost:3015,http://localhost:3002,http://localhost:3005
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "3015:3015"
+
+  ide:
+    build:
+      context: src/ideNew
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - src/ideNew/.env
+    depends_on:
+      - core
+      - auth
+    ports:
+      - "3002:3000"
+
+  monitoring:
+    build:
+      context: src/monitoring
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - src/monitoring/.env
+    environment:
+      MONITORING_HOST: 0.0.0.0
+      MONITORING_PORT: 3011
+    ports:
+      - "3011:3011"
+
+  codex-gateway:
+    profiles: ["codex"]
+    build:
+      context: src/codex-gateway
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "4040:4040"
+    volumes:
+      - ./src/codex-gateway/data:/data
+      - .:/workspace
+
+  container-agent:
+    profiles: ["agent"]
+    build:
+      context: src/container-agent
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - src/container-agent/.env
+    ports:
+      - "4070:4070"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/srv/idp
+
+  kernel:
+    profiles: ["kernel"]
+    build:
+      context: .
+      dockerfile: src/kernel/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3003:80"
+
+volumes:
+  postgres_data:
+  redis_data:

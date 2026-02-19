@@ -33,6 +33,10 @@
     "docs:build": "npm run docs:generate && npm --prefix docs/site run build",
     "docs:serve": "npm --prefix docs/site run serve",
     "docs:clean": "npm --prefix docs/site run clear",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f --tail=200",
     "seed": "ts-node src/core/seed.ts",
     "seed-packages": "ts-node src/core/seed-packages.ts",
     "dump": "node dump-project.js"
