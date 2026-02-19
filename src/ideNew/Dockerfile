@@ -1,4 +1,4 @@
-FROM node:20-bullseye-slim AS builder
+FROM node:22-bullseye-slim AS builder
 
 WORKDIR /app
 
@@ -6,13 +6,13 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY package*.json ./
 
-RUN npm ci
+RUN npm install
 
 COPY . .
 
 RUN npm run build
 
-FROM node:20-bullseye-slim AS runner
+FROM node:22-bullseye-slim AS runner
 
 WORKDIR /app
 
@@ -20,7 +20,7 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY package*.json ./
-RUN npm ci --omit=dev --ignore-scripts \
+RUN npm install --omit=dev --ignore-scripts \
     && npm cache clean --force
 
 COPY --from=builder /app/.next ./.next
