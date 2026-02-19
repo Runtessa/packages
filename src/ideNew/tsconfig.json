@@ -16,8 +16,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
-      "@idp/shared": ["../packages/shared/dist/index"],
-      "@idp/shared/*": ["../packages/shared/dist/*"]
+      "@idp/shared": ["../packages/shared/src/index"],
+      "@idp/shared/*": ["../packages/shared/src/*"]
     },
     "resolveJsonModule": true,
     "isolatedModules": true,
