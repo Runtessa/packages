@@ -10,8 +10,8 @@
     "moduleResolution": "node",
     "baseUrl": ".",
     "paths": {
-      "@idp/shared": ["src/packages/shared/dist/index.d.ts"],
-      "@idp/shared/*": ["src/packages/shared/dist/*"]
+      "@idp/shared": ["src/core/shared/dist/index.d.ts"],
+      "@idp/shared/*": ["src/core/shared/dist/*"]
     },
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,

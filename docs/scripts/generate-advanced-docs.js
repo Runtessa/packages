@@ -14,7 +14,8 @@ const SERVICE_DIRS = [
   { id: 'container-agent', label: 'Container Agent', dir: 'src/container-agent' },
   { id: 'codex-gateway', label: 'Codex Gateway', dir: 'src/codex-gateway' },
   { id: 'monitoring', label: 'Monitoring', dir: 'src/monitoring' },
-  { id: 'shared', label: 'Shared Package', dir: 'src/packages/shared/src' },
+  { id: 'core-shared', label: 'Core Shared Package', dir: 'src/core/shared/src' },
+  { id: 'ide-shared', label: 'IDE Shared Package', dir: 'src/ideNew/shared/src' },
 ];
 
 const API_SERVICE_DIRS = [

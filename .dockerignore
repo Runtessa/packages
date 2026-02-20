@@ -8,9 +8,11 @@
 **/build
 **/.docusaurus
 
-# Required by src/ideNew file dependency @idp/shared (package main/types point to dist)
-!src/packages/shared/dist
-!src/packages/shared/dist/**
+# Required by local @idp/shared package copies in core/ide (package main/types point to dist)
+!src/core/shared/dist
+!src/core/shared/dist/**
+!src/ideNew/shared/dist
+!src/ideNew/shared/dist/**
 
 docs/site/build
 docs/site/.docusaurus

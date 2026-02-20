@@ -2,14 +2,8 @@
   "name": "idpcore",
   "version": "0.1.0",
   "main": "dist/server.js",
-  "workspaces": [
-    "src/core",
-    "src/ideNew",
-    "src/packages/*"
-  ],
   "scripts": {
-    "build:shared": "tsc -p src/packages/shared/tsconfig.json",
-    "build": "npm run build:shared && tsc",
+    "build": "tsc",
     "build:front": "npm --prefix src/kernel run build",
     "start": "npm run build && npm run build:front && node dist/server.js",
     "core:dev": "npm --prefix src/core run dev",

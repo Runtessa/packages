@@ -9,10 +9,11 @@ const SOURCES = [
   { key: 'core', label: 'Core Runtime', dir: 'src/core' },
   { key: 'ide', label: 'IDE', dir: 'src/ideNew/src' },
   { key: 'kernel', label: 'Kernel', dir: 'src/kernel/src' },
-  { key: 'shared', label: 'Shared Package', dir: 'src/packages/shared/src' },
+  { key: 'coreShared', label: 'Core Shared Package', dir: 'src/core/shared/src' },
+  { key: 'ideShared', label: 'IDE Shared Package', dir: 'src/ideNew/shared/src' },
 ];
 
-const ENTITY_DIR = 'src/packages/shared/src/entities';
+const ENTITY_DIR = 'src/core/shared/src/entities';
 const NEXT_API_ROOT = 'src/ideNew/src/pages/api';
 
 function escapeHtml(value) {
@@ -123,7 +124,8 @@ function getArea(relPath) {
   if (relPath.startsWith('src/core/')) return 'core';
   if (relPath.startsWith('src/ideNew/src/')) return 'ide';
   if (relPath.startsWith('src/kernel/src/')) return 'kernel';
-  if (relPath.startsWith('src/packages/shared/src/')) return 'shared';
+  if (relPath.startsWith('src/core/shared/src/')) return 'coreShared';
+  if (relPath.startsWith('src/ideNew/shared/src/')) return 'ideShared';
   return 'other';
 }
 

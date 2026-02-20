@@ -11,7 +11,7 @@
     "dump": "node ./scripts/dump.js"
   },
   "dependencies": {
-    "@idp/shared": "file:../packages/shared",
+    "@idp/shared": "file:./shared",
     "@babel/core": "^7.28.6",
     "@babel/preset-env": "^7.28.6",
     "@babel/preset-react": "^7.28.5",
