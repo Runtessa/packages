@@ -1,7 +1,6 @@
 services:
   nginx:
     image: nginx:latest
-    container_name: nginx
     restart: unless-stopped
     depends_on:
       - auth
@@ -13,8 +12,7 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
 
   postgres:
-    image: postgres:latest
-    container_name: postgres
+    image: postgres:17
     restart: unless-stopped
     env_file:
       - ./env/postgres.env
@@ -26,7 +24,6 @@ services:
 
   redis:
     image: redis:latest
-    container_name: redis
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6379}:6379"
@@ -35,7 +32,6 @@ services:
 
   auth:
     image: ${AUTH_IMAGE}
-    container_name: auth
     restart: unless-stopped
     env_file:
       - ./env/auth.env
@@ -46,7 +42,6 @@ services:
 
   core:
     image: ${CORE_IMAGE}
-    container_name: core
     restart: unless-stopped
     env_file:
       - ./env/core.env
@@ -60,7 +55,6 @@ services:
 
   ide:
     image: ${IDE_IMAGE}
-    container_name: ide
     restart: unless-stopped
     env_file:
       - ./env/ide.env
@@ -77,7 +71,6 @@ services:
 
   container-agent:
     image: ${CONTAINER_AGENT_IMAGE}
-    container_name: container-agent
     restart: unless-stopped
     env_file:
       - ./env/container-agent.env
