@@ -8,6 +8,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { Tenant } from './Tenant';
 
 @Entity({ name: 'ui_packages' })
@@ -18,7 +19,7 @@ export class UIPackage {
 
   @ManyToOne(() => Tenant, (tenant) => tenant.id, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'tenant_id' })
-  tenant!: Tenant;
+  tenant!: Relation<Tenant>;
 
   @Column()
   name!: string;

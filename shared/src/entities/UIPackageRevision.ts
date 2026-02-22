@@ -6,6 +6,7 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { Tenant } from './Tenant';
 import { UIPackage } from './UIEntities';
 
@@ -16,10 +17,10 @@ export class UIPackageRevision {
   id!: string;
 
   @ManyToOne(() => UIPackage, { onDelete: 'CASCADE' })
-  uiPackage!: UIPackage;
+  uiPackage!: Relation<UIPackage>;
 
   @ManyToOne(() => Tenant, { onDelete: 'CASCADE' })
-  tenant!: Tenant;
+  tenant!: Relation<Tenant>;
 
   @Column()
   revision!: number;

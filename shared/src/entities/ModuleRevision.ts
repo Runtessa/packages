@@ -6,6 +6,7 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { Tenant } from './Tenant';
 import { ModuleEntity, HttpMethod } from './Module';
 
@@ -16,10 +17,10 @@ export class ModuleRevision {
   id!: string;
 
   @ManyToOne(() => ModuleEntity, { onDelete: 'CASCADE' })
-  module!: ModuleEntity;
+  module!: Relation<ModuleEntity>;
 
   @ManyToOne(() => Tenant, { onDelete: 'CASCADE' })
-  tenant!: Tenant;
+  tenant!: Relation<Tenant>;
 
   @Column()
   revision!: number;
