@@ -7,7 +7,7 @@ import {
   Unique,
   UpdateDateColumn,
 } from 'typeorm';
-import type { Tenant } from './Tenant';
+import { Tenant } from './Tenant';
 
 export enum AccountRole {
   ADMIN = 'ADMIN',
@@ -33,7 +33,7 @@ export class Account {
   @Column({ type: 'jsonb', nullable: true })
   groups?: string[];
 
-  @ManyToOne('Tenant', 'accounts', { onDelete: 'CASCADE' })
+  @ManyToOne(() => Tenant, (tenant) => tenant.accounts, { onDelete: 'CASCADE' })
   tenant!: Tenant;
 
   @CreateDateColumn()

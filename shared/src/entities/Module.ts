@@ -7,7 +7,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import type { Tenant } from './Tenant';
+import { Tenant } from './Tenant';
 
 export enum HttpMethod {
   GET = 'GET',
@@ -56,7 +56,7 @@ export class ModuleEntity {
   @Column({ name: 'published_at', type: 'timestamptz', nullable: true })
   publishedAt?: Date | null;
 
-  @ManyToOne('Tenant', 'modules', { onDelete: 'CASCADE' })
+  @ManyToOne(() => Tenant, (tenant) => tenant.modules, { onDelete: 'CASCADE' })
   tenant!: Tenant;
 
   @CreateDateColumn()

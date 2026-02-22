@@ -7,7 +7,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import type { Tenant } from './Tenant';
+import { Tenant } from './Tenant';
 
 @Entity({ name: 'orm_models' })
 @Index(['tenant', 'path'], { unique: true })
@@ -15,7 +15,7 @@ export class OrmModel {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @ManyToOne('Tenant', 'ormModels', { onDelete: 'CASCADE' })
+  @ManyToOne(() => Tenant, (tenant) => tenant.ormModels, { onDelete: 'CASCADE' })
   tenant!: Tenant;
 
   @Column()

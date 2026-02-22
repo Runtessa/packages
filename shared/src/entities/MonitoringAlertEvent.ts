@@ -7,8 +7,9 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import type { Tenant } from './Tenant';
-import type { MonitoringAlertRule } from './MonitoringAlertRule';
+import { Tenant } from './Tenant';
+import { MonitoringAlertRule } from './MonitoringAlertRule';
+import { MonitoringSnapshot } from './MonitoringSnapshot';
 
 @Entity({ name: 'monitoring_alert_events' })
 @Index(['createdAt'])
@@ -16,24 +17,24 @@ export class MonitoringAlertEvent {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @ManyToOne('MonitoringAlertRule', { onDelete: 'CASCADE' })
+  @ManyToOne(() => MonitoringAlertRule, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'rule_id' })
   rule!: MonitoringAlertRule;
 
   @Column({ name: 'rule_id', type: 'uuid' })
   ruleId!: string;
 
-  @ManyToOne('MonitoringSnapshot', 'alerts', {
+  @ManyToOne(() => MonitoringSnapshot, (snapshot) => snapshot.alerts, {
     nullable: true,
     onDelete: 'SET NULL',
   })
   @JoinColumn({ name: 'snapshot_id' })
-  snapshot?: any | null;
+  snapshot?: MonitoringSnapshot | null;
 
   @Column({ name: 'snapshot_id', type: 'uuid', nullable: true })
   snapshotId?: string | null;
 
-  @ManyToOne('Tenant', { nullable: true, onDelete: 'SET NULL' })
+  @ManyToOne(() => Tenant, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'tenant_id' })
   tenant?: Tenant | null;
 

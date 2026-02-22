@@ -1,5 +1,6 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
-import type { Tenant } from './Tenant';
+import { Tenant } from './Tenant';
+import { MonitoringSnapshot } from './MonitoringSnapshot';
 
 @Entity({ name: 'monitoring_tenant_samples' })
 @Index(['tenantId', 'createdAt'])
@@ -7,13 +8,13 @@ export class MonitoringTenantSample {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @ManyToOne('MonitoringSnapshot', 'tenantSamples', {
+  @ManyToOne(() => MonitoringSnapshot, (snapshot) => snapshot.tenantSamples, {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'snapshot_id' })
-  snapshot!: any;
+  snapshot!: MonitoringSnapshot;
 
-  @ManyToOne('Tenant', { nullable: true, onDelete: 'SET NULL' })
+  @ManyToOne(() => Tenant, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'tenant_id' })
   tenant?: Tenant | null;
 

@@ -6,6 +6,8 @@ import {
   OneToMany,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import { MonitoringTenantSample } from './MonitoringTenantSample';
+import { MonitoringAlertEvent } from './MonitoringAlertEvent';
 
 @Entity({ name: 'monitoring_snapshots' })
 @Index(['serverName', 'instanceId', 'createdAt'])
@@ -67,13 +69,13 @@ export class MonitoringSnapshot {
   @Column({ type: 'float', name: 'error_rate_pct', default: 0 })
   errorRatePct!: number;
 
-  @OneToMany('MonitoringTenantSample', 'snapshot', {
+  @OneToMany(() => MonitoringTenantSample, (tenantSample) => tenantSample.snapshot, {
     cascade: true,
   })
-  tenantSamples!: any[];
+  tenantSamples!: MonitoringTenantSample[];
 
-  @OneToMany('MonitoringAlertEvent', 'snapshot')
-  alerts!: any[];
+  @OneToMany(() => MonitoringAlertEvent, (alert) => alert.snapshot)
+  alerts!: MonitoringAlertEvent[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
