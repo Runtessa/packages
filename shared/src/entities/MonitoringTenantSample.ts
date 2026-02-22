@@ -1,4 +1,5 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { Tenant } from './Tenant';
 import { MonitoringSnapshot } from './MonitoringSnapshot';
 
@@ -12,11 +13,11 @@ export class MonitoringTenantSample {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'snapshot_id' })
-  snapshot!: MonitoringSnapshot;
+  snapshot!: Relation<MonitoringSnapshot>;
 
   @ManyToOne(() => Tenant, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'tenant_id' })
-  tenant?: Tenant | null;
+  tenant?: Relation<Tenant> | null;
 
   @Column({ name: 'tenant_id', type: 'uuid', nullable: true })
   tenantId?: string | null;

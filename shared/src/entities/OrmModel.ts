@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { Tenant } from './Tenant';
 
 @Entity({ name: 'orm_models' })
@@ -16,7 +17,7 @@ export class OrmModel {
   id!: string;
 
   @ManyToOne(() => Tenant, (tenant) => tenant.ormModels, { onDelete: 'CASCADE' })
-  tenant!: Tenant;
+  tenant!: Relation<Tenant>;
 
   @Column()
   path!: string;

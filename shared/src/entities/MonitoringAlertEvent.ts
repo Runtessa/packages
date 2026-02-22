@@ -7,6 +7,7 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { Tenant } from './Tenant';
 import { MonitoringAlertRule } from './MonitoringAlertRule';
 import { MonitoringSnapshot } from './MonitoringSnapshot';
@@ -19,7 +20,7 @@ export class MonitoringAlertEvent {
 
   @ManyToOne(() => MonitoringAlertRule, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'rule_id' })
-  rule!: MonitoringAlertRule;
+  rule!: Relation<MonitoringAlertRule>;
 
   @Column({ name: 'rule_id', type: 'uuid' })
   ruleId!: string;
@@ -29,14 +30,14 @@ export class MonitoringAlertEvent {
     onDelete: 'SET NULL',
   })
   @JoinColumn({ name: 'snapshot_id' })
-  snapshot?: MonitoringSnapshot | null;
+  snapshot?: Relation<MonitoringSnapshot> | null;
 
   @Column({ name: 'snapshot_id', type: 'uuid', nullable: true })
   snapshotId?: string | null;
 
   @ManyToOne(() => Tenant, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'tenant_id' })
-  tenant?: Tenant | null;
+  tenant?: Relation<Tenant> | null;
 
   @Column({ name: 'tenant_id', type: 'uuid', nullable: true })
   tenantId?: string | null;

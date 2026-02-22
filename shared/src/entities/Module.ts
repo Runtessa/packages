@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { Tenant } from './Tenant';
 
 export enum HttpMethod {
@@ -57,7 +58,7 @@ export class ModuleEntity {
   publishedAt?: Date | null;
 
   @ManyToOne(() => Tenant, (tenant) => tenant.modules, { onDelete: 'CASCADE' })
-  tenant!: Tenant;
+  tenant!: Relation<Tenant>;
 
   @CreateDateColumn()
   createdAt!: Date;

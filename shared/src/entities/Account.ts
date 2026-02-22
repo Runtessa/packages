@@ -7,6 +7,7 @@ import {
   Unique,
   UpdateDateColumn,
 } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { Tenant } from './Tenant';
 
 export enum AccountRole {
@@ -34,7 +35,7 @@ export class Account {
   groups?: string[];
 
   @ManyToOne(() => Tenant, (tenant) => tenant.accounts, { onDelete: 'CASCADE' })
-  tenant!: Tenant;
+  tenant!: Relation<Tenant>;
 
   @CreateDateColumn()
   createdAt!: Date;

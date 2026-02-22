@@ -8,6 +8,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { Tenant } from './Tenant';
 
 export type MonitoringRuleScope = 'global' | 'instance' | 'tenant';
@@ -30,7 +31,7 @@ export class MonitoringAlertRule {
 
   @ManyToOne(() => Tenant, { nullable: true, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'tenant_id' })
-  tenant?: Tenant | null;
+  tenant?: Relation<Tenant> | null;
 
   @Column({ name: 'tenant_id', type: 'uuid', nullable: true })
   tenantId?: string | null;
