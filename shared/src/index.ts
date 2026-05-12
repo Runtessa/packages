@@ -21,3 +21,4 @@ export * from './entities/TeamTenant';
 export * from './entities/UIEntities';
 export * from './entities/UIPackageRevision';
 export * from './entities/User';
+export * from './entities/PublishRequest';
