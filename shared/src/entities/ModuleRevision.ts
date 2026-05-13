@@ -3,12 +3,14 @@ import {
   CreateDateColumn,
   Entity,
   Index,
+  JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import type { Relation } from 'typeorm';
 import { Tenant } from './Tenant';
 import { ModuleEntity, HttpMethod } from './Module';
+import { SourceCode } from './SourceCode';
 
 @Entity({ name: 'module_revisions' })
 @Index(['module', 'revision'], { unique: true })
@@ -31,8 +33,12 @@ export class ModuleRevision {
   @Column({ type: 'enum', enum: HttpMethod })
   method!: HttpMethod;
 
-  @Column({ type: 'text' })
-  code!: string;
+  @ManyToOne(() => SourceCode, { nullable: true, cascade: ['insert', 'update'] })
+  @JoinColumn({ name: 'source_code_id' })
+  sourceCode?: Relation<SourceCode> | null;
+
+  @Column({ name: 'code', type: 'text', nullable: true })
+  legacyCode?: string | null;
 
   @Column({ name: 'file_extension', default: 'js' })
   fileExtension!: string;
@@ -45,4 +51,13 @@ export class ModuleRevision {
 
   @CreateDateColumn()
   createdAt!: Date;
+
+  get code(): string {
+    return this.sourceCode?.code ?? this.legacyCode ?? '';
+  }
+
+  set code(value: string) {
+    this.sourceCode = { ...(this.sourceCode as any), code: value } as Relation<SourceCode>;
+    this.legacyCode = value;
+  }
 }

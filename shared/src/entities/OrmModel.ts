@@ -3,12 +3,15 @@ import {
   CreateDateColumn,
   Entity,
   Index,
+  JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import type { Relation } from 'typeorm';
 import { Tenant } from './Tenant';
+import { SourceCode } from './SourceCode';
+import { CompiledCode } from './CompiledCode';
 
 @Entity({ name: 'orm_models' })
 @Index(['tenant', 'path'], { unique: true })
@@ -22,11 +25,13 @@ export class OrmModel {
   @Column()
   path!: string;
 
-  @Column({ type: 'text', default: '' })
-  code!: string;
+  @ManyToOne(() => SourceCode, { nullable: true, cascade: ['insert', 'update'] })
+  @JoinColumn({ name: 'source_code_id' })
+  sourceCode?: Relation<SourceCode> | null;
 
-  @Column({ name: 'code_blob', type: 'text', default: '' })
-  codeBlob!: string;
+  @ManyToOne(() => CompiledCode, { nullable: true, cascade: ['insert', 'update'] })
+  @JoinColumn({ name: 'compiled_code_id' })
+  compiledCode?: Relation<CompiledCode> | null;
 
   @Column({ name: 'file_extension', default: 'js' })
   fileExtension!: string;
@@ -39,4 +44,20 @@ export class OrmModel {
 
   @UpdateDateColumn()
   updatedAt!: Date;
+
+  get code(): string {
+    return this.sourceCode?.code ?? '';
+  }
+
+  set code(value: string) {
+    this.sourceCode = { ...(this.sourceCode as any), code: value } as Relation<SourceCode>;
+  }
+
+  get codeBlob(): string {
+    return this.compiledCode?.code ?? '';
+  }
+
+  set codeBlob(value: string) {
+    this.compiledCode = { ...(this.compiledCode as any), code: value } as Relation<CompiledCode>;
+  }
 }

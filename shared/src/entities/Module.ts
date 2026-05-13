@@ -3,12 +3,14 @@ import {
   CreateDateColumn,
   Entity,
   Index,
+  JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import type { Relation } from 'typeorm';
 import { Tenant } from './Tenant';
+import { SourceCode } from './SourceCode';
 
 export enum HttpMethod {
   GET = 'GET',
@@ -30,8 +32,9 @@ export class ModuleEntity {
   @Column({ type: 'enum', enum: HttpMethod, default: HttpMethod.GET })
   method!: HttpMethod;
 
-  @Column({ type: 'text' })
-  code!: string;
+  @ManyToOne(() => SourceCode, { nullable: true, cascade: ['insert', 'update'] })
+  @JoinColumn({ name: 'source_code_id' })
+  sourceCode?: Relation<SourceCode> | null;
 
   @Column({ name: 'file_extension', default: 'js' })
   fileExtension!: string;
@@ -48,8 +51,28 @@ export class ModuleEntity {
   @Column({ name: 'published_method', type: 'enum', enum: HttpMethod, nullable: true })
   publishedMethod?: HttpMethod | null;
 
-  @Column({ name: 'published_code', type: 'text', nullable: true })
-  publishedCode?: string | null;
+  @ManyToOne(() => SourceCode, { nullable: true, cascade: ['insert', 'update'] })
+  @JoinColumn({ name: 'published_source_code_id' })
+  publishedSourceCode?: Relation<SourceCode> | null;
+
+  get code(): string {
+    return this.sourceCode?.code ?? '';
+  }
+
+  set code(value: string) {
+    this.sourceCode = { ...(this.sourceCode as any), code: value } as Relation<SourceCode>;
+  }
+
+  get publishedCode(): string | null {
+    return this.publishedSourceCode?.code ?? null;
+  }
+
+  set publishedCode(value: string | null) {
+    this.publishedSourceCode =
+      value === null
+        ? null
+        : ({ ...(this.publishedSourceCode as any), code: value } as Relation<SourceCode>);
+  }
 
   @Column({ name: 'published_file_extension', type: 'varchar', nullable: true })
   publishedFileExtension?: string | null;

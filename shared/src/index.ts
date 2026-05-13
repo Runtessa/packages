@@ -12,6 +12,8 @@ export * from './entities/MonitoringSnapshot';
 export * from './entities/MonitoringTenantSample';
 export * from './entities/Module';
 export * from './entities/ModuleRevision';
+export * from './entities/CompiledCode';
+export * from './entities/SourceCode';
 export * from './entities/Secret';
 export * from './entities/SystemLog';
 export * from './entities/Tenant';
