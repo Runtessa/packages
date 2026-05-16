@@ -49,7 +49,7 @@ export class UIPackage {
   @Column({ name: 'published_version', type: 'varchar', nullable: true })
   publishedVersion?: string | null;
 
-  @ManyToOne(() => SourceCode, { nullable: true })
+  @ManyToOne(() => SourceCode, { nullable: true, cascade: ['insert', 'update'] })
   @JoinColumn({ name: 'published_source_code_id' })
   publishedSourceCode?: Relation<SourceCode> | null;
 
