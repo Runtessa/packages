@@ -21,6 +21,7 @@ export * from './entities/SourceCode';
 export * from './entities/Secret';
 export * from './entities/SystemLog';
 export * from './entities/Tenant';
+export * from './entities/TenantNpmPackageBuild';
 export * from './entities/Team';
 export * from './entities/TeamMember';
 export * from './entities/TeamTenant';
