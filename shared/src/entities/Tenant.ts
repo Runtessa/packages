@@ -46,6 +46,20 @@ export class Tenant {
   aclRoles!: { roles?: Record<string, string[]>; groups?: Record<string, string[]> };
 
   @Column({ type: "jsonb", default: () => "'{}'" })
+  pwaConfig!: {
+    enabled?: boolean;
+    name?: string;
+    shortName?: string;
+    description?: string;
+    themeColor?: string;
+    backgroundColor?: string;
+    display?: 'standalone' | 'fullscreen' | 'minimal-ui' | 'browser';
+    startUrl?: string;
+    scope?: string;
+    icons?: Array<{ src: string; sizes: string; type?: string; purpose?: string }>;
+  };
+
+  @Column({ type: "jsonb", default: () => "'{}'" })
   aclEndpoints!: Record<
     string,
     {
@@ -94,6 +108,7 @@ export type TenantDTO = Pick<
   | 'aclPermissions'
   | 'aclRoles'
   | 'aclEndpoints'
+  | 'pwaConfig'
   | 'isSuspended'
   | 'allowRegistration'
   | 'createdAt'
