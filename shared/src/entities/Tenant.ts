@@ -60,6 +60,13 @@ export class Tenant {
   };
 
   @Column({ type: "jsonb", default: () => "'{}'" })
+  brandingConfig!: {
+    title?: string;
+    faviconUrl?: string;
+    appleTouchIconUrl?: string;
+  };
+
+  @Column({ type: "jsonb", default: () => "'{}'" })
   aclEndpoints!: Record<
     string,
     {
@@ -109,6 +116,7 @@ export type TenantDTO = Pick<
   | 'aclRoles'
   | 'aclEndpoints'
   | 'pwaConfig'
+  | 'brandingConfig'
   | 'isSuspended'
   | 'allowRegistration'
   | 'createdAt'
