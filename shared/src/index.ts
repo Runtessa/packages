@@ -29,3 +29,5 @@ export * from './entities/UIEntities';
 export * from './entities/UIPackageRevision';
 export * from './entities/User';
 export * from './entities/PublishRequest';
+export * from './logging/safe-error';
+export * from './logging/safe-metadata';
