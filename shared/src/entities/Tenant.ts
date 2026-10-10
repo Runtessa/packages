@@ -21,7 +21,7 @@ export class Tenant {
   @Column()
   hostname!: string;
 
-  @Column({ type: "jsonb", default: () => '\'{"memory":512,"timeout":5000}\'' })
+  @Column({ type: "jsonb", default: { memory: 512, timeout: 5000 } })
   resourceConfig!: {
     memory: number;
     timeout: number;
@@ -33,7 +33,7 @@ export class Tenant {
   @Column({ type: "jsonb", default: () => "'{}'" })
   adapterConfig!: Record<string, unknown>;
 
-  @Column({ type: "jsonb", default: () => '\'{"mode":"shared","secretKey":null}\'' })
+  @Column({ type: "jsonb", default: { mode: 'shared', secretKey: null } })
   authDbConfig!: {
     mode: 'shared' | 'dedicated';
     secretKey?: string | null;
