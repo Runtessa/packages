@@ -19,7 +19,10 @@ export const runPlatformMigrations = async (source: DataSource, schema: Platform
     await runner.query("SET LOCAL lock_timeout TO '10s'");
     await runner.query('SET LOCAL search_path TO public');
     await runner.query('SELECT pg_advisory_xact_lock(1048831, 1)');
-    const pending = pendingMigrations(await readMigrationHistory(runner), platformMigrations(schema));
+    const outstanding = pendingMigrations(await readMigrationHistory(runner), platformMigrations(schema));
+    if (adopt && outstanding.length && outstanding.every((migration) => migration.kind !== 'baseline'))
+      throw new PlatformSchemaError('Only initial baselines may be adopted; apply pending upgrades');
+    const pending = adopt ? outstanding.filter((migration) => migration.kind === 'baseline') : outstanding;
     // Preflight all baselines before writing any schema or history.
     for (const migration of pending) {
       if (adopt) {

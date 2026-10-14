@@ -1,5 +1,6 @@
 import { Socket } from 'net';
 import type { Duplex } from 'stream';
+import { installNetworkSockets } from './network-socket';
 
 export type ProcessMessage = { type: string; id?: number; operation?: string; value?: any; error?: string; status?: number };
 export const attachProcessChannel = (stream: Duplex, receive: (message: ProcessMessage) => void, fail: () => void) => {
@@ -36,7 +37,7 @@ export const serveRestrictedProcess = (run: (input: any, call: (operation: strin
       const promise = waiting.get(message.id);
       if (!promise) return;
       waiting.delete(message.id);
-      if (message.error) promise.reject(new Error(message.error)); else promise.resolve(message.value);
+      if (message.error) promise.reject(Object.assign(new Error(message.error), { statusCode: message.status || 500 })); else promise.resolve(message.value);
     } else if (message.type === 'run' && !started) {
       started = true;
       const call = (operation: string, value?: any) => new Promise<any>((resolve, reject) => {
@@ -45,6 +46,7 @@ export const serveRestrictedProcess = (run: (input: any, call: (operation: strin
         try { send({ type: 'rpc', id, operation, value }); }
         catch (error) { waiting.delete(id); reject(error); }
       });
+      installNetworkSockets(call);
       void run(message.value, call).then(
         (value) => send({ type: 'result', value }),
         (error) => send({ type: 'error', error: error instanceof Error ? error.message : 'Runtime execution failed', status: error?.statusCode || error?.status || 500 }),

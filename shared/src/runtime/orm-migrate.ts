@@ -3,22 +3,20 @@ import { DataSource } from 'typeorm';
 import { loadDynamicOrmEntities, type OrmModelSource } from './orm-loader';
 import { schemaPlan } from './orm-migration-policy';
 import { planSchemaOnRunner } from './orm-schema-plan';
+import { assertTenantDatabaseRole } from './postgres-role';
 
 export type OrmMigrationInput = {
   models: OrmModelSource[]; adapter: 'postgres' | 'mysql' | 'mssql';
-  config: string | Record<string, unknown>; action?: 'plan' | 'apply'; expectedPlanHash?: string;
+  config: string | Record<string, unknown>; action?: 'plan' | 'apply' | 'status'; expectedPlanHash?: string;
+  operationId?: string; modelHash?: string;
 };
 
-export async function migrateOrmSchema({ models, adapter, config, action = 'apply', expectedPlanHash }: OrmMigrationInput) {
+export async function migrateOrmSchema({ models, adapter, config, action = 'apply', expectedPlanHash, operationId, modelHash }: OrmMigrationInput) {
   if (!['postgres', 'mysql', 'mssql'].includes(adapter)) throw new Error('Unsupported migration adapter');
-  if (!['plan', 'apply'].includes(action)) throw Object.assign(new Error('Invalid migration action'), { statusCode: 400 });
-  let entities: any[];
-  try {
-    ({ entities } = loadDynamicOrmEntities(models));
-    if (!entities.length) throw new Error('No valid TypeORM entities found');
-  } catch (error) {
-    throw Object.assign(new Error(`Failed to load ORM entities: ${(error as Error).message}`), { statusCode: 400 });
-  }
+  if (!['plan', 'apply', 'status'].includes(action)) throw Object.assign(new Error('Invalid migration action'), { statusCode: 400 });
+  if ((action === 'status' || operationId) && (adapter !== 'postgres' || !/^[a-f0-9-]{36}$/.test(operationId || '') || !/^[a-f0-9]{64}$/.test(modelHash || '')))
+    throw Object.assign(new Error('Invalid model activation operation'), { statusCode: 400 });
+  let entities: any[] = [];
   const source = new DataSource({
     ...(typeof config === 'string' ? { url: config } : config),
     type: adapter, entities, synchronize: false, dropSchema: false, migrationsRun: false,
@@ -31,6 +29,7 @@ export async function migrateOrmSchema({ models, adapter, config, action = 'appl
     await runner.connect();
     await runner.startTransaction();
     if (adapter === 'postgres') {
+      await assertTenantDatabaseRole(runner);
       await runner.query("SET LOCAL lock_timeout TO '10s'");
       await runner.query("SET LOCAL statement_timeout TO '20s'");
       await runner.query('SELECT pg_advisory_xact_lock(1048832, 1)');
@@ -40,6 +39,22 @@ export async function migrateOrmSchema({ models, adapter, config, action = 'appl
       mysqlLock = true;
     } else {
       await runner.query("DECLARE @result int; EXEC @result = sp_getapplock @Resource = 'runtessa:orm', @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 10000; IF @result < 0 THROW 51000, 'Another schema update is running', 1;");
+    }
+    if (operationId) {
+      const [{ present }] = await runner.query("SELECT to_regclass('public.runtessa_model_operations') IS NOT NULL AS present");
+      const previous = present ? await runner.query('SELECT model_hash, result FROM public.runtessa_model_operations WHERE id = $1', [operationId]) : [];
+      if (previous.length && previous[0].model_hash !== modelHash) throw new Error('Activation operation identity mismatch');
+      if (previous.length || action === 'status') {
+        await runner.rollbackTransaction();
+        return action === 'status' ? { applied: Boolean(previous.length), result: previous[0]?.result } : previous[0].result;
+      }
+    }
+    try {
+      ({ entities } = loadDynamicOrmEntities(models));
+      if (!entities.length) throw new Error('No valid TypeORM entities found');
+      source.setOptions({ entities }); await (source as any).buildMetadatas();
+    } catch (error) {
+      throw Object.assign(new Error(`Failed to load ORM entities: ${(error as Error).message}`), { statusCode: 400 });
     }
     const { upQueries } = await planSchemaOnRunner(source, runner);
     const queries = upQueries.map(({ query, parameters }) => ({ query, parameters: parameters ?? [] }));
@@ -62,8 +77,13 @@ export async function migrateOrmSchema({ models, adapter, config, action = 'appl
       await runner.query('CREATE TABLE IF NOT EXISTS "runtessa_model_migrations" (id uuid PRIMARY KEY, plan_hash text NOT NULL, statement_count integer NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())');
       await runner.query('INSERT INTO "runtessa_model_migrations" (id, plan_hash, statement_count) VALUES ($1, $2, $3)', [randomUUID(), plan.hash, plan.statements.length]);
     }
+    const result = { ok: true, entities: entities.length, applied: true, transactional: adapter !== 'mysql', plan };
+    if (operationId) {
+      await runner.query('CREATE TABLE IF NOT EXISTS public.runtessa_model_operations (id uuid PRIMARY KEY, model_hash text NOT NULL, result jsonb NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())');
+      await runner.query('INSERT INTO public.runtessa_model_operations (id, model_hash, result) VALUES ($1, $2, $3)', [operationId, modelHash, result]);
+    }
     await runner.commitTransaction();
-    return { ok: true, entities: entities.length, applied: true, transactional: adapter !== 'mysql', plan };
+    return result;
   } catch (error) {
     if (runner.isTransactionActive) await runner.rollbackTransaction();
     throw error;
