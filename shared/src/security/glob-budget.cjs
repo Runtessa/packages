@@ -59,7 +59,7 @@ function wrap(value) {
 function formattingBudget(pattern) {
     if (typeof pattern !== 'string' || pattern.length > 65536)
         throw new Error('Format exceeds the input budget');
-    const fields = pattern.match(/%[^%]{0,100}/g) || [];
+    const fields = pattern.match(/%[^%]*/g) || [];
     if (fields.length > 128 || fields.some((field) => [...field.matchAll(/\d+/g)].some((match) => Number(match[0]) > 10000)))
         throw new Error('Format precision or width exceeds the output budget');
 }
