@@ -1,10 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 const unavailable = () => Object.assign(new Error('Runtime requires a writable delegated cgroup v2 with cpu, memory and pids controllers'), { statusCode: 503 });
+let hostVerified = false;
+function assertSandboxHost() {
+  if (hostVerified) return;
+  try {
+    if (process.platform !== 'linux') throw new Error();
+    const version = execFileSync('bwrap', ['--version'], { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const match = version.match(/bubblewrap\s+(\d+)\.(\d+)/);
+    if (!match || (Number(match[1]) === 0 && Number(match[2]) < 12)) throw new Error();
+    hostVerified = true;
+  } catch { throw Object.assign(new Error('Native execution requires Linux and bubblewrap 0.12 or newer'), { statusCode: 503 }); }
+}
 
 export function createProcessBudget(memoryMb: number, tasks = 48) {
+  assertSandboxHost();
   const root = process.env.RUNTIME_CGROUP_ROOT ||
     `/sys/fs/cgroup/user.slice/user-${process.getuid!()}.slice/user@${process.getuid!()}.service/runtessa-runtime`;
   if (!path.resolve(root).startsWith('/sys/fs/cgroup/') || !path.basename(root).startsWith('runtessa-')) throw unavailable();
