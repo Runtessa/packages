@@ -60,7 +60,7 @@ export const runRestrictedProcess = async <T>(options: RestrictedProcessOptions)
     const args = restrictedProcessArguments({ ...options, networkDirectory: relay.directory });
     const filter = processSyscallFilter();
     return await new Promise<T>((resolve, reject) => {
-      const child = spawn(process.execPath, [path.join(__dirname, 'budget-launcher.js'), budget!.group, 'bwrap', ...args],
+      const child = spawn(process.execPath, [path.join(__dirname, 'budget-launcher.js'), budget!.group, budget!.binary, ...args],
         { env: {}, stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
       (child.stdio[4] as Duplex).on('error', () => {});
       (child.stdio[4] as Duplex).end(filter);
